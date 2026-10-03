@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { game, now } from './state.js';
 import { WEAPONS, AGENTS, MOVE, ECON, MATCH } from './config.js';
-import { boxes, raycastWorld, rayBox, raySphere } from './world.js';
-import { tracer, spark, blood } from './fx.js';
+import { boxes, raycastWorldHit, rayBox, raySphere, surfaceOf } from './world.js';
+import { tracer, blood, impact, bulletHole, muzzleSprite } from './fx.js';
 import { sfx } from './audio.js';
 
 export const RADIUS = 0.35, HEIGHT = 1.8, EYE = 1.62;
@@ -258,7 +258,8 @@ const _hc = new THREE.Vector3();
 
 /** Find the first enemy hit along a ray before walls. Returns { target, head, t }. */
 export function traceShot(shooter, o, d, maxT = 150, pierce = false) {
-  const wallT = pierce ? maxT : raycastWorld(o, d, maxT);
+  const wall = pierce ? null : raycastWorldHit(o, d, maxT);
+  const wallT = pierce ? maxT : wall.t;
   let best = wallT, target = null, head = false;
   const hits = [];
   for (const e of game.fighters) {
@@ -270,7 +271,7 @@ export function traceShot(shooter, o, d, maxT = 150, pierce = false) {
     if (pierce && t < maxT) hits.push({ target: e, head: th <= tb, t });
     if (t < best) { best = t; target = e; head = th <= tb; }
   }
-  return { target, head, t: best, hits };
+  return { target, head, t: best, hits, wall };
 }
 
 export function spreadDir(out, dir, spread) {
@@ -304,20 +305,28 @@ export function tryFire(f) {
   f.eye(_o);
   spreadDir(_d, f.lookDir(_m), currentSpread(f));
   f.bloom = Math.min(w.maxBloom, f.bloom + w.bloom);
-  f.recoil = Math.min(0.12, f.recoil + w.kick);
-  if (w.auto && f.shotsInRow > 4) f.recoilYaw += (Math.random() - 0.5) * w.kick * 1.4;
+  applyRecoil(f, w);
 
-  const { target, head, t } = traceShot(f, _o, _d);
+  const { target, head, t, wall } = traceShot(f, _o, _d);
   _end.copy(_o).addScaledVector(_d, t);
   if (target) {
     let dmg = head ? w.head : w.dmg;
     if (w.key === 'p9' && t > 30) dmg = Math.round(dmg * 0.85);
     applyDamage(target, dmg, f, { head, weapon: w.key });
-    blood(_end);
-  } else spark(_end);
-  tracer(f.muzzle(_m), _end, f.team === 0 ? 0xbfe0ff : 0xffd0c0);
+    blood(_end, _d);
+  } else if (wall && wall.t < 150) {
+    const surf = wall.kind === 'floor' ? 'floor' : surfaceOf(wall.kind);
+    impact(_end, wall.n, surf);
+    bulletHole(_end, wall.n, surf);
+    if (Math.random() < 0.6) sfx('impact', { pos: _end, surface: surf, vol: 0.6 });
+  }
+  const muz = f.muzzle(_m);
+  if (Math.random() < (w.auto ? 0.5 : 1) || !f.isPlayer) tracer(muz, _end, 0xffe6b0);
+  if (!f.isPlayer || game.spectating) muzzleSprite(muz, w.slot === 'primary' ? 0.5 : 0.35);
+  bulletPassBy(f, _o, _d, t);
   f.lastShotT = now();
   if (f.isPlayer) game.onPlayerShot?.(f, w);
+  game.onAnyShot?.(f, muz);
 
   emitSound(f, w.key);
   game.noises.push({ pos: f.pos.clone(), team: f.team, t: now(), shooter: f });
@@ -325,17 +334,34 @@ export function tryFire(f) {
   return true;
 }
 
-export function emitSound(f, name, base = 1) {
-  const listener = game.listener;
-  if (!listener) return;
-  if (f === game.player && !game.spectating) { sfx(name, base); return; }
-  const dx = f.pos.x - listener.pos.x, dz = f.pos.z - listener.pos.z;
-  const d = Math.hypot(dx, dz);
-  const vol = base * Math.min(1, 9 / (d + 6));
-  // pan relative to listener yaw
-  const rx = Math.cos(listener.yaw), rz = -Math.sin(listener.yaw);
-  const pan = d > 0.1 ? (dx * rx + dz * rz) / d : 0;
-  sfx(name, vol, pan * 0.8);
+/** Recoil pattern: climb for `climb` shots, then plateau with a left/right sway. */
+function applyRecoil(f, w) {
+  const n = f.shotsInRow;
+  const climbing = n <= w.climb;
+  f.recoil = Math.min(w.kick * w.climb * 1.05 + 0.01, f.recoil + w.kick * (climbing ? 1 : 0.12));
+  const side = climbing ? (n > w.climb * 0.6 ? 0.25 : 0) : Math.sin((n - w.climb) * 0.55) * 1.6;
+  f.recoilYaw += w.sway * side + (Math.random() - 0.5) * w.kick * 0.15;
+  f.kickT = 1;
+}
+
+/** If an enemy round passes close to the listener's head, play a supersonic crack there. */
+const _hp = new THREE.Vector3(), _cp = new THREE.Vector3();
+function bulletPassBy(f, o, d, t) {
+  const p = game.player;
+  if (!p || f === p || !p.alive || game.spectating || f.team === p.team) return;
+  _hp.set(p.pos.x, p.pos.y + 1.5, p.pos.z);
+  const along = _cp.subVectors(_hp, o).dot(d);
+  if (along < 2 || along > t) return;
+  _cp.copy(o).addScaledVector(d, along);
+  if (_cp.distanceTo(_hp) < 2.2) sfx('whizz', { pos: _cp, vol: 0.9 });
+}
+
+/** Play a sound at a fighter's (or any {pos}) location; your own sounds play "in your head". */
+const _sp = new THREE.Vector3();
+export function emitSound(src, name, vol = 1, surface) {
+  if (src === game.player && !game.spectating) { sfx(name, { vol, surface }); return; }
+  _sp.set(src.pos.x, src.pos.y + (src instanceof Fighter ? 1.2 : 0), src.pos.z);
+  sfx(name, { pos: _sp, vol, surface });
 }
 
 export function startReload(f) {
@@ -343,7 +369,7 @@ export function startReload(f) {
   if (f.reloadT > 0 || f.ammo[w.key] >= w.mag) return;
   f.reloadT = w.reload;
   f.scoped = false;
-  if (f.isPlayer) sfx('reload');
+  if (!f.isPlayer) emitSound(f, 'magout', 0.8);
 }
 
 export function updateWeapon(f, dt) {
@@ -353,13 +379,15 @@ export function updateWeapon(f, dt) {
     f.reloadT -= dt;
     if (f.reloadT <= 0) { f.reloadT = 0; f.ammo[w.key] = w.mag; }
   }
-  if (now() - (f.lastShotT ?? -9) > 0.12) {
+  if (now() - (f.lastShotT ?? -9) > 1 / w.rate + 0.06) {
     f.bloom = Math.max(0, f.bloom - (w.maxBloom / 0.35 + 0.01) * dt);
     f.shotsInRow = 0;
   }
-  const recover = f.isPlayer && f.shotsInRow > 0 ? 0.15 : 0.6;
-  f.recoil = Math.max(0, f.recoil - recover * dt);
-  f.recoilYaw *= Math.max(0, 1 - 6 * dt);
+  // recoil only recovers once you stop shooting; recovery is quick like tactical shooters
+  const firing = now() - (f.lastShotT ?? -9) < 1 / w.rate + 0.05;
+  const k = firing ? 0 : Math.min(1, 9 * dt);
+  f.recoil -= f.recoil * k; f.recoilYaw -= f.recoilYaw * k;
+  f.kickT = Math.max(0, (f.kickT || 0) - dt * 12);
 }
 
 export function switchWeapon(f, slot) {
@@ -368,6 +396,7 @@ export function switchWeapon(f, slot) {
   f.reloadT = 0; f.scoped = false;
   f.fireCD = Math.max(f.fireCD, 0.35);
   setGunLook(f);
+  emitSound(f, 'equip', 0.7);
 }
 
 // ---------------------------------------------------------------------------

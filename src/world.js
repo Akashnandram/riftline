@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { buildMaterials, TILE, softTexture } from './textures.js';
 
 // ---------------------------------------------------------------------------
 // Map layout. Axis-aligned boxes only, so collision + raycasts stay simple.
@@ -64,89 +66,169 @@ const STATIC_COUNT = boxes.length;
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
-const KIND_COLORS = { outer: 0x283044, wall: 0xcdb99a, block: 0x8e8577, crate: 0xa8743d, pillar: 0x697a91, barrier: 0x3ee6d6 };
+let MATS = null;
+const FALLBACK = { outer: 0x283044, wall: 0xcdb99a, block: 0x8e8577, crate: 0xa8743d, pillar: 0x697a91, barrier: 0x3ee6d6 };
 
-function gridTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d');
-  g.fillStyle = '#5d6470'; g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 400; i++) {
-    g.fillStyle = `rgba(0,0,0,${Math.random() * 0.06})`;
-    g.fillRect(Math.random() * 256, Math.random() * 256, 6, 6);
+/** Box geometry whose UVs are in world metres / tile, so textures keep their scale on any box size. */
+function worldUVBox(w, h, d, tile) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  if (!tile) return geo;
+  const uv = geo.attributes.uv;
+  // face order: +x, -x, +y, -y, +z, -z (4 verts each)
+  const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+  for (let f = 0; f < 6; f++) {
+    for (let k = 0; k < 4; k++) {
+      const i = f * 4 + k;
+      uv.setXY(i, uv.getX(i) * dims[f][0] / tile, uv.getY(i) * dims[f][1] / tile);
+    }
   }
-  g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = 3;
-  g.strokeRect(0, 0, 256, 256);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(21, 16);
-  t.anisotropy = 8;
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+  return geo;
 }
 
 export function boxMesh(b, color, opts = {}) {
   const w = b.maxX - b.minX, h = b.maxY - b.minY, d = b.maxZ - b.minZ;
-  const geo = new THREE.BoxGeometry(w, h, d);
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.05, ...opts });
+  const tex = !opts.transparent && MATS && MATS[b.kind];
+  const geo = worldUVBox(w, h, d, tex ? TILE[b.kind] : 0);
+  const mat = tex ? MATS[b.kind] : new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.05, ...opts });
   const m = new THREE.Mesh(geo, mat);
   m.position.set((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, (b.minZ + b.maxZ) / 2);
   m.castShadow = !opts.transparent;
   m.receiveShadow = true;
-  const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geo),
-    new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 }),
-  );
-  m.add(edges);
+  if (opts.transparent) {
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+    m.add(edges);
+  }
   return m;
 }
 
-export function buildWorld(scene) {
-  scene.background = new THREE.Color(0x9cb8d8);
-  scene.fog = new THREE.Fog(0x9cb8d8, 60, 140);
+function addTrims(scene, b) {
+  const w = b.maxX - b.minX, h = b.maxY - b.minY, d = b.maxZ - b.minZ;
+  const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
+  const add = (geo, mat, y) => { const m = new THREE.Mesh(geo, mat); m.position.set(cx, y, cz); m.castShadow = m.receiveShadow = true; scene.add(m); };
+  if (b.kind === 'wall' || b.kind === 'block') {
+    add(new THREE.BoxGeometry(w + 0.08, 0.1, d + 0.08), MATS.trim, b.maxY + 0.05);
+    add(new THREE.BoxGeometry(w + 0.04, 0.22, d + 0.04), MATS.base, 0.11);
+  } else if (b.kind === 'pillar') {
+    add(new THREE.BoxGeometry(w + 0.12, 0.25, d + 0.12), MATS.trim, 0.125);
+    add(new THREE.BoxGeometry(w + 0.12, 0.2, d + 0.12), MATS.trim, b.maxY - 0.1);
+  } else if (b.kind === 'outer') {
+    add(new THREE.BoxGeometry(w, 0.3, d + 0.1), MATS.trim, 0.15);
+  }
+}
 
-  scene.add(new THREE.HemisphereLight(0xdfeaff, 0x544a3c, 0.9));
-  const sun = new THREE.DirectionalLight(0xfff1dc, 1.6);
-  sun.position.set(-30, 50, 20);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  Object.assign(sun.shadow.camera, { left: -48, right: 48, top: 40, bottom: -40, near: 1, far: 140 });
-  sun.shadow.bias = -0.0008;
+let dust = null;
+export function updateWorldFx(t) {
+  if (!dust) return;
+  dust.rotation.y = t * 0.004;
+  dust.position.y = Math.sin(t * 0.2) * 0.3;
+}
+
+export function buildWorld(scene, renderer, quality = 'medium') {
+  MATS = buildMaterials(quality);
+
+  // physically-based sky + matching image-based lighting
+  const sky = new Sky();
+  sky.scale.setScalar(150);
+  const u = sky.material.uniforms;
+  u.turbidity.value = 6; u.rayleigh.value = 1.4; u.mieCoefficient.value = 0.006; u.mieDirectionalG.value = 0.85;
+  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(55), THREE.MathUtils.degToRad(-130));
+  u.sunPosition.value.copy(sunDir);
+  scene.add(sky);
+  // image-based lighting from a controlled gradient sky (the Sky shader's HDR values are far too hot)
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envScene = new THREE.Scene();
+  const envMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: { sun: { value: sunDir } },
+    vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+    fragmentShader: `uniform vec3 sun; varying vec3 vDir;
+      void main(){
+        float y = vDir.y;
+        vec3 top = vec3(0.32, 0.45, 0.68), hor = vec3(0.75, 0.78, 0.8), gnd = vec3(0.22, 0.2, 0.18);
+        vec3 c = y > 0.0 ? mix(hor, top, pow(y, 0.6)) : mix(hor, gnd, pow(-y, 0.4));
+        c += vec3(1.0, 0.9, 0.75) * pow(max(dot(vDir, sun), 0.0), 64.0) * 6.0;
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  });
+  envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat));
+  scene.environment = pmrem.fromScene(envScene, 0.02).texture;
+  scene.environmentIntensity = 0.6;
+  scene.fog = new THREE.Fog(0xb9c8d6, 75, 200);
+
+  scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x5a4e40, 0.15));
+  const sun = new THREE.DirectionalLight(0xffe9cf, 2.0);
+  sun.position.copy(sunDir).multiplyScalar(70);
+  sun.castShadow = quality !== 'low';
+  sun.shadow.mapSize.set(quality === 'high' ? 4096 : 2048, quality === 'high' ? 4096 : 2048);
+  Object.assign(sun.shadow.camera, { left: -48, right: 48, top: 44, bottom: -44, near: 1, far: 160 });
+  sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
   scene.add(sun);
 
+  const floorTex = MATS.floor;
+  for (const t of Object.values(floorTex)) t.repeat.set(21, 16);
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(84, 64),
-    new THREE.MeshStandardMaterial({ map: gridTexture(), roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({ ...floorTex, roughness: 1, normalScale: new THREE.Vector2(0.8, 0.8) }),
   );
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // tinted spawn zones
+  // painted spawn zones + lane lines
   for (const [x, color] of [[-35, 0x3d8bff], [35, 0xff4655]]) {
     const z = new THREE.Mesh(
       new THREE.PlaneGeometry(10, 60),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.12, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.045, depthWrite: false }),
     );
     z.rotation.x = -Math.PI / 2;
     z.position.set(x, 0.02, 0);
     scene.add(z);
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 60), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, depthWrite: false }));
+    line.rotation.x = -Math.PI / 2; line.position.set(Math.sign(x) * 31, 0.025, 0);
+    scene.add(line);
   }
-  // lane labels painted on the floor
-  for (const [x, z, text] of [[0, -20, 'A'], [0, 20, 'B'], [0, -6, 'MID']]) {
+  for (const [x, z, text] of [[7, -20, 'A'], [-7, 20, 'B'], [0, -6, 'MID']]) {
     const c = document.createElement('canvas'); c.width = 256; c.height = 128;
     const g = c.getContext('2d');
-    g.fillStyle = 'rgba(255,255,255,0.35)'; g.font = 'bold 90px sans-serif'; g.textAlign = 'center';
+    g.fillStyle = 'rgba(255,255,255,0.6)'; g.font = 'bold 96px sans-serif'; g.textAlign = 'center';
     g.fillText(text, 128, 100);
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(4, 2), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
-    p.rotation.x = -Math.PI / 2; p.position.set(x + (text === 'MID' ? 0 : 7), 0.03, z);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(4, 2), new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.9 }));
+    p.rotation.x = -Math.PI / 2; p.position.set(x, 0.03, z);
+    p.receiveShadow = true;
     scene.add(p);
   }
 
   for (let i = 0; i < STATIC_COUNT; i++) {
     const b = boxes[i];
-    scene.add(boxMesh(b, KIND_COLORS[b.kind]));
+    scene.add(boxMesh(b, FALLBACK[b.kind]));
+    addTrims(scene, b);
   }
+
+  // floating dust motes catch the light
+  if (quality !== 'low') {
+    const n = 700, pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { pos[i * 3] = (Math.random() - 0.5) * 80; pos[i * 3 + 1] = Math.random() * 6; pos[i * 3 + 2] = (Math.random() - 0.5) * 60; }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    dust = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.035, color: 0xfff4e0, transparent: true, opacity: 0.45, map: softTexture(), depthWrite: false }));
+    scene.add(dust);
+  }
+}
+
+export function surfaceOf(kind) {
+  if (kind === 'crate') return 'wood';
+  if (kind === 'pillar' || kind === 'outer') return 'metal';
+  if (kind === 'barrier') return 'energy';
+  return 'concrete';
+}
+
+/** Surface under a fighter's feet (for footsteps). */
+export function surfaceUnder(p) {
+  if (p.y < 0.05) return 'concrete';
+  for (const b of boxes) {
+    if (p.x > b.minX - 0.4 && p.x < b.maxX + 0.4 && p.z > b.minZ - 0.4 && p.z < b.maxZ + 0.4 && Math.abs(p.y - b.maxY) < 0.1) return surfaceOf(b.kind);
+  }
+  return 'concrete';
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +261,28 @@ export function raySphere(o, d, c, r) {
   if (t >= 0) return t;
   const t2 = -b + Math.sqrt(disc);
   return t2 >= 0 ? 0 : Infinity;
+}
+
+/** Like raycastWorld but also returns the hit normal and surface kind. */
+export function raycastWorldHit(o, d, maxT = 200) {
+  let best = maxT, box = null;
+  for (const b of boxes) {
+    const t = rayBox(o, d, b);
+    if (t < best) { best = t; box = b; }
+  }
+  const hit = { t: best, n: new THREE.Vector3(), kind: box ? box.kind : null };
+  if (d.y < 0) {
+    const t = -o.y / d.y;
+    if (t >= 0 && t < best) { hit.t = t; hit.kind = 'floor'; hit.n.set(0, 1, 0); return hit; }
+  }
+  if (box) {
+    const px = o.x + d.x * best, py = o.y + d.y * best, pz = o.z + d.z * best;
+    const e = [[Math.abs(px - box.minX), -1, 0, 0], [Math.abs(px - box.maxX), 1, 0, 0], [Math.abs(py - box.minY), 0, -1, 0],
+      [Math.abs(py - box.maxY), 0, 1, 0], [Math.abs(pz - box.minZ), 0, 0, -1], [Math.abs(pz - box.maxZ), 0, 0, 1]];
+    e.sort((a, b) => a[0] - b[0]);
+    hit.n.set(e[0][1], e[0][2], e[0][3]);
+  }
+  return hit;
 }
 
 /** Nearest solid hit along a ray (boxes + floor). */

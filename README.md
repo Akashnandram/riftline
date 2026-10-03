@@ -16,6 +16,15 @@ Open http://localhost:5180 in a desktop browser (needs pointer lock: keyboard + 
 WASD move · Mouse aim/shoot · Shift walk (silent, accurate) · Space jump · RMB scope/zoom · R reload ·
 1/2 primary/sidearm · Q/E abilities · X ultimate · B buy (buy phase) · Tab scoreboard · M mute · Esc pause
 
+## Graphics & sound
+
+- Menu → **Graphics**: Low (no post-processing/shadows, for weak laptops), Medium (shadows, bloom, MSAA, colour grade), High (adds ambient occlusion, 4K shadow map).
+- All textures, gun models and sounds are generated in code — no asset downloads.
+- **Real recordings:** drop audio files into `assets/sfx/` and list them in `assets/sfx/manifest.json`, e.g.
+  `{ "raptor": ["raptor1.ogg", "raptor2.ogg"], "step": "step.ogg" }`. Any listed name (`p9`, `magnum`, `hornet`,
+  `raptor`, `longbow`, `step`, `impact`, `whizz`, `magout`, `magin`, `bolt`, …) replaces the synthesised version
+  and still gets 3D positioning, wall muffling and reverb.
+
 ## Agents
 
 | Agent | Role | Q | E | X (ultimate, 5 points) |
@@ -28,7 +37,11 @@ WASD move · Mouse aim/shoot · Shift walk (silent, accurate) · Space jump · R
 ## Code map
 
 - `src/config.js` – all balance numbers: weapons, armor, economy, agents, bot difficulty
-- `src/world.js` – map layout (boxes), rendering, raycasts, smoke line-of-sight, nav grid + A*
+- `src/world.js` – map layout (boxes), rendering, sky/lighting, raycasts, smoke line-of-sight, nav grid + A*
+- `src/textures.js` – procedural concrete/plaster/stone/wood/metal textures, decals
+- `src/guns.js` – first-person weapon models
+- `src/audio.js` – 3D audio engine, reverb, occlusion, synthesised sounds, optional recordings
+- `src/fx.js` – tracers, impacts, bullet holes, muzzle flashes
 - `src/entities.js` – fighters: mesh, movement/collision, shooting, damage
 - `src/abilities.js` – ability implementations, projectiles, smokes/pools/barriers
 - `src/bot.js` – bot AI (vision, reaction time, aim error, strafing, lanes, hunting, ability use)

@@ -11,7 +11,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <script type="importmap">
-    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
   </script>
 </head>
 <body>
@@ -87,6 +90,9 @@
         </div></div>
         <div class="opt"><h4>BOT DIFFICULTY</h4><div class="seg" id="segDiff">
           <button data-v="easy">Easy</button><button data-v="normal" class="on">Normal</button><button data-v="hard">Hard</button>
+        </div></div>
+        <div class="opt"><h4>GRAPHICS</h4><div class="seg" id="segQuality">
+          <button data-v="low">Low</button><button data-v="medium" class="on">Medium</button><button data-v="high">High</button>
         </div></div>
         <div class="opt"><h4>SENSITIVITY <span id="sensVal">1.0</span></h4>
           <input type="range" id="sens" min="0.2" max="3" step="0.05" value="1" />
