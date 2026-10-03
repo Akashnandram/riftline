@@ -39,7 +39,8 @@ WASD move · Mouse aim/shoot · Shift walk (silent, accurate) · Space jump · R
 - `src/config.js` – all balance numbers: weapons, armor, economy, agents, bot difficulty
 - `src/world.js` – map layout (boxes), rendering, sky/lighting, raycasts, smoke line-of-sight, nav grid + A*
 - `src/textures.js` – procedural concrete/plaster/stone/wood/metal textures, decals
-- `src/guns.js` – first-person weapon models
+- `src/guns.js` – weapon models (first-person with hands, third-person for rigs)
+- `src/characters.js` – articulated soldier rigs: per-agent gear, procedural walk/run/strafe, aim, arm IK, flinch, reload, verlet ragdolls, helmet/gun drops
 - `src/audio.js` – 3D audio engine, reverb, occlusion, synthesised sounds, optional recordings
 - `src/fx.js` – tracers, impacts, bullet holes, muzzle flashes
 - `src/entities.js` – fighters: mesh, movement/collision, shooting, damage

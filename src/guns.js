@@ -21,21 +21,27 @@ const accent = (c) => (accentCache[c] ??= new THREE.MeshStandardMaterial({ color
 const sleeveCache = {};
 const sleeve = (c) => (sleeveCache[c] ??= new THREE.MeshStandardMaterial({ color: new THREE.Color(0x24272d).lerp(new THREE.Color(c), 0.1), metalness: 0, roughness: 0.9 }));
 
+// geometry is cached by size: guns are rebuilt for every character each round
+const geoCache = new Map();
+const cached = (k, make) => { if (!geoCache.has(k)) geoCache.set(k, make()); return geoCache.get(k); };
+
 function box(g, mat, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  const m = new THREE.Mesh(cached(`b${w}|${h}|${d}`, () => new THREE.BoxGeometry(w, h, d)), mat);
   m.position.set(x, y, z); m.rotation.set(rx, ry, rz);
   g.add(m);
   return m;
 }
 function cyl(g, mat, r, len, x, y, z, seg = 14, r2 = r) {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(r2, r, len, seg), mat);
+  const m = new THREE.Mesh(cached(`c${r}|${r2}|${len}|${seg}`, () => new THREE.CylinderGeometry(r2, r, len, seg)), mat);
   m.rotation.x = Math.PI / 2;
   m.position.set(x, y, z);
   g.add(m);
   return m;
 }
 
+let NO_HANDS = false;
 function hands(g, team, gripZ, foreZ, foreY = -0.035, pistol = false) {
+  if (NO_HANDS) return;
   const sl = sleeve(team);
   // right hand on the grip, forearm runs back toward the bottom-right of the screen
   box(g, M.glove, 0.05, 0.075, 0.09, 0.012, -0.065, gripZ + 0.01, 0.3);
@@ -78,9 +84,9 @@ function rifle(g, w, team) {
     box(g, M.steel, w, h, 0.05, x, y, -0.13);
   }
   box(g, M.lens, 0.032, 0.03, 0.002, 0, 0.086, -0.152);
-  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.0012, 8, 6), M.red); dot.position.set(0, 0.086, -0.15); g.add(dot);
+  const dot = new THREE.Mesh(cached('dot', () => new THREE.SphereGeometry(0.0012, 8, 6)), M.red); dot.position.set(0, 0.086, -0.15); g.add(dot);
   hands(g, team, 0.015, -0.4);
-  return { tip: new THREE.Vector3(0, 0.004, -0.84), mag, bolt, eject: new THREE.Vector3(0.03, 0.012, -0.06), sightY: 0.086 };
+  return { tip: new THREE.Vector3(0, 0.004, -0.84), mag, bolt, eject: new THREE.Vector3(0.03, 0.012, -0.06), sightY: 0.086, grip: new THREE.Vector3(0, -0.075, 0.02), fore: new THREE.Vector3(-0.01, -0.045, -0.33) };
 }
 
 function smg(g, w, team) {
@@ -101,7 +107,7 @@ function smg(g, w, team) {
   box(g, M.steel, 0.006, 0.02, 0.01, 0, 0.05, -0.18);                        // iron sights
   box(g, M.steel, 0.02, 0.016, 0.01, 0, 0.05, 0.0);
   hands(g, team, 0.02, -0.22, -0.06);
-  return { tip: new THREE.Vector3(0, 0.004, -0.42), mag, bolt, eject: new THREE.Vector3(0.028, 0.012, -0.04), sightY: 0.055 };
+  return { tip: new THREE.Vector3(0, 0.004, -0.42), mag, bolt, eject: new THREE.Vector3(0.028, 0.012, -0.04), sightY: 0.055, grip: new THREE.Vector3(0, -0.075, 0.025), fore: new THREE.Vector3(0, -0.1, -0.22) };
 }
 
 function pistol(g, w, team) {
@@ -116,7 +122,7 @@ function pistol(g, w, team) {
   const mag = new THREE.Group(); mag.position.set(0, -0.11, 0.015); g.add(mag);
   box(mag, M.dark, 0.026, 0.02, 0.04, 0, 0, 0, 0.22);
   hands(g, team, 0.005, 0, 0, true);
-  return { tip: new THREE.Vector3(0, 0.022, -0.17), mag, bolt: slide, eject: new THREE.Vector3(0.02, 0.03, -0.04), sightY: 0.045 };
+  return { tip: new THREE.Vector3(0, 0.022, -0.17), mag, bolt: slide, eject: new THREE.Vector3(0.02, 0.03, -0.04), sightY: 0.045, grip: new THREE.Vector3(0, -0.065, 0.01), fore: new THREE.Vector3(-0.035, -0.075, 0.02), pistol: true };
 }
 
 function revolver(g, w, team) {
@@ -132,7 +138,7 @@ function revolver(g, w, team) {
   const bolt = box(g, M.steel, 0.008, 0.02, 0.02, 0, 0.035, 0.025, -0.4);   // hammer
   box(g, M.dark, 0.006, 0.025, 0.04, 0, -0.03, -0.01);
   hands(g, team, 0.02, 0, 0, true);
-  return { tip: new THREE.Vector3(0, 0.012, -0.26), mag, bolt, eject: null, sightY: 0.04 };
+  return { tip: new THREE.Vector3(0, 0.012, -0.26), mag, bolt, eject: null, sightY: 0.04, grip: new THREE.Vector3(0, -0.065, 0.025), fore: new THREE.Vector3(-0.035, -0.075, 0.03), pistol: true };
 }
 
 function sniper(g, w, team) {
@@ -157,18 +163,21 @@ function sniper(g, w, team) {
   box(g, M.steel, 0.022, 0.016, 0.016, 0.03, 0.088, -0.08);
   const bolt = new THREE.Group(); bolt.position.set(0.035, 0.015, 0.02); g.add(bolt);
   box(bolt, M.steel, 0.04, 0.008, 0.008, 0.02, 0, 0);
-  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.011, 10, 8), M.steel); knob.position.set(0.042, -0.006, 0); bolt.add(knob);
+  const knob = new THREE.Mesh(cached('knob', () => new THREE.SphereGeometry(0.011, 10, 8)), M.steel); knob.position.set(0.042, -0.006, 0); bolt.add(knob);
   hands(g, team, 0.04, -0.4);
-  return { tip: new THREE.Vector3(0, 0.006, -1.07), mag, bolt, eject: new THREE.Vector3(0.03, 0.02, -0.04), sightY: 0.088 };
+  return { tip: new THREE.Vector3(0, 0.006, -1.07), mag, bolt, eject: new THREE.Vector3(0.03, 0.02, -0.04), sightY: 0.088, grip: new THREE.Vector3(0, -0.075, 0.045), fore: new THREE.Vector3(-0.01, -0.05, -0.36) };
 }
 
 const BUILD = { p9: pistol, magnum: revolver, hornet: smg, raptor: rifle, longbow: sniper };
 
-export function buildGun(key, teamColor) {
+/** withHands=false builds the third-person version held by character rigs. */
+export function buildGun(key, teamColor, withHands = true) {
   const w = WEAPONS[key];
   const g = new THREE.Group();
+  NO_HANDS = !withHands;
   const parts = BUILD[key](g, w, teamColor);
-  g.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
+  NO_HANDS = false;
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = !withHands; o.receiveShadow = !withHands; } });
   parts.magBase = parts.mag.position.clone();
   parts.boltBase = parts.bolt.position.clone();
   g.userData = parts;

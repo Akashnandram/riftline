@@ -11,6 +11,12 @@ const barriers = [];
 const timers = [];
 
 const GRAV = 16;
+
+/** Remove a mesh and free its GPU buffers. */
+function drop(m) {
+  game.scene.remove(m);
+  m.traverse((o) => { o.geometry?.dispose(); o.material?.dispose?.(); });
+}
 const _v = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3();
 
 export function abilityReady(f, slot) {
@@ -103,7 +109,7 @@ export function updateProjectiles(dt) {
     if (!done && p.life && p.t >= p.life) done = true;
     if (!done && p.update) p.update(p, dt);
     p.mesh.position.copy(p.pos);
-    if (done) { game.scene.remove(p.mesh); projectiles.splice(i, 1); }
+    if (done) { drop(p.mesh); projectiles.splice(i, 1); }
   }
 }
 
@@ -305,7 +311,7 @@ export function updateAbilities(dt) {
     const fade = Math.min(1, (s.until - t) / 0.8);
     s.mesh.scale.setScalar(Math.max(0.05, s.grow));
     s.mesh.material.opacity = 0.94 * fade;
-    if (t >= s.until) { game.scene.remove(s.mesh); smokes.splice(i, 1); }
+    if (t >= s.until) { drop(s.mesh); smokes.splice(i, 1); }
   }
 
   for (let i = pools.length - 1; i >= 0; i--) {
@@ -318,12 +324,12 @@ export function updateAbilities(dt) {
         if (Math.random() < dt * 6) spark(_a.set(e.pos.x, e.pos.y + 0.2, e.pos.z), 0x8cff4a);
       }
     }
-    if (t >= p.until) { game.scene.remove(p.mesh); pools.splice(i, 1); }
+    if (t >= p.until) { drop(p.mesh); pools.splice(i, 1); }
   }
 
   for (let i = barriers.length - 1; i >= 0; i--) {
     const b = barriers[i];
-    if (t >= b.until) { removeDynamicBox(b.box); game.scene.remove(b.mesh); barriers.splice(i, 1); }
+    if (t >= b.until) { removeDynamicBox(b.box); drop(b.mesh); barriers.splice(i, 1); }
   }
 }
 
@@ -332,9 +338,9 @@ export function inPool(f) {
 }
 
 export function clearAbilities() {
-  for (const p of projectiles) game.scene.remove(p.mesh);
-  for (const s of smokes) game.scene.remove(s.mesh);
-  for (const p of pools) game.scene.remove(p.mesh);
-  for (const b of barriers) { removeDynamicBox(b.box); game.scene.remove(b.mesh); }
+  for (const p of projectiles) drop(p.mesh);
+  for (const s of smokes) drop(s.mesh);
+  for (const p of pools) drop(p.mesh);
+  for (const b of barriers) { removeDynamicBox(b.box); drop(b.mesh); }
   projectiles.length = smokes.length = pools.length = barriers.length = timers.length = 0;
 }

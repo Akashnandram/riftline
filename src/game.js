@@ -10,8 +10,9 @@ import { WEAPONS, ARMOR, AGENTS, ECON, MATCH, MOVE, BOT_NAMES } from './config.j
 import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx } from './world.js';
 import {
   Fighter, TEAM_COLORS, EYE, updateFighterMesh, moveFighter, separateFighters, tryFire, startReload,
-  updateWeapon, switchWeapon, setGunLook, emitSound,
+  updateWeapon, switchWeapon, setGunLook, emitSound, resetFighterMesh,
 } from './entities.js';
+import { updateRagdolls, clearRagdolls } from './characters.js';
 import { BotBrain } from './bot.js';
 import { useAbility, abilityReady, updateAbilities, updateAbilityState, clearAbilities, fireFury } from './abilities.js';
 import { buy, botBuy } from './shop.js';
@@ -298,6 +299,7 @@ function setPaused(p) {
 // ---------------------------------------------------------------------------
 function teardown() {
   clearAbilities();
+  clearRagdolls(scene);
   for (const f of game.fighters) scene.remove(f.mesh);
   game.fighters = []; game.player = null;
 }
@@ -329,6 +331,7 @@ function startMatch(cfg) {
     }
   }
   $('menu').hidden = true; $('over').hidden = true; $('hud').hidden = false;
+  $('killfeed').innerHTML = '';
   setupAbilityHud();
   buildPips();
   startRound();
@@ -347,6 +350,8 @@ function startRound() {
   game.noises = [];
   clearAbilities();
   clearFx();
+  clearRagdolls(scene);
+  for (const f of game.fighters) resetFighterMesh(f);
   const counts = [0, 0];
   for (const f of game.fighters) {
     if (!f.alive || game.round === 1) {
@@ -812,8 +817,10 @@ function updateCamera(dt) {
     const side = Math.cos(p.yaw) * p.vel.x - Math.sin(p.yaw) * p.vel.z;
     camera.rotation.z = -side * 0.0025;
     if (!p.alive) {
-      camera.position.y = p.pos.y + 0.4;
-      camera.rotation.z = 0.5;
+      // death cam: pull back and look at your own ragdoll
+      const body = p.mesh.userData.ragdoll ? p.mesh.userData.ragdoll.pts[0] : p.pos;
+      camera.position.set(body.x + Math.sin(p.yaw) * 2.6, body.y + 1.9, body.z + Math.cos(p.yaw) * 2.6);
+      camera.lookAt(body.x, body.y, body.z);
     }
     if (p.scoped) fov = 75 / w.scope;
     else fov = 75 - aimK * 13;
@@ -911,11 +918,14 @@ function step(dt) {
   noiseFootsteps(dt);
   updateAbilities(dt);
   updateFx(dt);
+  updateRagdolls(dt);
   updateWorldFx(t);
   for (const f of game.fighters) updateFighterMesh(f, dt, game.player);
   updateCamera(dt);
+  if (debugCam) { camera.position.copy(debugCam.pos); camera.lookAt(debugCam.look); vmRoot.visible = false; }
   updateHud(dt);
 }
+let debugCam = null;
 
 function idleCamera(ts) {
   const a = ts * 0.00005;
@@ -944,7 +954,7 @@ requestAnimationFrame(frame);
 
 // debug handle for testing in the console
 window.__riftline = {
-  game, startMatch, vmScene, renderer, composer, noPost(v) { debugNoPost = v; }, aim(v) { forceAim = v; },
+  game, startMatch, vmScene, cam(pos, look) { debugCam = pos ? { pos: new THREE.Vector3(...pos), look: new THREE.Vector3(...look) } : null; }, renderer, composer, noPost(v) { debugNoPost = v; }, aim(v) { forceAim = v; },
   spray(n) { const p = game.player, out = []; for (let i = 0; i < n * 8; i++) { if (i % 8 === 0) { tryFire(p); out.push([+(p.recoil * 1000).toFixed(0), +(p.recoilYaw * 1000).toFixed(0)]); } step(1 / 120); } return out; },
   tick(n = 1, dt = 1 / 60) { for (let i = 0; i < n; i++) if (!game.paused && game.phase !== 'over' && game.phase !== 'menu') step(dt); render(); },
 };

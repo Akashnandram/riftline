@@ -4,6 +4,7 @@ import { WEAPONS, AGENTS, MOVE, ECON, MATCH } from './config.js';
 import { boxes, raycastWorldHit, rayBox, raySphere, surfaceOf } from './world.js';
 import { tracer, blood, impact, bulletHole, muzzleSprite } from './fx.js';
 import { sfx } from './audio.js';
+import { buildCharacter, setCharacterGun, animateCharacter, startRagdoll, flinch } from './characters.js';
 
 export const RADIUS = 0.35, HEIGHT = 1.8, EYE = 1.62;
 export const TEAM_COLORS = [0x3d8bff, 0xff4655];
@@ -33,8 +34,7 @@ export class Fighter {
     this.overchargeUntil = 0; this.slowUntil = 0; this.furyUntil = 0; this.furyShots = 0;
     this.healLeft = 0;
     this.dashT = 0; this.dashDir = new THREE.Vector3();
-    this.walkPhase = 0; this.deathT = 0;
-    this.mesh = buildFighterMesh(this);
+    this.mesh = buildCharacter(TEAM_COLORS[team], this.agent);
     this.resetAbilities();
   }
 
@@ -59,6 +59,8 @@ export class Fighter {
       const r = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
       return this.eye(out).addScaledVector(f, 0.7).addScaledVector(r, 0.18).add(new THREE.Vector3(0, -0.14, 0));
     }
+    const g = this.mesh.userData.gun;
+    if (g && this.mesh.visible) return g.localToWorld(out.copy(g.userData.tip));
     const f = this.lookDir(new THREE.Vector3());
     return this.eye(out).addScaledVector(f, 0.75).add(new THREE.Vector3(0, -0.3, 0));
   }
@@ -68,6 +70,7 @@ export class Fighter {
     if (w.slot === 'primary') { this.primary = key; this.cur = 'primary'; } else { this.secondary = key; if (!this.primary) this.cur = 'secondary'; }
     this.ammo[key] = w.mag;
     this.reloadT = 0;
+    setGunLook(this);
   }
 
   get speedMul() {
@@ -80,93 +83,33 @@ export class Fighter {
 }
 
 // ---------------------------------------------------------------------------
-// Mesh
+// Mesh (articulated character rig — see characters.js)
 // ---------------------------------------------------------------------------
-const boxGeo = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-
-function buildFighterMesh(f) {
-  const g = new THREE.Group();
-  const teamCol = TEAM_COLORS[f.team];
-  const accent = new THREE.Color(f.agent.color);
-  const mat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, ...extra });
-
-  const legMat = mat(0x2a2e38);
-  const legL = new THREE.Mesh(boxGeo(0.22, 0.85, 0.26), legMat);
-  const legR = legL.clone();
-  legL.geometry = legL.geometry.clone(); legL.geometry.translate(0, -0.425, 0);
-  legR.geometry = legL.geometry;
-  legL.position.set(-0.13, 0.85, 0); legR.position.set(0.13, 0.85, 0);
-
-  const torso = new THREE.Mesh(boxGeo(0.6, 0.62, 0.36), mat(teamCol));
-  torso.position.y = 1.15;
-  const vest = new THREE.Mesh(boxGeo(0.62, 0.18, 0.38), mat(accent, { emissive: accent, emissiveIntensity: 0.25 }));
-  vest.position.y = 1.32;
-  const head = new THREE.Mesh(boxGeo(0.32, 0.34, 0.32), mat(0xe2c4a6));
-  head.position.y = 1.62;
-  const visor = new THREE.Mesh(boxGeo(0.3, 0.09, 0.06), mat(accent, { emissive: accent, emissiveIntensity: 0.9 }));
-  visor.position.set(0, 1.66, -0.16);
-  const hair = new THREE.Mesh(boxGeo(0.34, 0.1, 0.34), mat(0x1d1f26));
-  hair.position.y = 1.82;
-
-  const arms = new THREE.Group();
-  arms.position.set(0, 1.3, 0);
-  const arm = new THREE.Mesh(boxGeo(0.12, 0.12, 0.45), mat(teamCol));
-  arm.position.set(0.22, -0.05, -0.2);
-  const arm2 = arm.clone(); arm2.position.set(-0.12, -0.05, -0.28); arm2.rotation.y = -0.5;
-  const gun = new THREE.Mesh(boxGeo(0.08, 0.12, 0.7), mat(0x22252b));
-  gun.position.set(0.15, 0.02, -0.5);
-  arms.add(arm, arm2, gun);
-
-  const body = new THREE.Group();
-  body.add(legL, legR, torso, vest, head, visor, hair, arms);
-  body.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-  g.add(body);
-
-  // through-wall reveal silhouette
-  const ghostMat = new THREE.MeshBasicMaterial({ color: 0xff3355, transparent: true, opacity: 0.55, depthTest: false });
-  const ghost = new THREE.Group();
-  const gb = new THREE.Mesh(boxGeo(0.62, 1.45, 0.38), ghostMat); gb.position.y = 0.72;
-  const gh = new THREE.Mesh(boxGeo(0.34, 0.34, 0.34), ghostMat); gh.position.y = 1.62;
-  ghost.add(gb, gh);
-  ghost.renderOrder = 999; gb.renderOrder = gh.renderOrder = 999;
-  ghost.visible = false;
-  g.add(ghost);
-
-  // ally marker
-  const marker = new THREE.Mesh(new THREE.OctahedronGeometry(0.1), new THREE.MeshBasicMaterial({ color: teamCol, depthTest: false, transparent: true, opacity: 0.85 }));
-  marker.position.y = 2.15; marker.renderOrder = 998;
-  marker.visible = false;
-  g.add(marker);
-
-  g.userData = { body, legL, legR, arms, gun, ghost, marker, head };
-  return g;
+export function setGunLook(f) {
+  if (!f.mesh.userData.ragdoll) setCharacterGun(f.mesh, f.weaponKey());
 }
 
-export function setGunLook(f) {
-  const w = f.weapon();
-  const gun = f.mesh.userData.gun;
-  gun.scale.z = w.len / 0.7;
-  gun.position.z = -0.2 - w.len * 0.45;
+/** Swap in a fresh rig after a ragdoll death (called at round start). */
+export function resetFighterMesh(f) {
+  if (!f.mesh.userData.ragdoll) return;
+  game.scene.remove(f.mesh);
+  f.mesh = buildCharacter(TEAM_COLORS[f.team], f.agent);
+  game.scene.add(f.mesh);
+  setGunLook(f);
 }
 
 export function updateFighterMesh(f, dt, viewer) {
   const m = f.mesh, u = m.userData;
+  if (!f.alive) { if (!u.ragdoll) startRagdoll(m, game.scene, f.vel, f.lastHitDir, f.lastHitHead); return; }
   m.position.copy(f.pos);
   m.rotation.y = f.yaw;
   m.visible = !(f.isPlayer && !game.spectating);
-  if (!f.alive) {
-    f.deathT = Math.min(1, f.deathT + dt * 3);
-    u.body.rotation.x = -f.deathT * Math.PI / 2;
-    u.body.position.y = f.deathT * 0.15;
-    u.ghost.visible = false; u.marker.visible = false;
-    return;
-  }
-  u.body.rotation.x = 0; u.body.position.y = 0; f.deathT = 0;
-  const hs = Math.hypot(f.vel.x, f.vel.z);
-  f.walkPhase += hs * dt * 1.6;
-  const swing = Math.sin(f.walkPhase) * Math.min(1, hs / 4) * 0.6;
-  u.legL.rotation.x = swing; u.legR.rotation.x = -swing;
-  u.arms.rotation.x = f.pitch * 0.8;
+  if (!m.visible) return;
+  const w = f.weapon();
+  animateCharacter(m, {
+    yaw: f.yaw, pitch: f.pitch + f.recoil * 0.5, vel: f.vel, onGround: f.onGround,
+    kick: f.kickT || 0, reload: f.reloadT > 0 ? 1 - f.reloadT / w.reload : -1,
+  }, dt);
   const t = now();
   u.ghost.visible = viewer && f.team !== viewer.team && t < f.revealedUntil;
   u.marker.visible = viewer && f.team === viewer.team && !f.isPlayer;
@@ -312,7 +255,7 @@ export function tryFire(f) {
   if (target) {
     let dmg = head ? w.head : w.dmg;
     if (w.key === 'p9' && t > 30) dmg = Math.round(dmg * 0.85);
-    applyDamage(target, dmg, f, { head, weapon: w.key });
+    applyDamage(target, dmg, f, { head, weapon: w.key, dir: _d });
     blood(_end, _d);
   } else if (wall && wall.t < 150) {
     const surf = wall.kind === 'floor' ? 'floor' : surfaceOf(wall.kind);
@@ -414,6 +357,11 @@ export function applyDamage(target, amount, attacker, opts = {}) {
     target.damagedBy.set(attacker, now());
   }
   target.lastAttacker = attacker;
+  if (opts.dir) target.lastHitDir = opts.dir.clone();
+  else if (attacker && attacker !== target) target.lastHitDir = new THREE.Vector3().subVectors(target.pos, attacker.pos).setY(0.3).normalize();
+  else target.lastHitDir = null;
+  target.lastHitHead = !!opts.head;
+  if (amount >= 5) flinch(target.mesh, opts.dir, opts.head);
   target.lastHitT = now();
   target.brain?.onDamaged(attacker);
   if (attacker === game.player) game.onPlayerHit?.(target, dealt, opts.head, target.hp <= 0);
