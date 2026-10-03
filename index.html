@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Riftline – Tactical Hero Shooter</title>
+  <meta name="description" content="5v5 tactical hero shooter in your browser. Pick an agent, buy weapons, use abilities and win rounds against bots." />
+  <meta name="theme-color" content="#0f1923" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <!-- ===================== HUD ===================== -->
+  <div id="hud" hidden>
+    <div id="topbar">
+      <div class="pips" id="pips0"></div>
+      <div class="score blue" id="score0">0</div>
+      <div class="clock"><div id="timer">1:40</div><div id="roundLabel">ROUND 1</div></div>
+      <div class="score red" id="score1">0</div>
+      <div class="pips" id="pips1"></div>
+    </div>
+    <div id="killfeed"></div>
+    <canvas id="minimap" width="252" height="192"></canvas>
+
+    <div id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b></b></div>
+    <div id="hitmarker"></div>
+    <div id="dmgNums"></div>
+
+    <div id="centerMsg"><div id="msgMain"></div><div id="msgSub"></div></div>
+    <div id="specLabel" hidden></div>
+    <div id="buffs"></div>
+
+    <div id="bottomLeft">
+      <div class="stat"><span id="hpVal">100</span><small>HP</small></div>
+      <div class="stat armor"><span id="armorVal">0</span><small>SHIELD</small></div>
+    </div>
+    <div id="abilities">
+      <div class="abil" id="abQ"><div class="cd"></div><kbd>Q</kbd><span class="nm"></span><span class="ch"></span></div>
+      <div class="abil" id="abE"><div class="cd"></div><kbd>E</kbd><span class="nm"></span><span class="ch"></span></div>
+      <div class="abil ult" id="abX"><div class="cd"></div><kbd>X</kbd><span class="nm"></span><span class="ch"></span></div>
+    </div>
+    <div id="bottomRight">
+      <div id="ammo"><span id="ammoMag">12</span><small id="ammoMax">/12</small></div>
+      <div id="weaponName">P9 Sidearm</div>
+      <div id="credits">¤ 800</div>
+    </div>
+  </div>
+
+  <div id="flash"></div>
+  <div id="blackout"></div>
+  <div id="vignette"></div>
+  <div id="scope"><div class="ring"></div></div>
+
+  <!-- ===================== BUY MENU ===================== -->
+  <div id="buyMenu" class="panel" hidden>
+    <div class="buyHead"><h2>ARMORY</h2><div id="buyCredits">¤ 800</div><div id="buyTimer"></div></div>
+    <div class="buyCols">
+      <div><h3>SIDEARMS</h3><div class="items" data-cat="secondary"></div></div>
+      <div><h3>PRIMARY</h3><div class="items" data-cat="primary"></div></div>
+      <div><h3>SHIELDS</h3><div class="items" data-cat="armor"></div></div>
+    </div>
+    <p class="hint">Click or press the number to buy · buying again in the same slot refunds this round's purchase · <kbd>B</kbd> to close</p>
+  </div>
+
+  <!-- ===================== SCOREBOARD ===================== -->
+  <div id="scoreboard" class="panel" hidden></div>
+
+  <!-- ===================== MENUS ===================== -->
+  <div id="menu" class="screen">
+    <div class="menuInner">
+      <h1>RIFT<span>LINE</span></h1>
+      <p class="tag">Tactical 5v5 hero shooter · pick an agent · win the rounds</p>
+
+      <h3>CHOOSE YOUR AGENT</h3>
+      <div id="agentCards"></div>
+
+      <div class="opts">
+        <div class="opt"><h4>MODE</h4><div class="seg" id="segSize">
+          <button data-v="1">1v1</button><button data-v="3">3v3</button><button data-v="5" class="on">5v5</button>
+        </div></div>
+        <div class="opt"><h4>BOT DIFFICULTY</h4><div class="seg" id="segDiff">
+          <button data-v="easy">Easy</button><button data-v="normal" class="on">Normal</button><button data-v="hard">Hard</button>
+        </div></div>
+        <div class="opt"><h4>SENSITIVITY <span id="sensVal">1.0</span></h4>
+          <input type="range" id="sens" min="0.2" max="3" step="0.05" value="1" />
+        </div>
+      </div>
+
+      <button id="lockIn" class="big">LOCK IN</button>
+      <p id="touchWarn" hidden>Riftline needs a keyboard and mouse — open it on a desktop browser.</p>
+
+      <details class="controls">
+        <summary>Controls</summary>
+        <div class="grid">
+          <span><kbd>WASD</kbd> move</span><span><kbd>Mouse</kbd> aim / shoot</span>
+          <span><kbd>Shift</kbd> walk (silent, accurate)</span><span><kbd>Space</kbd> jump</span>
+          <span><kbd>RMB</kbd> scope / zoom</span><span><kbd>R</kbd> reload</span>
+          <span><kbd>1</kbd>/<kbd>2</kbd> primary / sidearm</span><span><kbd>Q</kbd> <kbd>E</kbd> <kbd>X</kbd> abilities / ultimate</span>
+          <span><kbd>B</kbd> buy (buy phase)</span><span><kbd>Tab</kbd> scoreboard</span>
+          <span><kbd>M</kbd> mute</span><span><kbd>Esc</kbd> pause</span>
+        </div>
+        <p>First team to win 5 rounds wins the match. Earn credits from kills and rounds, then buy guns and shields during the buy phase. Kills charge your ultimate. Stopping before you shoot makes you accurate.</p>
+      </details>
+    </div>
+  </div>
+
+  <div id="pause" class="screen dim" hidden>
+    <div class="menuInner small">
+      <h2>PAUSED</h2>
+      <button id="resume" class="big">CLICK TO RESUME</button>
+      <button id="quit" class="ghost">Quit to menu</button>
+    </div>
+  </div>
+
+  <div id="over" class="screen dim" hidden>
+    <div class="menuInner">
+      <h2 id="overTitle">VICTORY</h2>
+      <p id="overScore" class="tag"></p>
+      <div id="overBoard"></div>
+      <div class="row">
+        <button id="again" class="big">PLAY AGAIN</button>
+        <button id="toMenu" class="ghost">Change agent</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="src/game.js"></script>
+</body>
+</html>
