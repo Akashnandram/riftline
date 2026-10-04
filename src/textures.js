@@ -158,6 +158,62 @@ function panels(size) {
   }, 3);
 }
 
+// --- Neutral house plaster (tinted per house via material colour; tile = 2.5m) ---
+function housePlaster(size) {
+  const n = fbm(71, 4), fine = fbm(72, 64, 2), blot = fbm(73, 3, 4), crack = valueNoise(74, 48);
+  return generate(size, (u, v) => {
+    const b = clamp01((blot(u, v) - 0.55) * 3);
+    const cr = crack(u * 48, v * 6) > 0.985 ? 0.07 : 0;
+    const c = 0.9 + (n(u, v) - 0.5) * 0.12 - b * 0.1 + (fine(u, v) - 0.5) * 0.08 - cr;
+    return [c * 235, c * 232, c * 226, n(u, v) * 0.5 + fine(u, v) * 0.5 - cr, 0.92];
+  }, 2);
+}
+
+// --- Clay roof tiles (tile = 2m, rows of curved tiles) ---
+function roofTiles(size) {
+  const n = fbm(81, 8), grit = fbm(82, 32, 3);
+  return generate(size, (u, v) => {
+    const rows = 8, row = Math.floor(v * rows), rv = v * rows - row;
+    const cols = 6, cu = (u * cols + (row % 2) * 0.5) % 1;
+    const curve = Math.sin(cu * Math.PI);
+    const shade = 0.55 + curve * 0.35 - (rv > 0.85 ? 0.35 : 0) + (n(u, v) - 0.5) * 0.15 + ((row * 13 + Math.floor(u * cols)) % 4) * 0.03;
+    return [shade * 150, shade * 72, shade * 52, curve * 0.6 + rv * 0.3 + grit(u, v) * 0.1, 0.8];
+  }, 3);
+}
+
+// --- Wood floor planks (tile = 2m) ---
+function planks(size) {
+  const grain = valueNoise(91, 8), fine = fbm(92, 32, 3);
+  return generate(size, (u, v) => {
+    const boards = 8, b = Math.floor(v * boards), bv = v * boards - b;
+    const off = ((b * 37) % 10) / 10, seam = bv < 0.05 || ((u + off) % 0.5) < 0.006;
+    const g = grain(u * 4 + b * 3.1, v * 60) * 0.6 + fine(u, v) * 0.4;
+    const tone = 0.62 + ((b * 7) % 5) * 0.05 + g * 0.3;
+    return seam ? [40, 28, 18, 0.1, 0.9] : [tone * 150, tone * 102, tone * 62, 0.5 + g * 0.2, 0.7];
+  }, 2);
+}
+
+// --- Stone pavers for the central plaza (tile = 2m) ---
+function pavers(size) {
+  const n = fbm(101, 8), grit = fbm(102, 32, 3);
+  return generate(size, (u, v) => {
+    const k = 4, iu = Math.floor(u * k), iv = Math.floor(v * k), fu = u * k - iu, fv = v * k - iv;
+    const gap = fu < 0.04 || fv < 0.04;
+    const tone = 0.7 + ((iu * 5 + iv * 11) % 7) * 0.03 + (n(u, v) - 0.5) * 0.1 + (grit(u, v) - 0.5) * 0.1;
+    return gap ? [70, 68, 64, 0.1, 0.95] : [tone * 175, tone * 166, tone * 150, 0.6 + grit(u, v) * 0.3, 0.85];
+  }, 3);
+}
+
+// --- Burlap for sandbags ---
+function burlap(size) {
+  const weave = valueNoise(111, 64), n = fbm(112, 8);
+  return generate(size, (u, v) => {
+    const w = (Math.sin(u * 200) * Math.sin(v * 200)) * 0.5 + 0.5;
+    const c = 0.72 + (n(u, v) - 0.5) * 0.18 + (weave(u * 64, v * 64) - 0.5) * 0.1;
+    return [c * 176, c * 152, c * 108, w * 0.6 + n(u, v) * 0.4, 0.95];
+  }, 1.5);
+}
+
 export function buildMaterials(quality) {
   const size = quality === 'low' ? 256 : 512;
   const mk = (t, extra = {}) => new THREE.MeshStandardMaterial({ ...t, roughness: 1, metalness: 0, ...extra });
@@ -168,13 +224,20 @@ export function buildMaterials(quality) {
     crate: mk(crate(size)),
     pillar: mk(paintedMetal(size), { metalness: 0.55 }),
     outer: mk(panels(size)),
+    hwall: mk(housePlaster(size)),
+    iwall: mk(housePlaster(size), { color: 0xe6dfd2 }),
+    roof: mk(roofTiles(size)),
+    planks: planks(size),
+    pavers: pavers(size),
+    burlap: mk(burlap(size)),
+    furniture: mk(planks(size), { color: 0xb9a183 }),
     trim: new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.45, metalness: 0.7 }),
     base: new THREE.MeshStandardMaterial({ color: 0x5b554d, roughness: 0.95 }),
   };
 }
 
 // World-space tile size (m) per material, so textures never stretch.
-export const TILE = { wall: 3, block: 2, pillar: 2, outer: 4, crate: 0 };
+export const TILE = { wall: 3, block: 2, pillar: 2, outer: 4, crate: 0, hwall: 2.5, iwall: 2.5, roof: 2, furniture: 1.2 };
 
 // --- Bullet hole decal ---
 let holeTex = null;

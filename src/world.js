@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildMaterials, TILE, softTexture } from './textures.js';
+import { buildProps } from './props.js';
 
 // ---------------------------------------------------------------------------
 // Map layout. Axis-aligned boxes only, so collision + raycasts stay simple.
@@ -19,6 +20,126 @@ function sym(cx, cz, w, d, h, kind, y0) {
   if (cx !== 0 || cz !== 0) add(-cx, -cz, w, d, h, kind, y0);
 }
 
+// ---------------------------------------------------------------------------
+// Map definition. Everything is described for the WEST half and mirrored through (0,0)
+// (point symmetry), so both teams get identical cover. MAPDEF keeps the final lists so
+// props.js can draw the detailed visuals for each collision shape.
+// ---------------------------------------------------------------------------
+export const MAPDEF = { houses: [], vehicles: [], trees: [], lamps: [], barrels: [], sandbags: [], fences: [], stalls: [] };
+const WALL_T = 0.3;
+export const HOUSE_H = 3.2;
+
+const mirrorRect = ([x0, z0, x1, z1]) => [-x1, -z1, -x0, -z0];
+const FLIP = { n: 's', s: 'n', e: 'w', w: 'e' };
+
+function mirrorHouse(h) {
+  return {
+    ...h, rect: mirrorRect(h.rect),
+    openings: h.openings.map((o) => ({ ...o, side: FLIP[o.side], a: -o.b, b: -o.a })),
+    inner: h.inner.map(mirrorRect),
+    furniture: h.furniture.map(([cx, cz, w, d, hh, k]) => [-cx, -cz, w, d, hh, k]),
+    lamp: h.lamp && [-h.lamp[0], -h.lamp[1]],
+  };
+}
+
+/** House: perimeter walls with doors/windows, interior walls, furniture and a flat roof. */
+function buildHouse(h) {
+  const [x0, z0, x1, z1] = h.rect, T = WALL_T;
+  const sides = {
+    n: { fixed: z0, lo: x0 - T / 2, hi: x1 + T / 2, alongX: true },
+    s: { fixed: z1, lo: x0 - T / 2, hi: x1 + T / 2, alongX: true },
+    w: { fixed: x0, lo: z0 + T / 2, hi: z1 - T / 2, alongX: false },
+    e: { fixed: x1, lo: z0 + T / 2, hi: z1 - T / 2, alongX: false },
+  };
+  for (const [k, sd] of Object.entries(sides)) {
+    const seg = (a, b, y0, y1) => {
+      if (b - a < 0.01 || y1 - y0 < 0.01) return;
+      const box = sd.alongX ? add((a + b) / 2, sd.fixed, b - a, T, y1 - y0, 'hwall', y0) : add(sd.fixed, (a + b) / 2, T, b - a, y1 - y0, 'hwall', y0);
+      box.tint = h.color;
+    };
+    let cur = sd.lo;
+    for (const o of h.openings.filter((o) => o.side === k).sort((p, q) => p.a - q.a)) {
+      seg(cur, o.a, 0, HOUSE_H);
+      if (o.type === 'door') seg(o.a, o.b, 2.3, HOUSE_H);
+      else { seg(o.a, o.b, 0, 1.0); seg(o.a, o.b, 2.1, HOUSE_H); }
+      cur = o.b;
+    }
+    seg(cur, sd.hi, 0, HOUSE_H);
+  }
+  for (const [ax0, az0, ax1, az1] of h.inner) add((ax0 + ax1) / 2, (az0 + az1) / 2, ax1 - ax0, az1 - az0, HOUSE_H, 'iwall');
+  add((x0 + x1) / 2, (z0 + z1) / 2, x1 - x0 + 0.6, z1 - z0 + 0.6, 0.22, 'roof', HOUSE_H);
+  for (const [cx, cz, w, d, hh] of h.furniture) add(cx, cz, w, d, hh, 'furniture');
+  MAPDEF.houses.push(h);
+}
+
+/** Vehicles: car = one low box; truck = tall cargo box + cab at the `dir` end of its long axis. */
+function buildVehicle(v) {
+  const [x0, z0, x1, z1] = v.rect;
+  const alongX = x1 - x0 > z1 - z0;
+  if (v.type === 'car') add((x0 + x1) / 2, (z0 + z1) / 2, x1 - x0, z1 - z0, 1.35, 'car');
+  else {
+    const cab = 2.0;
+    const r = alongX
+      ? (v.dir > 0 ? [[x0, x1 - cab], [x1 - cab, x1]] : [[x0 + cab, x1], [x0, x0 + cab]])
+      : (v.dir > 0 ? [[z0, z1 - cab], [z1 - cab, z1]] : [[z0 + cab, z1], [z0, z0 + cab]]);
+    const [[c0, c1], [k0, k1]] = r;
+    if (alongX) { add((c0 + c1) / 2, (z0 + z1) / 2, c1 - c0, z1 - z0, 2.9, 'car'); add((k0 + k1) / 2, (z0 + z1) / 2, k1 - k0, z1 - z0 - 0.1, 2.3, 'car'); }
+    else { add((x0 + x1) / 2, (c0 + c1) / 2, x1 - x0, c1 - c0, 2.9, 'car'); add((x0 + x1) / 2, (k0 + k1) / 2, x1 - x0 - 0.1, k1 - k0, 2.3, 'car'); }
+  }
+  MAPDEF.vehicles.push(v);
+}
+
+const WEST = {
+  houses: [
+    { // lane A west (mirrors onto B site)
+      rect: [-22, -29.6, -14, -23.6], color: 0xd8c6a2,
+      openings: [
+        { side: 'n', type: 'door', a: -19.2, b: -17.0 }, { side: 'n', type: 'window', a: -21.6, b: -20.4 },
+        { side: 'n', type: 'window', a: -16.2, b: -15.0 }, { side: 'e', type: 'door', a: -27.2, b: -25.0 },
+        { side: 'w', type: 'window', a: -27.6, b: -26.2 },
+      ],
+      inner: [[-18.15, -29.45, -17.85, -26.6]],
+      furniture: [[-20.3, -27.6, 1.4, 0.8, 0.78], [-16, -29.05, 1.6, 0.45, 1.9], [-15.2, -24.4, 0.8, 0.8, 0.8]],
+      lamp: [-18, -25.4],
+    },
+    { // lane B west (mirrors onto A site)
+      rect: [-23, 22.6, -15, 29.6], color: 0xa2b39a,
+      openings: [
+        { side: 'n', type: 'door', a: -20.2, b: -18.0 }, { side: 'n', type: 'window', a: -17.2, b: -16.0 },
+        { side: 'e', type: 'door', a: 24.8, b: 27.0 }, { side: 'w', type: 'window', a: 25.0, b: 26.4 },
+        { side: 's', type: 'window', a: -18.6, b: -17.2 },
+      ],
+      inner: [[-22.85, 26.05, -19.8, 26.35]],
+      furniture: [[-21.4, 28.7, 1.8, 0.8, 0.65], [-17.2, 27.6, 1.2, 0.8, 0.78], [-22.3, 23.3, 0.8, 0.5, 1.6]],
+      lamp: [-19, 24.8],
+    },
+  ],
+  vehicles: [
+    { type: 'truck', rect: [-5, -22.2, 2.6, -19.8], dir: 1, color: 0x456a8c },
+    { type: 'car', rect: [-11.1, 24.6, -6.9, 26.4], color: 0xa3392d },
+    { type: 'car', rect: [-25, 3, -23.2, 7.2], color: 0xd6d4cc },
+  ],
+  trees: [[-27, -27], [-6, -27.5], [-27, 13], [-2, 27.5]],
+  lamps: [[-3, -25], [-14, 21], [-8, -8.4]],
+  barrels: [[-26, -13], [-25.25, -13.5], [-6.5, -6.2], [-20.5, 14.5]],
+  sandbags: [[-11, -15, 3.2, 0.9], [-4.5, 17.5, 3.2, 0.9]],
+  fences: [[-13, 17.5, 4, 0.12]],
+  stalls: [[-11, 5, 2.4, 0.9]],
+};
+
+// two-door shop in the middle (point-symmetric on its own, so it isn't mirrored)
+const CENTER_HOUSE = {
+  rect: [-3, -3, 3, 3], color: 0xc98f6b,
+  openings: [
+    { side: 'w', type: 'door', a: -1.2, b: 1.0 }, { side: 'e', type: 'door', a: -1.0, b: 1.2 },
+    { side: 'n', type: 'window', a: -2.3, b: -0.9 }, { side: 's', type: 'window', a: 0.9, b: 2.3 },
+    { side: 'n', type: 'window', a: 0.6, b: 1.8 }, { side: 's', type: 'window', a: -1.8, b: -0.6 },
+  ],
+  inner: [],
+  furniture: [[-1.3, -2.45, 1.8, 0.5, 1.0], [1.3, 2.45, 1.8, 0.5, 1.0]],
+  lamp: [0, 0],
+};
+
 function buildLayout() {
   // outer walls
   add(0, -31, 84, 2, 7, 'outer'); add(0, 31, 84, 2, 7, 'outer');
@@ -32,33 +153,33 @@ function buildLayout() {
   for (const x of [-30, 30]) {
     for (const [a, b] of [[-30, -22], [-17, -2.5], [2.5, 17], [22, 30]]) add(x, (a + b) / 2, 1.2, b - a, 5, 'wall');
   }
-
-  // mid
-  add(0, 0, 4, 6, 3, 'block');
-  sym(-10, 4, 2, 2, 1, 'crate');
-  sym(-14, -5, 1.6, 1.6, 2.2, 'crate');
-  sym(-22, 0, 1.2, 5, 2.6, 'wall');
-  sym(-6, -6, 1.5, 1.5, 1, 'crate');
-
   // spawn exit cover
   sym(-25, -19.5, 1.2, 4, 2.6, 'wall');
   sym(-25, 19.5, 1.2, 4, 2.6, 'wall');
+  sym(-22, 0, 1.2, 5, 2.6, 'wall');
 
-  // lane A (z < -10) — mirrored into lane B on the other side
-  sym(-18, -21, 2.2, 2.2, 2.2, 'crate');
-  sym(-16.2, -19.4, 1.2, 1.2, 1, 'crate');
-  sym(-10, -25, 3, 1.2, 1.1, 'crate');
+  // houses
+  buildHouse(CENTER_HOUSE);
+  for (const h of WEST.houses) { buildHouse(h); buildHouse(mirrorHouse(h)); }
+  // vehicles
+  for (const v of WEST.vehicles) { buildVehicle(v); buildVehicle({ ...v, rect: mirrorRect(v.rect), dir: -(v.dir || 1) }); }
+
+  // solid cover
   sym(-7, -15, 1.2, 5, 4, 'wall');
-  sym(-3, -25, 1.6, 1.6, 5, 'pillar');
-  sym(0, -21, 3, 3, 2.4, 'block');
-
-  // lane B (z > 10) — mirrored into lane A on the other side
-  sym(-18, 20, 1.6, 4, 2.4, 'wall');
-  sym(-12, 24, 2, 2, 1, 'crate');
+  sym(-15, -5.5, 1.6, 1.6, 2.2, 'crate');
   sym(-11, 14, 1.6, 1.6, 2.2, 'crate');
-  sym(-5, 18, 4, 1.2, 1.1, 'crate');
-  sym(-3, 26, 1.6, 1.6, 5, 'pillar');
+  sym(-12, -19, 1.5, 1.5, 1.5, 'crate');
+  sym(-12, -19, 1.1, 1.1, 1.0, 'crate', 1.5);       // smaller crate stacked on top
+
+  const both = (list, fn) => { for (const p of list) { fn(p); fn(p.map((v, i) => (i < 2 ? -v : v))); } };
+  both(WEST.trees, ([x, z]) => { add(x, z, 0.5, 0.5, 3, 'tree'); MAPDEF.trees.push([x, z]); });
+  both(WEST.lamps, ([x, z]) => { add(x, z, 0.22, 0.22, 4.4, 'pole'); MAPDEF.lamps.push([x, z]); });
+  both(WEST.barrels, ([x, z]) => { add(x, z, 0.7, 0.7, 1.0, 'barrel'); MAPDEF.barrels.push([x, z]); });
+  both(WEST.sandbags, ([x, z, w, d]) => { add(x, z, w, d, 1.05, 'sandbag'); MAPDEF.sandbags.push([x, z, w, d]); });
+  both(WEST.fences, ([x, z, w, d]) => { add(x, z, w, d, 1.2, 'fence'); MAPDEF.fences.push([x, z, w, d]); });
+  both(WEST.stalls, ([x, z, w, d]) => { add(x, z, w, d, 1.0, 'furniture'); MAPDEF.stalls.push([x, z, w, d]); });
 }
+
 buildLayout();
 const STATIC_COUNT = boxes.length;
 
@@ -84,11 +205,21 @@ function worldUVBox(w, h, d, tile) {
   return geo;
 }
 
+const tintCache = new Map();
+function tinted(kind, tint) {
+  if (tint == null) return MATS[kind];
+  const k = kind + tint;
+  if (!tintCache.has(k)) { const m = MATS[kind].clone(); m.color.setHex(tint); tintCache.set(k, m); }
+  return tintCache.get(k);
+}
+// kinds drawn by props.js instead of as plain boxes
+const PROP_KINDS = new Set(['car', 'tree', 'pole', 'barrel', 'sandbag', 'fence']);
+
 export function boxMesh(b, color, opts = {}) {
   const w = b.maxX - b.minX, h = b.maxY - b.minY, d = b.maxZ - b.minZ;
-  const tex = !opts.transparent && MATS && MATS[b.kind];
+  const tex = !opts.transparent && MATS && MATS[b.kind]?.isMaterial;
   const geo = worldUVBox(w, h, d, tex ? TILE[b.kind] : 0);
-  const mat = tex ? MATS[b.kind] : new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.05, ...opts });
+  const mat = tex ? tinted(b.kind, b.tint) : new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.05, ...opts });
   const m = new THREE.Mesh(geo, mat);
   m.position.set((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, (b.minZ + b.maxZ) / 2);
   m.castShadow = !opts.transparent;
@@ -234,7 +365,7 @@ export function buildWorld(scene, renderer, quality = 'medium') {
       scene.add(m);
     }
   }
-  for (const [x, z, text, size] of [[21, -27, 'A', 5], [21, 27, 'B', 5], [0, -6, 'MID', 4]]) {
+  for (const [x, z, text, size] of [[19.5, -16.5, 'A', 4], [19.5, 16.5, 'B', 4], [0, -6.5, 'MID', 3.5]]) {
     const c = document.createElement('canvas'); c.width = 256; c.height = 128;
     const g = c.getContext('2d');
     g.fillStyle = text === 'MID' ? 'rgba(255,255,255,0.6)' : 'rgba(255,214,63,0.75)'; g.font = 'bold 110px sans-serif'; g.textAlign = 'center';
@@ -249,9 +380,11 @@ export function buildWorld(scene, renderer, quality = 'medium') {
 
   for (let i = 0; i < STATIC_COUNT; i++) {
     const b = boxes[i];
+    if (PROP_KINDS.has(b.kind)) continue;
     scene.add(boxMesh(b, FALLBACK[b.kind]));
     addTrims(scene, b);
   }
+  buildProps(scene, MAPDEF, MATS, quality, HOUSE_H);
 
   // floating dust motes catch the light
   if (quality !== 'low') {
@@ -264,8 +397,9 @@ export function buildWorld(scene, renderer, quality = 'medium') {
 }
 
 export function surfaceOf(kind) {
-  if (kind === 'crate') return 'wood';
-  if (kind === 'pillar' || kind === 'outer') return 'metal';
+  if (kind === 'crate' || kind === 'furniture' || kind === 'fence' || kind === 'tree') return 'wood';
+  if (kind === 'pillar' || kind === 'outer' || kind === 'car' || kind === 'pole' || kind === 'barrel') return 'metal';
+  if (kind === 'sandbag') return 'floor';
   if (kind === 'barrier') return 'energy';
   return 'concrete';
 }
@@ -573,7 +707,7 @@ export function findPath(sx, sz, gx, gz) {
 // ---------------------------------------------------------------------------
 export function drawMapBoxes(g, toPx) {
   for (const b of boxes) {
-    if (b.kind === 'outer') continue;
+    if (b.kind === 'outer' || b.kind === 'roof' || b.minY > 1.2) continue;
     const [x0, y0] = toPx(b.minX, b.minZ), [x1, y1] = toPx(b.maxX, b.maxZ);
     g.fillStyle = b.kind === 'barrier' ? 'rgba(62,230,214,0.8)' : b.maxY < 1.5 ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.6)';
     g.fillRect(x0, y0, x1 - x0, y1 - y0);

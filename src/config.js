@@ -63,7 +63,12 @@ export const HIT_ZONES = { head: 1, body: 1, legs: 0.82 };
 // Wall penetration: a round has `pen` points (per weapon); each wall costs thickness × material rate.
 // Map boxes are thick (crates 1–2m, dividers 1.2m), so per-metre costs are low: rifles punch
 // through crates and dividers, pistols only through small crates, nothing goes through stone blocks.
-export const PENETRATION = { crate: 0.35, wall: 0.6, block: 1.4, pillar: 1.5, outer: Infinity, barrier: Infinity, floor: Infinity };
+export const PENETRATION = {
+  crate: 0.35, wall: 0.6, block: 1.4, pillar: 1.5, outer: Infinity, barrier: Infinity, floor: Infinity,
+  // houses: thin plaster walls stop nothing heavier than a pistol round
+  hwall: 1.2, iwall: 1.0, roof: Infinity, furniture: 0.5, fence: 0.4, tree: 2.5,
+  car: 2.0, pole: 4, barrel: 2, sandbag: Infinity,
+};
 
 // Ability: charges refill every round. cooldown > 0 means a spent charge recharges mid-round.
 export const AGENTS = {

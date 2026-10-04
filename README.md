@@ -31,6 +31,14 @@ WASD move · Mouse aim/shoot · Shift walk (silent, accurate) · C crouch (hold)
   `raptor`, `longbow`, `step`, `impact`, `whizz`, `magout`, `magin`, `bolt`, …) replaces the synthesised version
   and still gets 3D positioning, wall muffling and reverb.
 
+## Map
+
+Point-symmetric (everything on the west half is mirrored through the centre), so both sides are fair.
+Five walk-in houses — one on each site, one in each attacker lobby, and a two-door shop in mid — with
+doors, shoot-through windows, interior walls, furniture and roofs. House walls are thin plaster (rifles,
+SMGs and pistols can wallbang them). Plus a truck in each main, cars, sandbag walls, wooden fences,
+barrels, trees, street lamps and a market stall. The layout lives in `WEST` / `CENTER_HOUSE` in `src/world.js`.
+
 ## Modes
 
 - **Plant / Defuse** (default): attackers spawn west and carry the Rift Charge; plant it on site A or B
@@ -68,7 +76,8 @@ Callouts from your teammates appear under the minimap.
 
 - `src/config.js` – all balance numbers: weapons, armor, economy, agents, bot difficulty
 - `src/world.js` – map layout (boxes), rendering, sky/lighting, raycasts, smoke line-of-sight, nav grid + A*
-- `src/textures.js` – procedural concrete/plaster/stone/wood/metal textures, decals
+- `src/textures.js` – procedural concrete/plaster/stone/wood/metal/roof/plank/paver/burlap textures, decals
+- `src/props.js` – visual detail for map props (house roofs/frames/lamps, vehicles, trees, sandbags, fences, stall, plaza, power lines), merged per material
 - `src/guns.js` – weapon models (first-person with hands, third-person for rigs)
 - `src/characters.js` – articulated soldier rigs: per-agent gear, procedural walk/run/strafe, aim, arm IK, flinch, reload, verlet ragdolls, helmet/gun drops
 - `src/audio.js` – 3D audio engine, reverb, occlusion, synthesised sounds, optional recordings

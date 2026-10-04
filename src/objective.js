@@ -11,10 +11,10 @@ import { burstSphere, ring } from './fx.js';
 
 export const SITES = {
   A: { key: 'A', min: { x: 12, z: -29 }, max: { x: 28, z: -11 }, center: { x: 21, z: -21 },
-    plants: [{ x: 21, z: -25 }, { x: 15.5, z: -16 }, { x: 22, z: -14 }],
+    plants: [{ x: 18, z: -19 }, { x: 14.5, z: -14 }, { x: 26.5, z: -25.5 }],
     entries: [{ x: 6, z: -20 }, { x: 18, z: -8.5 }] },
   B: { key: 'B', min: { x: 12, z: 11 }, max: { x: 28, z: 29 }, center: { x: 21, z: 21 },
-    plants: [{ x: 21, z: 25 }, { x: 15.5, z: 16 }, { x: 22, z: 14 }],
+    plants: [{ x: 18, z: 19.5 }, { x: 15, z: 14 }, { x: 26.3, z: 25.5 }],
     entries: [{ x: 6, z: 20 }, { x: 18, z: 8.5 }] },
 };
 for (const s of Object.values(SITES)) s.plants = s.plants.filter((p) => isWalkable(p.x, p.z));

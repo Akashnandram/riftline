@@ -19,7 +19,7 @@ const V = (x, y, z) => new THREE.Vector3(x, y, z);
 /** Corners of tall cover that bots "check" (pre-aim) while moving. */
 export const CORNERS = [];
 for (const b of boxes) {
-  if (b.maxY < 1.6 || b.kind === 'outer') continue;
+  if (b.maxY < 1.6 || b.minY > 1 || b.kind === 'outer' || b.kind === 'roof') continue;
   for (const [x, z] of [[b.minX - 0.45, b.minZ - 0.45], [b.maxX + 0.45, b.minZ - 0.45], [b.minX - 0.45, b.maxZ + 0.45], [b.maxX + 0.45, b.maxZ + 0.45]]) {
     if (x > BOUNDS.minX + 1 && x < BOUNDS.maxX - 1 && z > BOUNDS.minZ + 1 && z < BOUNDS.maxZ - 1 && isWalkable(x, z)) CORNERS.push(V(x, 1.4, z));
   }
@@ -27,7 +27,7 @@ for (const b of boxes) {
 
 function nearCover(x, z) {
   for (const b of boxes) {
-    if (b.maxY < 1.0 || b.kind === 'outer') continue;
+    if (b.maxY < 1.0 || b.minY > 1 || b.kind === 'outer') continue;
     const dx = Math.max(b.minX - x, 0, x - b.maxX), dz = Math.max(b.minZ - z, 0, z - b.maxZ);
     if (Math.hypot(dx, dz) < 1.2) return true;
   }
