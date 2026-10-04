@@ -1,7 +1,13 @@
 # Riftline – tactical hero shooter
 
+Play: https://riftline-flame.vercel.app
+
 A browser 5v5 round-based tactical shooter: pick an agent, buy weapons and shields,
 use abilities and win 5 rounds against bots. Three.js (from CDN), plain ES modules – no build step.
+
+## Deploy
+
+GitHub `Akashnandram/riftline` → Vercel project auto-deploys every push to `main`.
 
 ## Run locally
 
