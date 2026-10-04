@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildMaterials, TILE, softTexture } from './textures.js';
-import { buildProps } from './props.js';
+import { buildProps, mergeByMaterial } from './props.js';
 
 // ---------------------------------------------------------------------------
 // Map layout. Axis-aligned boxes only, so collision + raycasts stay simple.
@@ -378,12 +378,16 @@ export function buildWorld(scene, renderer, quality = 'medium') {
     scene.add(p);
   }
 
+  // static map geometry is built into a temp group, then baked into one mesh per material:
+  // ~300 walls/crates/trims become ~15 draw calls (a big win on integrated GPUs)
+  const staticGroup = new THREE.Group();
   for (let i = 0; i < STATIC_COUNT; i++) {
     const b = boxes[i];
     if (PROP_KINDS.has(b.kind)) continue;
-    scene.add(boxMesh(b, FALLBACK[b.kind]));
-    addTrims(scene, b);
+    staticGroup.add(boxMesh(b, FALLBACK[b.kind]));
+    addTrims(staticGroup, b);
   }
+  mergeByMaterial(staticGroup, scene);
   buildProps(scene, MAPDEF, MATS, quality, HOUSE_H);
 
   // floating dust motes catch the light

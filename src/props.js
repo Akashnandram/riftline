@@ -276,7 +276,7 @@ function plaza(scene, mats) {
  * Bake every static prop mesh into one merged mesh per material (world-space geometry), so the
  * hundreds of small parts (slats, bags, wheels, frames) cost a handful of draw calls.
  */
-function mergeByMaterial(root, scene) {
+export function mergeByMaterial(root, scene) {
   root.updateMatrixWorld(true);
   const groups = new Map(), keep = [];
   root.traverse((o) => {

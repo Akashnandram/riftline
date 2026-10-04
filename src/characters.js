@@ -188,28 +188,44 @@ export function buildCharacter(teamColor, agent) {
 }
 
 const mergeCache = new Map();
-function mergeJoint(j) {
-  const byMat = new Map();
-  const meshes = j.children.filter((o) => o.isMesh && !o.material.transparent);
-  if (meshes.length < 2) return;
-  for (const o of meshes) { if (!byMat.has(o.material)) byMat.set(o.material, []); byMat.get(o.material).push(o); }
-  for (const [mat, list] of byMat) {
-    if (list.length < 2) continue;
-    // identical part layouts (same geometries + transforms) share one merged geometry
-    const key = mat.uuid + list.map((o) => o.geometry.uuid + o.position.toArray().join() + o.rotation.toArray().join() + o.scale.toArray().join()).join('|');
-    let geo = mergeCache.get(key);
-    if (!geo) {
-      const geos = list.map((o) => {
-        o.updateMatrix();
-        const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
-        for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
-        if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
-        return g.applyMatrix4(o.matrix);
-      });
-      geo = mergeGeometries(geos, false);
-      for (const g of geos) g.dispose();
-      mergeCache.set(key, geo);
+// one shared material for everything that isn't glowing: colours are baked per vertex
+const BODY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.08 });
+const plain = (m) => m.isMeshStandardMaterial && !m.transparent && !m.map && (!m.emissive || m.emissive.getHex() === 0 || m.emissiveIntensity === 0);
+
+function bakedGeometry(list, withColor) {
+  const geos = list.map((o) => {
+    o.updateMatrix();
+    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+    if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+    if (withColor) {
+      const c = o.material.color, n = g.attributes.position.count, arr = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
+      g.setAttribute('color', new THREE.Float32BufferAttribute(arr, 3));
     }
+    return g.applyMatrix4(o.matrix);
+  });
+  const merged = mergeGeometries(geos, false);
+  for (const g of geos) g.dispose();
+  return merged;
+}
+
+/** Collapse a joint's meshes: all plain-coloured parts → one vertex-coloured mesh; glowing parts per material. */
+function mergeJoint(j) {
+  const meshes = j.children.filter((o) => o.isMesh);
+  if (meshes.length < 2) return;
+  const flat = meshes.filter((o) => plain(o.material));
+  const rest = meshes.filter((o) => !plain(o.material) && !o.material.transparent);
+  const groups = [];
+  if (flat.length) groups.push([BODY_MAT, flat, true]);
+  const byMat = new Map();
+  for (const o of rest) { if (!byMat.has(o.material)) byMat.set(o.material, []); byMat.get(o.material).push(o); }
+  for (const [m, list] of byMat) if (list.length > 1) groups.push([m, list, false]);
+  for (const [mat, list, color] of groups) {
+    if (list.length < 2 && !color) continue;
+    const key = (color ? 'vc' : mat.uuid) + list.map((o) => o.geometry.uuid + o.material.uuid + o.position.toArray().join() + o.rotation.toArray().join() + o.scale.toArray().join()).join('|');
+    let geo = mergeCache.get(key);
+    if (!geo) { geo = bakedGeometry(list, color); mergeCache.set(key, geo); }
     for (const o of list) j.remove(o);
     const m = new THREE.Mesh(geo, mat);
     m.castShadow = true; m.receiveShadow = true;

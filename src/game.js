@@ -38,10 +38,23 @@ const store = {
 // ---------------------------------------------------------------------------
 // Renderer / scenes
 // ---------------------------------------------------------------------------
-const QUALITY = store.get('quality', 'medium'); // low | medium | high
+/** First launch: pick Low on weak GPUs (integrated Intel, phones, software rendering). */
+function detectQuality() {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2') || document.createElement('canvas').getContext('webgl');
+    const info = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    if (/Intel|UHD|Iris|HD Graphics|Mali|Adreno|PowerVR|SwiftShader|llvmpipe|Software/i.test(name)) return 'low';
+  } catch { /* unknown → default */ }
+  return 'medium';
+}
+const QUALITY = store.get('quality', null) || (() => { const q = detectQuality(); store.set('quality', q); return q; })(); // low | medium | high
 const canvas = $('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: QUALITY === 'low', powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, QUALITY === 'low' ? 1 : QUALITY === 'medium' ? 1.5 : 2));
+// render resolution: a quality cap, then scaled live by the dynamic-resolution controller below
+const BASE_PR = Math.min(devicePixelRatio, QUALITY === 'low' ? 1 : QUALITY === 'medium' ? 1.25 : 2);
+let resScale = 1;
+renderer.setPixelRatio(BASE_PR);
 renderer.shadowMap.enabled = QUALITY !== 'low';
 renderer.shadowMap.type = QUALITY === 'high' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -83,7 +96,7 @@ const GradeShader = {
     }`,
 };
 if (QUALITY !== 'low') {
-  const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+  const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: QUALITY === 'high' ? 4 : 2 });
   composer = new EffectComposer(renderer, rt);
   composer.addPass(new RenderPass(scene, camera));
   if (QUALITY === 'high') {
@@ -126,7 +139,9 @@ const casings = [];
 function resize() {
   // a hidden or minimised tab can report 0×0, which would leave zero-size render targets
   const w = Math.max(1, innerWidth), h = Math.max(1, innerHeight);
+  renderer.setPixelRatio(BASE_PR * resScale);
   renderer.setSize(w, h, false);
+  composer?.setPixelRatio?.(BASE_PR * resScale);
   composer?.setSize(w, h);
   camera.aspect = vmCam.aspect = w / h;
   camera.updateProjectionMatrix(); vmCam.updateProjectionMatrix();
@@ -1727,12 +1742,26 @@ function updateCamera(dt) {
 // ---------------------------------------------------------------------------
 let last = performance.now();
 let fpsAcc = 0, fpsN = 0;
+// Dynamic resolution: every ~second, nudge the render scale to hold ~60 FPS (55–60 target band).
+let drAcc = 0, drN = 0;
+function dynamicResolution(raw) {
+  if (raw > 0.25) return;                      // ignore tab switches / hitches
+  drAcc += raw; drN++;
+  if (drAcc < 1) return;
+  const fps = drN / drAcc;
+  drAcc = 0; drN = 0;
+  const before = resScale;
+  if (fps < 50) resScale = Math.max(0.5, resScale - (fps < 35 ? 0.15 : 0.08));
+  else if (fps > 58 && resScale < 1) resScale = Math.min(1, resScale + 0.05);
+  if (resScale !== before) resize();
+}
 function frame(ts) {
   requestAnimationFrame(frame);
   const raw = (ts - last) / 1000;
   const dt = Math.min(0.05, raw);
   last = ts;
-  if (S.showFps) { fpsAcc += raw; if (++fpsN >= 20) { $('fps').textContent = `${Math.round(fpsN / fpsAcc)} FPS`; fpsAcc = 0; fpsN = 0; } }
+  if (S.showFps) { fpsAcc += raw; if (++fpsN >= 20) { $('fps').textContent = `${Math.round(fpsN / fpsAcc)} FPS · ${Math.round(resScale * 100)}%`; fpsAcc = 0; fpsN = 0; } }
+  if (game.phase !== 'menu' && document.visibilityState === 'visible') dynamicResolution(raw);
   if (game.phase === 'menu') { idleCamera(ts); render(); return; }
   if ((!game.paused || online()) && game.phase !== 'over') step(dt);
   render();
