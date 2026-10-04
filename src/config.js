@@ -146,10 +146,14 @@ export const AGENTS = {
   },
 };
 
+// Bot skill. dmgMul scales the damage bots deal, spreadMul widens their bullet spread,
+// fireDelay adds a pause after each shot (seconds), wobble is a permanent aim sway (radians),
+// errDecay is how fast the initial aim error shrinks while tracking (higher = snappier aim).
 export const DIFFICULTY = {
-  easy:   { reaction: 0.65, aimErr: 0.09, turn: 3.5, headChance: 0.12, still: 0.3, abilityChance: 0.3, crouch: 0.05, wallbang: 0 },
-  normal: { reaction: 0.42, aimErr: 0.055, turn: 6, headChance: 0.3, still: 0.6, abilityChance: 0.6, crouch: 0.2, wallbang: 0.3 },
-  hard:   { reaction: 0.26, aimErr: 0.03, turn: 10, headChance: 0.5, still: 0.85, abilityChance: 0.9, crouch: 0.35, wallbang: 0.7 },
+  veryeasy: { reaction: 1.1, aimErr: 0.17, turn: 2.2, headChance: 0.04, still: 0.1, abilityChance: 0.08, crouch: 0, wallbang: 0, dmgMul: 0.45, spreadMul: 2.2, fireDelay: 0.22, wobble: 0.05, errDecay: 0.5 },
+  easy:     { reaction: 0.75, aimErr: 0.11, turn: 3.2, headChance: 0.1, still: 0.25, abilityChance: 0.25, crouch: 0.05, wallbang: 0, dmgMul: 0.7, spreadMul: 1.5, fireDelay: 0.1, wobble: 0.03, errDecay: 1.0 },
+  normal:   { reaction: 0.42, aimErr: 0.055, turn: 6, headChance: 0.3, still: 0.6, abilityChance: 0.6, crouch: 0.2, wallbang: 0.3, dmgMul: 1, spreadMul: 1, fireDelay: 0, wobble: 0, errDecay: 2.2 },
+  hard:     { reaction: 0.26, aimErr: 0.03, turn: 10, headChance: 0.5, still: 0.85, abilityChance: 0.9, crouch: 0.35, wallbang: 0.7, dmgMul: 1, spreadMul: 1, fireDelay: 0, wobble: 0, errDecay: 2.2 },
 };
 
 export const BOT_NAMES = [

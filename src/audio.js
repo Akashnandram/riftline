@@ -46,6 +46,7 @@ export function initAudio() {
   const d = noise.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
   loadSamples();
+  prerenderGuns().catch(() => { /* falls back to live synthesis */ });
 }
 
 async function loadSamples() {
@@ -191,22 +192,67 @@ const GUN = {
   hammer:  { crack: 0.85, crackF: 3300, body: 1.15, bodyF: 1000, bodyD: 0.1, thump: 1.0, thumpF: 105, tail: 0.45, tailD: 0.7, mech: 0.25 },
 };
 
-function gunshot(out, t, g, close, far = false) {
-  if (far) {
-    // distant shot: body + tail only (fewer audio nodes when lots of shooting is going on)
-    hiss(out, t, { dur: g.bodyD, freq: g.bodyF, q: 0.9, peak: g.body, sweepTo: g.bodyF * 0.55 });
-    hiss(out, t + 0.01, { dur: g.tailD, freq: 700, type: 'lowpass', peak: g.tail * 1.2, attack: 0.01, sweepTo: 250 });
-    return;
+/**
+ * One gunshot, layered: transient click, supersonic crack (tamed, no harsh fizz), mid "bark",
+ * low thump + sub punch (close only), and an outdoor tail. kind: 'close' (your gun), 'mid', 'far'.
+ */
+function gunshot(out, t, g, kind) {
+  const close = kind === 'close', far = kind === 'far';
+  const tame = ctx.createBiquadFilter(); tame.type = 'lowpass'; tame.frequency.value = close ? 9000 : far ? 2600 : 6500; tame.Q.value = 0.5;
+  tame.connect(out);
+  if (!far) {
+    hiss(tame, t, { dur: 0.006, freq: 1800, q: 0.6, peak: g.crack * 0.9 });                                 // click
+    hiss(tame, t, { dur: 0.014, freq: g.crackF, type: 'highpass', peak: g.crack * (close ? 0.55 : 0.75) });   // crack
   }
-  hiss(out, t, { dur: 0.012, freq: g.crackF, type: 'highpass', peak: g.crack * (close ? 1 : 1.3) });
-  hiss(out, t, { dur: g.bodyD, freq: g.bodyF, q: 0.9, peak: g.body, sweepTo: g.bodyF * 0.55 });
-  osc(out, t, { freq: g.thumpF, dur: g.bodyD * 1.6, peak: g.thump * (close ? 1 : 0.6), slide: 0.35 });
-  hiss(out, t + 0.01, { dur: g.tailD, freq: 700, type: 'lowpass', peak: g.tail, attack: 0.01, sweepTo: 250 });
+  hiss(tame, t, { dur: g.bodyD, freq: far ? g.bodyF * 0.6 : g.bodyF, q: 0.9, peak: g.body * (far ? 0.9 : 1), sweepTo: g.bodyF * 0.5 });
+  osc(tame, t, { freq: g.thumpF, dur: g.bodyD * 1.7, peak: g.thump * (close ? 1.15 : far ? 0.35 : 0.7), slide: 0.35 });
   if (close) {
-    // action cycling: tiny metallic clicks
-    osc(out, t + 0.025, { freq: 2600, dur: 0.012, type: 'square', peak: g.mech * 0.25 });
-    hiss(out, t + 0.04, { dur: 0.02, freq: 5200, q: 4, peak: g.mech * 0.4 });
+    osc(tame, t, { freq: 55, dur: 0.09, peak: g.thump * 0.6, slide: 0.6 });                                  // sub punch
+    osc(tame, t + 0.025, { freq: 2600, dur: 0.012, type: 'square', peak: g.mech * 0.18 });                 // action
+    hiss(tame, t + 0.04, { dur: 0.02, freq: 5200, q: 4, peak: g.mech * 0.3 });
   }
+  hiss(tame, t + 0.01, { dur: g.tailD * (far ? 1.3 : 1), freq: far ? 500 : 700, type: 'lowpass', peak: g.tail * (far ? 1.3 : close ? 0.9 : 1.1), attack: 0.012, sweepTo: 220 });
+}
+
+// ---- pre-rendered gunshots: each gun is rendered once (3 variations × close/mid/far) when the
+// game loads, so a shot is a single buffer playback instead of ~6 live sound generators ----
+const bank = {};
+const VARIANTS = 3;
+async function prerenderGuns() {
+  const sr = ctx.sampleRate;
+  for (const [name, g] of Object.entries(GUN)) {
+    bank[name] = { close: [], mid: [], far: [] };
+    for (const kind of ['close', 'mid', 'far']) {
+      for (let v = 0; v < VARIANTS; v++) {
+        const len = Math.ceil((g.tailD * 1.3 + 0.35) * sr);
+        const off = new OfflineAudioContext(1, len, sr);
+        const real = ctx;
+        ctx = off;                       // the synth helpers build their graph on the offline context
+        try { gunshot(off.destination, 0, g, kind); } finally { ctx = real; }
+        const buf = await off.startRendering();
+        // keep relative loudness, only prevent clipping
+        const d = buf.getChannelData(0);
+        let peak = 0; for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]));
+        if (peak > 0.95) { const k = 0.95 / peak; for (let i = 0; i < d.length; i++) d[i] *= k; }
+        bank[name][kind].push(buf);
+      }
+    }
+    await new Promise((r) => setTimeout(r, 0));   // stay responsive while rendering
+  }
+}
+
+/** How many pre-rendered gunshot clips are ready (for diagnostics). */
+export const gunBankSize = () => Object.values(bank).reduce((n, b) => n + b.close.length + b.mid.length + b.far.length, 0);
+
+function playGun(name, out, kind) {
+  const list = bank[name]?.[kind];
+  if (!list || list.length < VARIANTS) return false;
+  const s = ctx.createBufferSource();
+  s.buffer = list[Math.floor(Math.random() * list.length)];
+  s.playbackRate.value = 0.96 + Math.random() * 0.08;
+  s.connect(out);
+  s.start();
+  return true;
 }
 
 const STEP = {
@@ -261,7 +307,11 @@ export function sfx(name, opts = {}) {
   switch (name) {
     case 'p9': case 'magnum': case 'hornet': case 'raptor': case 'longbow':
     case 'wasp': case 'warden': case 'talon': case 'sentry': case 'wraith': case 'hammer':
-      gunshot(out, t, GUN[name], !pos, dist > 22); break;
+      {
+        const kind = !pos ? 'close' : dist > 22 ? 'far' : 'mid';
+        if (!playGun(name, out, kind)) gunshot(out, t, GUN[name], kind);
+      }
+      break;
     case 'step': (STEP[opts.surface] || STEP.concrete)(out, t, 1); break;
     case 'land': hiss(out, t, { dur: 0.1, freq: 300, type: 'lowpass', peak: 1 }); break;
     case 'impact': (IMPACT[opts.surface] || IMPACT.concrete)(out, t); break;

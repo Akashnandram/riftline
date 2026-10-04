@@ -245,8 +245,10 @@ export class BotBrain {
       const dx = _tp.x - _eye.x, dy = _tp.y - _eye.y, dz = _tp.z - _eye.z;
       dYaw = Math.atan2(-dx, -dz) + this.errYaw;
       dPitch = Math.atan2(dy, Math.hypot(dx, dz)) + this.errPitch;
+      // easier bots never settle: a permanent sway on top of their aim
+      if (d.wobble) { dYaw += Math.sin(t * 3.1 + f.id * 1.7) * d.wobble; dPitch += Math.sin(t * 2.3 + f.id * 2.9) * d.wobble * 0.7; }
       // aim error shrinks while tracking
-      const decay = Math.exp(-2.2 * dt);
+      const decay = Math.exp(-(d.errDecay ?? 2.2) * dt);
       this.errYaw *= decay; this.errPitch *= decay;
     } else if (lookAt) {
       dYaw = Math.atan2(-(lookAt.x - f.pos.x), -(lookAt.z - f.pos.z));
@@ -281,6 +283,7 @@ export class BotBrain {
         const w = f.weapon();
         if (err < tol * 2.2 && t >= this.burstPauseUntil) {
           if (tryFire(f)) {
+            f.fireCD += d.fireDelay || 0;
             if (!w.auto) f.fireCD += d.reaction * 0.35;
             else if (dist > 14 && ++this.burst >= 3 + Math.floor(Math.random() * 3)) {
               this.burst = 0; this.burstPauseUntil = t + rand(0.2, 0.4);

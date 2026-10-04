@@ -309,7 +309,7 @@ export function currentSpread(f) {
   const moveK = Math.max(0, Math.min(1, (hs - 1.2) / (MOVE.run - 1.2)));
   const base = w.scope && f.scoped ? w.scopedSpread : w.spread;
   const crouchK = f.onGround ? 1 - 0.3 * f.crouch : 1;
-  return (base + f.bloom + w.move * moveK) * crouchK + (f.onGround ? 0 : 0.12);
+  return ((base + f.bloom + w.move * moveK) * crouchK + (f.onGround ? 0 : 0.12)) * (f.brain?.d.spreadMul ?? 1);
 }
 
 /** Damage multiplier at range t. falloff is [dist, mul] or a list of such steps. */
@@ -542,6 +542,7 @@ export function applyDamage(target, amount, attacker, opts = {}) {
   if (game.net?.role === 'client') return;   // the host decides damage online
   if (!target.alive || game.phase === 'end' || game.phase === 'over') return;
   if (now() < (target.protectUntil || 0)) return;   // respawn protection
+  if (attacker?.brain) amount *= attacker.brain.d.dmgMul ?? 1;   // easier bots hit softer
   const before = target.hp + target.armor;
   let a = amount;
   if (target.armor > 0) { const ab = Math.min(target.armor, a); target.armor -= ab; a -= ab; }
