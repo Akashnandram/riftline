@@ -7,6 +7,14 @@ import {
   startInbox, onInbox, sendInvite,
 } from './backend.js';
 import { Lobby } from './lobby.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+
+let googleOn = null;
+async function googleEnabled() {
+  if (googleOn !== null) return googleOn;
+  try { const r = await fetch(`${SUPABASE_URL}/auth/v1/settings`, { headers: { apikey: SUPABASE_ANON_KEY } }); googleOn = !!(await r.json()).external?.google; } catch { googleOn = false; }
+  return googleOn;
+}
 
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -71,6 +79,8 @@ function openLogin() {
   </div>`;
   const err = (e) => { $('aErr').textContent = e?.message || String(e); };
   $('gBtn').onclick = () => signInGoogle().catch(err);
+  // only offer Google if it's enabled in the Supabase project
+  googleEnabled().then((on) => { if (!on && $('gBtn')) { $('gBtn').remove(); s.querySelector('.or')?.remove(); } });
   $('aIn').onclick = async () => { try { await signIn($('aEmail').value.trim(), $('aPass').value); s.hidden = true; toast('Signed in'); } catch (e) { err(e); } };
   $('aUp').onclick = async () => {
     try {
