@@ -18,7 +18,7 @@ import { updateRagdolls, clearRagdolls } from './characters.js';
 import { BotBrain } from './bot.js';
 import { useAbility, abilityReady, updateAbilities, updateAbilityState, clearAbilities, fireFury } from './abilities.js';
 import { buy, botBuy } from './shop.js';
-import { updateFx, clearFx, smokePuff, tracer } from './fx.js';
+import { updateFx, clearFx, smokePuff, tracer, impact, blood, muzzleSprite, ring, burstSphere, spark, bulletHole } from './fx.js';
 import { initAudio, sfx, setMuted, isMuted, updateListener, setVolume } from './audio.js';
 import { S, save as saveSettings, held, isAction, drawCrosshair, openSettings, onSettingsChange } from './settings.js';
 import { profile, levelInfo, unlockedSkins, skinFor, equip, startTracking, trackKill, trackRound, trackObjective, finishMatch, completeTutorial, categoryOf } from './progress.js';
@@ -48,6 +48,9 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.autoClear = false;
+// shadows: the sun and the world are static, so on Medium the shadow map is refreshed every other frame
+renderer.shadowMap.autoUpdate = QUALITY === 'high';
+let frameNo = 0;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 300);
@@ -457,6 +460,36 @@ function startMatch(cfg, roster = null) {
   startRound();
 }
 
+/**
+ * Compile every shader the match can need *before* it starts, so the first smoke, flash, impact
+ * or explosion doesn't freeze the game while the browser builds its shader on the spot.
+ */
+function warmupShaders() {
+  const at = new THREE.Vector3(0, -20, 0), n = new THREE.Vector3(0, 1, 0);
+  impact(at, n, 'concrete'); impact(at, n, 'metal'); impact(at, n, 'energy'); blood(at, n);
+  muzzleSprite(at); ring(at, 2, 0xffffff); burstSphere(at, 2, 0xffffff); spark(at); smokePuff(at); tracer(at, at.clone().setX(5));
+  bulletHole(at, n, 'concrete');
+  // ability materials (smoke, toxin pool, barrier, projectiles, reveal ghosts)
+  const tmp = new THREE.Group();
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  for (const m of [
+    new THREE.MeshStandardMaterial({ color: 0x8a7fa8, roughness: 1, transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
+    new THREE.MeshBasicMaterial({ color: 0x8cff4a, transparent: true, opacity: 0.4, depthWrite: false }),
+    new THREE.MeshStandardMaterial({ color: 0x3ee6d6, transparent: true, opacity: 0.45, emissive: 0x1aa79b, emissiveIntensity: 0.6 }),
+    new THREE.MeshBasicMaterial({ color: 0xffd23f }),
+  ]) tmp.add(new THREE.Mesh(geo, m));
+  tmp.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0x3ee6d6, transparent: true })));
+  tmp.position.copy(at);
+  scene.add(tmp);
+  for (const f of game.fighters) f.mesh.userData.ghost.visible = true;
+  try { renderer.compile(scene, camera); renderer.compile(vmScene, vmCam); } catch { /* older drivers: compile lazily */ }
+  for (const f of game.fighters) f.mesh.userData.ghost.visible = false;
+  scene.remove(tmp);
+  tmp.traverse((o) => { o.material?.dispose?.(); });
+  geo.dispose();
+  clearFx();
+}
+
 function showMatchHud() {
   $('menu').hidden = true; $('over').hidden = true; $('hud').hidden = false;
   $('killfeed').innerHTML = '';
@@ -466,6 +499,7 @@ function showMatchHud() {
   $('tutorial').hidden = !game.config.tutorial;
   setupAbilityHud();
   buildPips();
+  warmupShaders();
 }
 
 const pickW = (opts) => { let r = Math.random() * opts.reduce((t, o) => t + o[1], 0); for (const [k, w] of opts) if ((r -= w) <= 0) return k; return opts[0][0]; };
@@ -1751,6 +1785,7 @@ function idleCamera(ts) {
 
 let debugNoPost = false;
 function render() {
+  if (!renderer.shadowMap.autoUpdate && frameNo++ % 2 === 0) renderer.shadowMap.needsUpdate = true;
   renderer.setRenderTarget(null);
   renderer.clear();
   if (composer && !debugNoPost) {

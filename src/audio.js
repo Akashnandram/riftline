@@ -26,7 +26,9 @@ function impulse(seconds, decay) {
 
 export function initAudio() {
   if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  // 'balanced' gives the audio thread a little more buffer, which avoids crackles when many sounds overlap
+  const AC = window.AudioContext || window.webkitAudioContext;
+  try { ctx = new AC({ latencyHint: 'balanced' }); } catch { ctx = new AC(); }
   const comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -14; comp.knee.value = 10; comp.ratio.value = 4;
   comp.connect(ctx.destination);
@@ -34,7 +36,7 @@ export function initAudio() {
   master.gain.value = muted ? 0 : volume;
   master.connect(comp);
   const conv = ctx.createConvolver();
-  conv.buffer = impulse(1.8, 3.2);
+  conv.buffer = impulse(1.3, 3.2);
   const wet = ctx.createGain(); wet.gain.value = 0.5;
   const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 180;
   reverbIn = hp;
@@ -84,12 +86,24 @@ export function updateListener(pos, fwd) {
  * Build the output chain for one sound. Returns the node to connect sources to.
  * pos = null → plays "in your head" (your own gun, UI).
  */
-function voice(pos, vol, reverbAmt = 0.2) {
+// ---- voice budget: too many simultaneous sounds overload the audio thread (crackles/dropouts) ----
+const MAX_VOICES = 26;
+let active = 0;
+const PRIORITY = { step: 0, shell: 0, impact: 1, whizz: 1, land: 1, magout: 1, magin: 1, bolt: 1, equip: 1, pump: 1, beep: 2 };
+
+/**
+ * Build the output chain for one sound. Returns the node to connect sources to, or null if the
+ * sound isn't worth playing (too quiet / over budget). pos = null → plays "in your head".
+ */
+function voice(pos, vol, reverbAmt, important) {
   const g = ctx.createGain();
   g.gain.value = vol;
+  const chain = [g];
   if (!pos) {
     g.connect(master);
     const s = ctx.createGain(); s.gain.value = reverbAmt; g.connect(s); s.connect(reverbIn);
+    chain.push(s);
+    g._chain = chain;
     return g;
   }
   const dist = Math.hypot(pos.x - L.x, pos.y - L.y, pos.z - L.z);
@@ -100,7 +114,9 @@ function voice(pos, vol, reverbAmt = 0.2) {
   lp.type = 'lowpass';
   lp.frequency.value = Math.max(600, 18000 / (1 + dist / 18)) * (occluded ? 0.12 : 1);
   const p = ctx.createPanner();
-  p.panningModel = 'HRTF'; p.distanceModel = 'inverse';
+  // HRTF is the expensive part: only nearby important sounds get it
+  p.panningModel = important && dist < 14 ? 'HRTF' : 'equalpower';
+  p.distanceModel = 'inverse';
   p.refDistance = 3; p.rolloffFactor = 1.1; p.maxDistance = 200;
   if (p.positionX) { p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z; } else p.setPosition(pos.x, pos.y, pos.z);
   g.connect(lp); lp.connect(p); p.connect(master);
@@ -109,7 +125,18 @@ function voice(pos, vol, reverbAmt = 0.2) {
   const s = ctx.createGain();
   s.gain.value = reverbAmt * (0.6 + Math.min(1.5, dist / 20)) * (occluded ? 1.5 : 1) * vol;
   g.connect(s); s.connect(reverbIn);
+  chain.push(lp, p, s);
+  g._chain = chain;
   return g;
+}
+
+/** Disconnect a finished sound's nodes so the audio graph doesn't keep growing. */
+function release(out, seconds) {
+  active++;
+  setTimeout(() => {
+    active--;
+    for (const n of out._chain) { try { n.disconnect(); } catch { /* already gone */ } }
+  }, seconds * 1000);
 }
 
 function noiseSrc(rate = 1) {
@@ -164,7 +191,13 @@ const GUN = {
   hammer:  { crack: 0.85, crackF: 3300, body: 1.15, bodyF: 1000, bodyD: 0.1, thump: 1.0, thumpF: 105, tail: 0.45, tailD: 0.7, mech: 0.25 },
 };
 
-function gunshot(out, t, g, close) {
+function gunshot(out, t, g, close, far = false) {
+  if (far) {
+    // distant shot: body + tail only (fewer audio nodes when lots of shooting is going on)
+    hiss(out, t, { dur: g.bodyD, freq: g.bodyF, q: 0.9, peak: g.body, sweepTo: g.bodyF * 0.55 });
+    hiss(out, t + 0.01, { dur: g.tailD, freq: 700, type: 'lowpass', peak: g.tail * 1.2, attack: 0.01, sweepTo: 250 });
+    return;
+  }
   hiss(out, t, { dur: 0.012, freq: g.crackF, type: 'highpass', peak: g.crack * (close ? 1 : 1.3) });
   hiss(out, t, { dur: g.bodyD, freq: g.bodyF, q: 0.9, peak: g.body, sweepTo: g.bodyF * 0.55 });
   osc(out, t, { freq: g.thumpF, dur: g.bodyD * 1.6, peak: g.thump * (close ? 1 : 0.6), slide: 0.35 });
@@ -209,15 +242,26 @@ export function sfx(name, opts = {}) {
   const vol = opts.vol ?? 1;
   if (vol < 0.01) return;
   const pos = opts.pos || null;
-  if (pos && Math.hypot(pos.x - L.x, pos.z - L.z) > 140) return;
+  const own = !pos;
+  const pri = own ? 3 : PRIORITY[name] ?? 2;
+  let dist = 0;
+  if (pos) {
+    dist = Math.hypot(pos.x - L.x, pos.y - L.y, pos.z - L.z);
+    // skip sounds that would be inaudible anyway (inverse distance falloff, ref 3 m)
+    if (vol * 3 / (3 + 1.1 * Math.max(0, dist - 3)) < (pri === 0 ? 0.08 : 0.025)) return;
+  }
+  // over budget: drop the least important sounds first; your own sounds always play
+  if (active >= MAX_VOICES && pri < 2) return;
+  if (active >= MAX_VOICES + 10 && pri < 3) return;
   const t = ctx.currentTime;
   const reverb = GUN[name] ? (GUN[name].quiet ? 0.12 : 0.35) : 0.15;
-  const out = voice(pos, vol, reverb);
+  const out = voice(pos, vol, reverb, pri >= 2);
+  release(out, GUN[name] ? 2.2 : name === 'boom' || name === 'smoke' ? 2 : 1.2);
   if (playSample(name, out)) return;
   switch (name) {
     case 'p9': case 'magnum': case 'hornet': case 'raptor': case 'longbow':
     case 'wasp': case 'warden': case 'talon': case 'sentry': case 'wraith': case 'hammer':
-      gunshot(out, t, GUN[name], !pos); break;
+      gunshot(out, t, GUN[name], !pos, dist > 22); break;
     case 'step': (STEP[opts.surface] || STEP.concrete)(out, t, 1); break;
     case 'land': hiss(out, t, { dur: 0.1, freq: 300, type: 'lowpass', peak: 1 }); break;
     case 'impact': (IMPACT[opts.surface] || IMPACT.concrete)(out, t); break;

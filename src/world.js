@@ -416,37 +416,29 @@ export function surfaceUnder(p) {
 // ---------------------------------------------------------------------------
 // Raycasting
 // ---------------------------------------------------------------------------
+// Slab tests, unrolled and allocation-free: these run thousands of times per second
+// (bullets, bot vision, audio occlusion), so they must not create garbage.
 export function rayBox(o, d, b) {
-  let tmin = -Infinity, tmax = Infinity;
-  for (const [oa, da, mn, mx] of [[o.x, d.x, b.minX, b.maxX], [o.y, d.y, b.minY, b.maxY], [o.z, d.z, b.minZ, b.maxZ]]) {
-    if (Math.abs(da) < 1e-9) {
-      if (oa < mn || oa > mx) return Infinity;
-    } else {
-      let t1 = (mn - oa) / da, t2 = (mx - oa) / da;
-      if (t1 > t2) [t1, t2] = [t2, t1];
-      if (t1 > tmin) tmin = t1;
-      if (t2 < tmax) tmax = t2;
-      if (tmin > tmax) return Infinity;
-    }
-  }
+  let tmin = -Infinity, tmax = Infinity, t1, t2, tt;
+  if (Math.abs(d.x) < 1e-9) { if (o.x < b.minX || o.x > b.maxX) return Infinity; }
+  else { t1 = (b.minX - o.x) / d.x; t2 = (b.maxX - o.x) / d.x; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return Infinity; }
+  if (Math.abs(d.y) < 1e-9) { if (o.y < b.minY || o.y > b.maxY) return Infinity; }
+  else { t1 = (b.minY - o.y) / d.y; t2 = (b.maxY - o.y) / d.y; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return Infinity; }
+  if (Math.abs(d.z) < 1e-9) { if (o.z < b.minZ || o.z > b.maxZ) return Infinity; }
+  else { t1 = (b.minZ - o.z) / d.z; t2 = (b.maxZ - o.z) / d.z; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return Infinity; }
   if (tmax < 0) return Infinity;
   return tmin >= 0 ? tmin : 0;
 }
 
 /** [entry, exit] distances of a ray through a box, or null. Entry is clamped to 0. */
 export function rayBoxRange(o, d, b) {
-  let tmin = -Infinity, tmax = Infinity;
-  for (const [oa, da, mn, mx] of [[o.x, d.x, b.minX, b.maxX], [o.y, d.y, b.minY, b.maxY], [o.z, d.z, b.minZ, b.maxZ]]) {
-    if (Math.abs(da) < 1e-9) {
-      if (oa < mn || oa > mx) return null;
-    } else {
-      let t1 = (mn - oa) / da, t2 = (mx - oa) / da;
-      if (t1 > t2) [t1, t2] = [t2, t1];
-      if (t1 > tmin) tmin = t1;
-      if (t2 < tmax) tmax = t2;
-      if (tmin > tmax) return null;
-    }
-  }
+  let tmin = -Infinity, tmax = Infinity, t1, t2, tt;
+  if (Math.abs(d.x) < 1e-9) { if (o.x < b.minX || o.x > b.maxX) return null; }
+  else { t1 = (b.minX - o.x) / d.x; t2 = (b.maxX - o.x) / d.x; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return null; }
+  if (Math.abs(d.y) < 1e-9) { if (o.y < b.minY || o.y > b.maxY) return null; }
+  else { t1 = (b.minY - o.y) / d.y; t2 = (b.maxY - o.y) / d.y; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return null; }
+  if (Math.abs(d.z) < 1e-9) { if (o.z < b.minZ || o.z > b.maxZ) return null; }
+  else { t1 = (b.minZ - o.z) / d.z; t2 = (b.maxZ - o.z) / d.z; if (t1 > t2) { tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) return null; }
   if (tmax < 0) return null;
   return [Math.max(0, tmin), tmax];
 }

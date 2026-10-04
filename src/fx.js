@@ -82,23 +82,29 @@ export function impact(pos, normal, kind) {
   addFx(f, 0.06, (k) => { f.material.opacity = 1 - k; }, true);
 }
 
-// ---- Persistent bullet holes (pooled, cleared every round) ----
-const HOLES_MAX = 180;
-const holes = [];
-let holeMat = null, holeI = 0;
+// ---- Persistent bullet holes: one instanced mesh (a single draw call), cleared every round ----
+const HOLES_MAX = 220;
+let holes = null, holeI = 0, holeCount = 0;
+const _ho = new THREE.Object3D();
 export function bulletHole(pos, normal, kind) {
   if (kind === 'energy') return;
-  if (!holeMat) holeMat = new THREE.MeshStandardMaterial({ map: bulletHoleTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, roughness: 1 });
-  let m = holes[holeI];
-  if (!m) { m = new THREE.Mesh(G.plane, holeMat); m.receiveShadow = true; holes[holeI] = m; game.scene.add(m); }
-  holeI = (holeI + 1) % HOLES_MAX;
+  if (!holes || !holes.parent) {
+    const mat = new THREE.MeshStandardMaterial({ map: bulletHoleTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, roughness: 1 });
+    holes = new THREE.InstancedMesh(G.plane, mat, HOLES_MAX);
+    holes.count = 0; holes.receiveShadow = true; holes.frustumCulled = false;
+    game.scene.add(holes);
+  }
   const s = (kind === 'wood' ? 0.07 : 0.055) * (0.8 + Math.random() * 0.4);
-  m.scale.set(s, s, 1);
-  m.position.copy(pos).addScaledVector(normal, 0.004);
-  m.lookAt(pos.x + normal.x, pos.y + normal.y, pos.z + normal.z);
-  m.rotateZ(Math.random() * Math.PI * 2);
-  m.visible = true;
-  if (!m.parent) game.scene.add(m);
+  _ho.position.copy(pos).addScaledVector(normal, 0.004);
+  _ho.lookAt(pos.x + normal.x, pos.y + normal.y, pos.z + normal.z);
+  _ho.rotateZ(Math.random() * Math.PI * 2);
+  _ho.scale.set(s, s, 1);
+  _ho.updateMatrix();
+  holes.setMatrixAt(holeI, _ho.matrix);
+  holeI = (holeI + 1) % HOLES_MAX;
+  holeCount = Math.min(HOLES_MAX, holeCount + 1);
+  holes.count = holeCount;
+  holes.instanceMatrix.needsUpdate = true;
 }
 
 /** Thin gun smoke drifting up from a muzzle. */
@@ -162,5 +168,5 @@ export function updateFx(dt) {
 export function clearFx() {
   for (const f of live) game.scene.remove(f.obj);
   live.length = 0;
-  for (const h of holes) h.visible = false;
+  if (holes) { holes.count = 0; holeCount = 0; holeI = 0; }
 }

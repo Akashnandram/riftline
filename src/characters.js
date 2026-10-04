@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { boxes } from './world.js';
 import { buildGun } from './guns.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { applySkin } from './skins.js';
 
 // Articulated soldier rig built from primitives: a joint hierarchy (hips → spine → chest → neck →
@@ -174,12 +175,46 @@ export function buildCharacter(teamColor, agent) {
   marker.position.y = 2.2; marker.renderOrder = 998; marker.visible = false;
   root.add(marker);
 
+  // fewer draw calls: merge each joint's own meshes by material (joints themselves stay separate
+  // so animation, IK and ragdolls still work)
+  for (const j of [hips, spine, chest, neck, head, hg.group, ...sh, ...el, ...hand, ...thigh, ...knee, ...foot]) mergeJoint(j);
+
   root.userData = {
     hips, spine, chest, neck, head, sh, el, hand, thigh, knee, foot, gunMount,
     headgear: hg, gun: null, gunKey: null, ghost, marker, phase: Math.random() * 6,
     flinch: V(), lean: 0, teamColor, ragdoll: null,
   };
   return root;
+}
+
+const mergeCache = new Map();
+function mergeJoint(j) {
+  const byMat = new Map();
+  const meshes = j.children.filter((o) => o.isMesh && !o.material.transparent);
+  if (meshes.length < 2) return;
+  for (const o of meshes) { if (!byMat.has(o.material)) byMat.set(o.material, []); byMat.get(o.material).push(o); }
+  for (const [mat, list] of byMat) {
+    if (list.length < 2) continue;
+    // identical part layouts (same geometries + transforms) share one merged geometry
+    const key = mat.uuid + list.map((o) => o.geometry.uuid + o.position.toArray().join() + o.rotation.toArray().join() + o.scale.toArray().join()).join('|');
+    let geo = mergeCache.get(key);
+    if (!geo) {
+      const geos = list.map((o) => {
+        o.updateMatrix();
+        const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+        for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+        if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+        return g.applyMatrix4(o.matrix);
+      });
+      geo = mergeGeometries(geos, false);
+      for (const g of geos) g.dispose();
+      mergeCache.set(key, geo);
+    }
+    for (const o of list) j.remove(o);
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = true; m.receiveShadow = true;
+    j.add(m);
+  }
 }
 
 export function setCharacterGun(root, key, skin = 'default') {
