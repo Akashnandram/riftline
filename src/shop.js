@@ -1,5 +1,5 @@
 import { game } from './state.js';
-import { WEAPONS, ARMOR } from './config.js';
+import { WEAPONS, ARMOR, MATCH } from './config.js';
 import { setGunLook } from './entities.js';
 
 /** Buy a weapon key or armor key. Re-buying in the same slot refunds this round's earlier purchase. */
@@ -33,7 +33,7 @@ export function buy(f, item) {
 
 export function botBuy(f) {
   const r = Math.random();
-  const pistolRound = game.round === 1;
+  const pistolRound = game.round === 1 || (game.config.mode === 'plant' && game.round === MATCH.halfRounds + 1);
   if (!f.primary) {
     if (pistolRound) {
       if (r < 0.45) buy(f, 'magnum');

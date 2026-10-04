@@ -117,6 +117,12 @@ function addTrims(scene, b) {
 }
 
 let dust = null;
+const spawnMats = [];
+// plant site rectangles [minX, minZ, maxX, maxZ] (kept in sync with objective.js SITES)
+export const SITE_RECTS = [[12, -29, 28, -11], [12, 11, 28, 29]];
+export function setSpawnColors(west, east) {
+  for (const s of spawnMats) { const c = s.side < 0 ? west : east; s.zoneMat.color.setHex(c); s.lineMat.color.setHex(c); }
+}
 export function updateWorldFx(t) {
   if (!dust) return;
   dust.rotation.y = t * 0.004;
@@ -174,27 +180,37 @@ export function buildWorld(scene, renderer, quality = 'medium') {
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // painted spawn zones + lane lines
-  for (const [x, color] of [[-35, 0x3d8bff], [35, 0xff4655]]) {
-    const z = new THREE.Mesh(
-      new THREE.PlaneGeometry(10, 60),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.045, depthWrite: false }),
-    );
-    z.rotation.x = -Math.PI / 2;
-    z.position.set(x, 0.02, 0);
-    scene.add(z);
-    const line = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 60), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, depthWrite: false }));
-    line.rotation.x = -Math.PI / 2; line.position.set(Math.sign(x) * 31, 0.025, 0);
-    scene.add(line);
+  // painted spawn zones (recoloured when teams swap sides)
+  for (const side of [-1, 1]) {
+    const zoneMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.045, depthWrite: false });
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false });
+    const z = new THREE.Mesh(new THREE.PlaneGeometry(10, 60), zoneMat);
+    z.rotation.x = -Math.PI / 2; z.position.set(side * 35, 0.02, 0);
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 60), lineMat);
+    line.rotation.x = -Math.PI / 2; line.position.set(side * 31, 0.025, 0);
+    scene.add(z, line);
+    spawnMats.push({ side, zoneMat, lineMat });
   }
-  for (const [x, z, text] of [[7, -20, 'A'], [-7, 20, 'B'], [0, -6, 'MID']]) {
+  setSpawnColors(0x3d8bff, 0xff4655);
+
+  // plant sites: yellow boundary + big letter
+  const siteMat = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.55, depthWrite: false });
+  for (const [x0, z0, x1, z1] of SITE_RECTS) {
+    for (const [cx, cz, w, d] of [[(x0 + x1) / 2, z0, x1 - x0, 0.2], [(x0 + x1) / 2, z1, x1 - x0, 0.2], [x0, (z0 + z1) / 2, 0.2, z1 - z0], [x1, (z0 + z1) / 2, 0.2, z1 - z0]]) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), siteMat);
+      m.rotation.x = -Math.PI / 2; m.position.set(cx, 0.026, cz);
+      scene.add(m);
+    }
+  }
+  for (const [x, z, text, size] of [[21, -27, 'A', 5], [21, 27, 'B', 5], [0, -6, 'MID', 4]]) {
     const c = document.createElement('canvas'); c.width = 256; c.height = 128;
     const g = c.getContext('2d');
-    g.fillStyle = 'rgba(255,255,255,0.6)'; g.font = 'bold 96px sans-serif'; g.textAlign = 'center';
-    g.fillText(text, 128, 100);
+    g.fillStyle = text === 'MID' ? 'rgba(255,255,255,0.6)' : 'rgba(255,214,63,0.75)'; g.font = 'bold 110px sans-serif'; g.textAlign = 'center';
+    g.fillText(text, 128, 108);
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(4, 2), new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.9 }));
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(size, size / 2), new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.9 }));
     p.rotation.x = -Math.PI / 2; p.position.set(x, 0.03, z);
+    if (z > 0) p.rotation.z = Math.PI;
     p.receiveShadow = true;
     scene.add(p);
   }
@@ -249,6 +265,33 @@ export function rayBox(o, d, b) {
   }
   if (tmax < 0) return Infinity;
   return tmin >= 0 ? tmin : 0;
+}
+
+/** [entry, exit] distances of a ray through a box, or null. Entry is clamped to 0. */
+export function rayBoxRange(o, d, b) {
+  let tmin = -Infinity, tmax = Infinity;
+  for (const [oa, da, mn, mx] of [[o.x, d.x, b.minX, b.maxX], [o.y, d.y, b.minY, b.maxY], [o.z, d.z, b.minZ, b.maxZ]]) {
+    if (Math.abs(da) < 1e-9) {
+      if (oa < mn || oa > mx) return null;
+    } else {
+      let t1 = (mn - oa) / da, t2 = (mx - oa) / da;
+      if (t1 > t2) [t1, t2] = [t2, t1];
+      if (t1 > tmin) tmin = t1;
+      if (t2 < tmax) tmax = t2;
+      if (tmin > tmax) return null;
+    }
+  }
+  if (tmax < 0) return null;
+  return [Math.max(0, tmin), tmax];
+}
+
+/** Outward normal of the box face closest to point p. */
+export function boxNormalAt(b, p, out = new THREE.Vector3()) {
+  const e = [[Math.abs(p.x - b.minX), -1, 0, 0], [Math.abs(p.x - b.maxX), 1, 0, 0], [Math.abs(p.y - b.minY), 0, -1, 0],
+    [Math.abs(p.y - b.maxY), 0, 1, 0], [Math.abs(p.z - b.minZ), 0, 0, -1], [Math.abs(p.z - b.maxZ), 0, 0, 1]];
+  let best = e[0];
+  for (const c of e) if (c[0] < best[0]) best = c;
+  return out.set(best[1], best[2], best[3]);
 }
 
 export function raySphere(o, d, c, r) {

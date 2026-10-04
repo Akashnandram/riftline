@@ -7,31 +7,31 @@ export const WEAPONS = {
     key: 'p9', name: 'P9 Sidearm', slot: 'secondary', cost: 0,
     dmg: 26, head: 78, rate: 6.75, auto: false, mag: 12, reload: 1.6,
     spread: 0.004, move: 0.035, bloom: 0.012, maxBloom: 0.05, kick: 0.012, climb: 5, sway: 0.003, speedMul: 1,
-    color: 0x30343c, len: 0.28,
+    pen: 0.4, falloff: [30, 0.85], color: 0x30343c, len: 0.28,
   },
   magnum: {
     key: 'magnum', name: 'Magnum', slot: 'secondary', cost: 800,
     dmg: 55, head: 159, rate: 4, auto: false, mag: 6, reload: 2.2,
     spread: 0.003, move: 0.06, bloom: 0.035, maxBloom: 0.07, kick: 0.045, climb: 3, sway: 0.008, speedMul: 1,
-    color: 0x6d5a3e, len: 0.34,
+    pen: 0.7, falloff: [30, 0.9], color: 0x6d5a3e, len: 0.34,
   },
   hornet: {
     key: 'hornet', name: 'Hornet SMG', slot: 'primary', cost: 1600,
     dmg: 26, head: 72, rate: 13.3, auto: true, mag: 30, reload: 2.25,
     spread: 0.01, move: 0.012, bloom: 0.0025, maxBloom: 0.035, kick: 0.0055, climb: 10, sway: 0.004, speedMul: 0.98,
-    color: 0x3b4a5c, len: 0.5,
+    pen: 0.45, falloff: [20, 0.85], color: 0x3b4a5c, len: 0.5,
   },
   raptor: {
     key: 'raptor', name: 'Raptor AR', slot: 'primary', cost: 2900,
     dmg: 40, head: 156, rate: 9.75, auto: true, mag: 25, reload: 2.5,
     spread: 0.0025, move: 0.07, bloom: 0.003, maxBloom: 0.03, kick: 0.012, climb: 8, sway: 0.01, speedMul: 0.94,
-    color: 0x2a2d33, len: 0.7,
+    pen: 0.8, color: 0x2a2d33, len: 0.7,
   },
   longbow: {
     key: 'longbow', name: 'Longbow', slot: 'primary', cost: 4700,
     dmg: 150, head: 255, rate: 0.75, auto: false, mag: 5, reload: 3.5,
     spread: 0.06, scopedSpread: 0.0008, move: 0.15, bloom: 0, maxBloom: 0, kick: 0.07, climb: 1, sway: 0, speedMul: 0.85,
-    scope: 2.6, color: 0x3d5240, len: 0.95,
+    pen: 1.6, scope: 2.6, color: 0x3d5240, len: 0.95,
   },
 };
 
@@ -46,7 +46,17 @@ export const ECON = {
 
 export const MATCH = {
   roundsToWin: 5, buyTime: 12, roundTime: 100, endTime: 4.5, ultCost: 5,
+  // plant mode
+  halfRounds: 4, plantTime: 4, defuseTime: 7, chargeTime: 45, blastRadius: 14, plantBonus: 300,
 };
+
+// Damage multipliers by hit zone; legs take reduced damage.
+export const HIT_ZONES = { head: 1, body: 1, legs: 0.82 };
+
+// Wall penetration: a round has `pen` points (per weapon); each wall costs thickness × material rate.
+// Map boxes are thick (crates 1–2m, dividers 1.2m), so per-metre costs are low: rifles punch
+// through crates and dividers, pistols only through small crates, nothing goes through stone blocks.
+export const PENETRATION = { crate: 0.35, wall: 0.6, block: 1.4, pillar: 1.5, outer: Infinity, barrier: Infinity, floor: Infinity };
 
 // Ability: charges refill every round. cooldown > 0 means a spent charge recharges mid-round.
 export const AGENTS = {
@@ -81,9 +91,9 @@ export const AGENTS = {
 };
 
 export const DIFFICULTY = {
-  easy:   { reaction: 0.65, aimErr: 0.09, turn: 3.5, headChance: 0.12, still: 0.3, abilityChance: 0.3 },
-  normal: { reaction: 0.42, aimErr: 0.055, turn: 6, headChance: 0.3, still: 0.6, abilityChance: 0.6 },
-  hard:   { reaction: 0.26, aimErr: 0.03, turn: 10, headChance: 0.5, still: 0.85, abilityChance: 0.9 },
+  easy:   { reaction: 0.65, aimErr: 0.09, turn: 3.5, headChance: 0.12, still: 0.3, abilityChance: 0.3, crouch: 0.05, wallbang: 0 },
+  normal: { reaction: 0.42, aimErr: 0.055, turn: 6, headChance: 0.3, still: 0.6, abilityChance: 0.6, crouch: 0.2, wallbang: 0.3 },
+  hard:   { reaction: 0.26, aimErr: 0.03, turn: 10, headChance: 0.5, still: 0.85, abilityChance: 0.9, crouch: 0.35, wallbang: 0.7 },
 };
 
 export const BOT_NAMES = [
@@ -91,4 +101,4 @@ export const BOT_NAMES = [
   'Quill', 'Rhea', 'Zephyr', 'Onyx', 'Lynx', 'Cobalt', 'Wren', 'Atlas', 'Pike', 'Nova',
 ];
 
-export const MOVE = { run: 6.75, walk: 3.8, accel: 60, airAccel: 12, jump: 5.4, gravity: 16 };
+export const MOVE = { run: 6.75, walk: 3.8, crouch: 2.6, crouchDrop: 0.42, accel: 60, airAccel: 12, jump: 5.4, gravity: 16 };

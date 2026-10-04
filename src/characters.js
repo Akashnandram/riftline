@@ -234,6 +234,7 @@ export function animateCharacter(root, s, dt) {
   u.phase += speed * dt * 1.9;
   const fK = speed > 0.1 ? vf / speed : 0, sK = speed > 0.1 ? vs / speed : 0;
   const back = fK < -0.2 ? -1 : 1;
+  const c = s.crouch || 0;
 
   for (let i = 0; i < 2; i++) {
     const ph = u.phase + i * Math.PI;
@@ -247,10 +248,16 @@ export function animateCharacter(root, s, dt) {
     const lift = Math.max(0, Math.cos(ph) * back);
     k.rotation.set(-(lift * 1.05 * amp + 0.05 + amp * 0.1), 0, 0);
     f.rotation.set(lift * 0.35 * amp - swing * 0.2, 0, 0);
+    if (c > 0.01) {
+      // crouch: thighs forward, knees folded, feet flat; a small shuffle when moving
+      t.rotation.x += (1.15 + swing * 0.35 - t.rotation.x) * c;
+      k.rotation.x += (-2.0 + lift * 0.3 - k.rotation.x) * c;
+      f.rotation.x += (0.85 - f.rotation.x) * c;
+    }
   }
 
   const bobY = Math.abs(Math.sin(u.phase)) * 0.035 * amp;
-  u.hips.position.y = HIP_Y - bobY - amp * 0.03 - (s.onGround ? 0 : 0.05);
+  u.hips.position.y = HIP_Y - bobY * (1 - c * 0.6) - amp * 0.03 - (s.onGround ? 0 : 0.05) - 0.42 * c;
   u.hips.rotation.y = Math.sin(u.phase) * 0.12 * amp;
   // strafing lean, running forward tilt
   u.lean += (sK * amp * 0.12 - u.lean) * Math.min(1, dt * 8);
@@ -260,8 +267,8 @@ export function animateCharacter(root, s, dt) {
   u.flinch.multiplyScalar(Math.exp(-9 * dt));
   const breathe = Math.sin(performance.now() / 650) * 0.012;
   const pitch = THREE.MathUtils.clamp(s.pitch, -1.0, 1.0);
-  u.spine.rotation.set(pitch * 0.35 + fK * amp * 0.12 + u.flinch.x, -u.hips.rotation.y * 0.8 + u.flinch.z, u.lean * 0.8 + u.flinch.y);
-  u.chest.rotation.set(pitch * 0.45 + breathe, -u.hips.rotation.y * 0.2, 0);
+  u.spine.rotation.set(pitch * 0.35 + fK * amp * 0.12 + u.flinch.x - 0.22 * c, -u.hips.rotation.y * 0.8 + u.flinch.z, u.lean * 0.8 + u.flinch.y);
+  u.chest.rotation.set(pitch * 0.45 + breathe + 0.12 * c, -u.hips.rotation.y * 0.2, 0);
   u.neck.rotation.set(pitch * 0.15, 0, -u.lean * 0.6);
   u.head.rotation.set(pitch * 0.1 - u.flinch.x * 1.5, 0, 0);
 

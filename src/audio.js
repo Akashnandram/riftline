@@ -233,6 +233,11 @@ export function sfx(name, opts = {}) {
     case 'ult': osc(out, t, { freq: 220, dur: 0.6, type: 'sawtooth', peak: 0.2, slide: 3 }); osc(out, t, { freq: 440, dur: 0.6, peak: 0.2, slide: 2 }); break;
     case 'beam': osc(out, t, { freq: 900, dur: 0.5, type: 'sawtooth', peak: 0.35, slide: 0.2 }); hiss(out, t, { dur: 0.4, freq: 2500, q: 1, peak: 0.6 }); osc(out, t, { freq: 70, dur: 0.4, peak: 0.7, slide: 0.5 }); break;
     case 'ping': osc(out, t, { freq: 1800, dur: 0.3, peak: 0.25, slide: 0.7 }); break;
+    case 'beep': osc(out, t, { freq: 1950, dur: 0.07, type: 'square', peak: 0.12 }); osc(out, t, { freq: 3900, dur: 0.05, peak: 0.05 }); break;
+    case 'plantStart': for (let i = 0; i < 4; i++) osc(out, t + i * 0.18, { freq: 900 + i * 220, dur: 0.06, type: 'square', peak: 0.09 }); break;
+    case 'defuseStart': hiss(out, t, { dur: 0.25, freq: 3000, q: 3, peak: 0.4 }); osc(out, t + 0.1, { freq: 600, dur: 0.1, type: 'square', peak: 0.08 }); break;
+    case 'planted': osc(out, t, { freq: 440, dur: 0.25, type: 'sawtooth', peak: 0.2 }); osc(out, t + 0.25, { freq: 660, dur: 0.35, type: 'sawtooth', peak: 0.2 }); hiss(out, t, { dur: 0.6, freq: 900, q: 0.6, peak: 0.4, sweepTo: 3000 }); break;
+    case 'defused': osc(out, t, { freq: 880, dur: 0.6, peak: 0.2, slide: 0.25 }); hiss(out, t, { dur: 0.4, freq: 2000, q: 1, peak: 0.3, sweepTo: 300 }); break;
     case 'buy': osc(out, t, { freq: 880, dur: 0.08, type: 'triangle', peak: 0.15 }); break;
     case 'round': osc(out, t, { freq: 440, dur: 0.3, type: 'triangle', peak: 0.25 }); osc(out, t + 0.18, { freq: 660, dur: 0.4, type: 'triangle', peak: 0.25 }); break;
     case 'lose': osc(out, t, { freq: 330, dur: 0.3, type: 'triangle', peak: 0.25 }); osc(out, t + 0.18, { freq: 220, dur: 0.5, type: 'triangle', peak: 0.25 }); break;

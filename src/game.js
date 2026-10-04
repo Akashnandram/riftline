@@ -5,9 +5,11 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { game, now } from './state.js';
+import { game, now, sideSign } from './state.js';
 import { WEAPONS, ARMOR, AGENTS, ECON, MATCH, MOVE, BOT_NAMES } from './config.js';
-import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx } from './world.js';
+import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx, setSpawnColors, SITE_RECTS } from './world.js';
+import { resetCharge, hideCharge, updateCharge, tickAction, canPlant, canDefuse, siteAt } from './objective.js';
+import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
 import {
   Fighter, TEAM_COLORS, EYE, updateFighterMesh, moveFighter, separateFighters, tryFire, startReload,
   updateWeapon, switchWeapon, setGunLook, emitSound, resetFighterMesh,
@@ -110,7 +112,8 @@ muzzleFlash.visible = false;
 const casings = [];
 
 function resize() {
-  const w = innerWidth, h = innerHeight;
+  // a hidden or minimised tab can report 0×0, which would leave zero-size render targets
+  const w = Math.max(1, innerWidth), h = Math.max(1, innerHeight);
   renderer.setSize(w, h, false);
   composer?.setSize(w, h);
   camera.aspect = vmCam.aspect = w / h;
@@ -242,7 +245,7 @@ function playerAbility(slot) {
 // ---------------------------------------------------------------------------
 // Menu
 // ---------------------------------------------------------------------------
-let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 5), difficulty: store.get('difficulty', 'normal') };
+let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 5), difficulty: store.get('difficulty', 'normal'), mode: store.get('mode', 'plant') };
 
 function renderMenu() {
   const wrap = $('agentCards');
@@ -257,7 +260,7 @@ function renderMenu() {
     b.onclick = () => { choice.agent = a.key; store.set('agent', a.key); renderMenu(); };
     wrap.appendChild(b);
   }
-  for (const [id, prop, parse] of [['segSize', 'teamSize', Number], ['segDiff', 'difficulty', String]]) {
+  for (const [id, prop, parse] of [['segSize', 'teamSize', Number], ['segDiff', 'difficulty', String], ['segMode', 'mode', String]]) {
     for (const btn of $(id).querySelectorAll('button')) {
       btn.classList.toggle('on', parse(btn.dataset.v) === choice[prop]);
       btn.onclick = () => { choice[prop] = parse(btn.dataset.v); store.set(prop, choice[prop]); renderMenu(); };
@@ -298,6 +301,8 @@ function setPaused(p) {
 // Match / rounds
 // ---------------------------------------------------------------------------
 function teardown() {
+  hideCharge();
+  game.tac = null;
   clearAbilities();
   clearRagdolls(scene);
   for (const f of game.fighters) scene.remove(f.mesh);
@@ -308,7 +313,9 @@ function startMatch(cfg) {
   teardown();
   setPaused(false);
   game.config = cfg;
+  game.config.mode ??= 'plant';
   game.time = 0; game.round = 0; game.score = [0, 0]; game.lossStreak = [0, 0];
+  game.attackers = Math.random() < 0.5 ? 0 : 1;
   game.noises = [];
   const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
   const agentKeys = Object.keys(AGENTS);
@@ -332,18 +339,22 @@ function startMatch(cfg) {
   }
   $('menu').hidden = true; $('over').hidden = true; $('hud').hidden = false;
   $('killfeed').innerHTML = '';
+  $('comms').innerHTML = '';
   setupAbilityHud();
   buildPips();
   startRound();
 }
 
 function spawnPoint(team, i) {
-  const s = team === 0 ? -1 : 1;
+  const s = sideSign(team);
   return new THREE.Vector3(s * (35.5 + (i % 2) * 2), 0, -6 + i * 3);
 }
 
 function startRound() {
   game.round++;
+  const plantMode = game.config.mode === 'plant';
+  const halftime = plantMode && game.round === MATCH.halfRounds + 1;
+  if (halftime) game.attackers = 1 - game.attackers;
   game.phase = 'buy';
   game.phaseT = MATCH.buyTime;
   game.spectating = false;
@@ -354,11 +365,11 @@ function startRound() {
   for (const f of game.fighters) resetFighterMesh(f);
   const counts = [0, 0];
   for (const f of game.fighters) {
-    if (!f.alive || game.round === 1) {
+    if (!f.alive || game.round === 1 || halftime) {
       f.primary = null; f.secondary = 'p9'; f.armor = 0;
       f.ammo = { p9: WEAPONS.p9.mag };
     }
-    if (game.round === 1) { f.credits = ECON.start; f.ult = 0; }
+    if (game.round === 1 || halftime) { f.credits = ECON.start; if (game.round === 1) f.ult = 0; }
     else f.ult = Math.min(MATCH.ultCost, f.ult + 1);
     f.alive = true; f.hp = 100;
     for (const k of [f.primary, f.secondary]) if (k) f.ammo[k] = WEAPONS[k].mag;
@@ -366,7 +377,8 @@ function startRound() {
     f.reloadT = 0; f.fireCD = 0; f.bloom = 0; f.recoil = 0; f.recoilYaw = 0; f.scoped = false;
     f.pos.copy(spawnPoint(f.team, counts[f.team]++));
     f.vel.set(0, 0, 0);
-    f.yaw = f.team === 0 ? -Math.PI / 2 : Math.PI / 2; f.pitch = 0;
+    f.yaw = sideSign(f.team) < 0 ? -Math.PI / 2 : Math.PI / 2; f.pitch = 0;
+    f.wantCrouch = false; f.crouch = 0;
     f.blindUntil = f.revealedUntil = f.spottedUntil = f.overchargeUntil = f.slowUntil = f.furyUntil = f.nearsightUntil = 0;
     f.furyShots = 0; f.healLeft = 0; f.dashT = 0;
     f.bought = []; f.damagedBy.clear();
@@ -375,7 +387,18 @@ function startRound() {
     setGunLook(f);
     if (f.brain) { f.brain.planRound(); botBuy(f); setGunLook(f); }
   }
-  flashMsg(`ROUND ${game.round}`, 'BUY PHASE — press B to open the armory', 3);
+  // west spawn zone shows the colour of whoever spawns there
+  setSpawnColors(TEAM_COLORS[sideSign(0) < 0 ? 0 : 1], TEAM_COLORS[sideSign(0) < 0 ? 1 : 0]);
+  if (plantMode) {
+    resetCharge();
+    planTactics();
+    const attacking = game.player.team === game.attackers;
+    const role = attacking ? 'ATTACK — plant the Rift Charge on A or B' : 'DEFEND — stop the plant or defuse it';
+    flashMsg(halftime ? 'SWITCHING SIDES' : `ROUND ${game.round}`, `${role} · press B to buy`, 3.5);
+  } else {
+    hideCharge();
+    flashMsg(`ROUND ${game.round}`, 'BUY PHASE — press B to open the armory', 3);
+  }
   sfx('round');
 }
 
@@ -419,6 +442,15 @@ function updatePhase(dt) {
     if (buyOpen) { toggleBuy(false); }
     flashMsg('FIGHT', '', 1.2);
     sfx('round');
+  } else if (game.phase === 'live' && game.config.mode === 'plant') {
+    const A = game.attackers, D = 1 - A, c = game.charge;
+    const aA = aliveCount(A), aD = aliveCount(D);
+    if (c.state === 'planted') game.phaseT = c.timer;
+    if (c.state === 'exploded') endRound(A, 'Rift Charge detonated');
+    else if (c.state === 'defused') endRound(D, 'Rift Charge defused');
+    else if (!aD) endRound(A, 'Defenders eliminated');
+    else if (!aA && c.state !== 'planted') endRound(D, 'Attackers eliminated');
+    else if (game.phaseT <= 0 && c.state !== 'planted') endRound(D, 'Time expired — no plant');
   } else if (game.phase === 'live') {
     const a0 = aliveCount(0), a1 = aliveCount(1);
     if (!a0 || !a1) endRound(a0 ? 0 : 1, a0 ? 'Enemy team eliminated' : 'Your team was eliminated');
@@ -457,6 +489,28 @@ game.onKill = (attacker, target, opts) => {
   }
 };
 
+// team comms (bot callouts) + objective events
+function comms(text, who = null, sys = false) {
+  const el = document.createElement('div');
+  el.className = 'cm' + (sys ? ' sys' : '');
+  el.innerHTML = who ? `<b>${who}</b>${text}` : text;
+  $('comms').appendChild(el);
+  setTimeout(() => el.remove(), 5000);
+  while ($('comms').children.length > 5) $('comms').firstChild.remove();
+}
+game.onCallout = (bot, text) => comms(text, bot.name);
+game.onChargeEvent = (kind, f) => {
+  onChargeEvent(kind);
+  const mine = game.player.team === game.attackers;
+  const c = game.charge;
+  if (kind === 'planted') {
+    flashMsg('CHARGE PLANTED', `Site ${c.site} · ${mine ? 'defend it' : 'defuse it'} — 45s`, 2.2, mine ? 'win' : 'lose');
+    comms(`Rift Charge planted on ${c.site}`, null, true);
+  } else if (kind === 'defused') comms(`${f.name} defused the charge`, null, true);
+  else if (kind === 'drop' && mine) comms(`Charge dropped by ${f.name}`, null, true);
+  else if (kind === 'pickup' && mine) comms(f === game.player ? 'You picked up the charge' : `${f.name} has the charge`, null, true);
+};
+
 let hitT = 0;
 game.onPlayerHit = (target, dmg, head, killed) => {
   const hm = $('hitmarker');
@@ -472,7 +526,20 @@ game.onPlayerHit = (target, dmg, head, killed) => {
 };
 
 let hurtT = 0;
-game.onPlayerDamaged = () => { hurtT = 0.35; };
+game.onPlayerDamaged = (attacker) => {
+  hurtT = 0.35;
+  if (!attacker || attacker === game.player) return;
+  // red arc pointing toward whoever hit you
+  const p = game.player;
+  const yawTo = Math.atan2(-(attacker.pos.x - p.pos.x), -(attacker.pos.z - p.pos.z));
+  const el = document.createElement('div');
+  el.className = 'hd';
+  el.dataset.id = attacker.id;
+  el._yaw = yawTo;
+  for (const old of $('hitDir').children) if (old.dataset.id === String(attacker.id)) old.remove();
+  $('hitDir').appendChild(el);
+  setTimeout(() => el.remove(), 1400);
+};
 let flashEnd = 0, flashDur = 1;
 game.onBlind = (dur) => { flashEnd = now() + dur; flashDur = dur; };
 game.onBlackout = () => {};
@@ -605,9 +672,27 @@ const toPx = (x, z) => [(x - BOUNDS.minX + 2) * MM_S, (z - BOUNDS.minZ + 2) * MM
 function drawMinimap() {
   const t = now(), p = game.player;
   mg.clearRect(0, 0, mm.width, mm.height);
-  mg.fillStyle = 'rgba(61,139,255,0.12)'; { const [a, b] = toPx(-40, -30), [c, d] = toPx(-30, 30); mg.fillRect(a, b, c - a, d - b); }
-  mg.fillStyle = 'rgba(255,70,85,0.12)'; { const [a, b] = toPx(30, -30), [c, d] = toPx(40, 30); mg.fillRect(a, b, c - a, d - b); }
+  // spawn tints follow whichever team spawns on each side
+  const west = sideSign(p.team) < 0 ? 'rgba(61,139,255,0.14)' : 'rgba(255,70,85,0.14)';
+  const east = sideSign(p.team) < 0 ? 'rgba(255,70,85,0.14)' : 'rgba(61,139,255,0.14)';
+  mg.fillStyle = west; { const [a, b] = toPx(-40, -30), [c, d] = toPx(-30, 30); mg.fillRect(a, b, c - a, d - b); }
+  mg.fillStyle = east; { const [a, b] = toPx(30, -30), [c, d] = toPx(40, 30); mg.fillRect(a, b, c - a, d - b); }
+  if (game.config.mode === 'plant') {
+    mg.strokeStyle = 'rgba(255,214,63,0.7)'; mg.lineWidth = 1.5; mg.fillStyle = 'rgba(255,214,63,0.85)';
+    mg.font = 'bold 13px Rajdhani, sans-serif'; mg.textAlign = 'center';
+    SITE_RECTS.forEach(([x0, z0, x1, z1], i) => {
+      const [a, b] = toPx(x0, z0), [c, d] = toPx(x1, z1);
+      mg.strokeRect(a, b, c - a, d - b);
+      mg.fillText(i ? 'B' : 'A', (a + c) / 2, i ? d - 4 : b + 13);
+    });
+  }
   drawMapBoxes(mg, toPx);
+  const c = game.charge;
+  if (game.config.mode === 'plant' && c && (c.state === 'planted' || c.state === 'dropped') && (p.team === game.attackers || c.state === 'planted')) {
+    const [x, y] = toPx(c.pos.x, c.pos.z);
+    mg.fillStyle = c.state === 'planted' && Math.floor(t * 4) % 2 ? '#ffffff' : '#ff4655';
+    mg.beginPath(); mg.moveTo(x, y - 6); mg.lineTo(x + 5, y + 4); mg.lineTo(x - 5, y + 4); mg.closePath(); mg.fill();
+  }
   for (const s of smokes) {
     const [x, y] = toPx(s.pos.x, s.pos.z);
     mg.fillStyle = 'rgba(177,140,255,0.55)';
@@ -639,9 +724,29 @@ function updateHud(dt) {
   const viewF = game.spectating && game.specTarget ? game.specTarget : p;
   // top bar
   const tl = Math.max(0, Math.ceil(game.phaseT));
+  const planted = game.charge?.state === 'planted';
   setText('timer', game.phase === 'end' ? '—' : `${Math.floor(tl / 60)}:${String(tl % 60).padStart(2, '0')}`);
-  $('timer').classList.toggle('low', game.phase === 'live' && tl <= 10);
-  setText('roundLabel', game.phase === 'buy' ? 'BUY PHASE' : `ROUND ${game.round}`);
+  $('timer').classList.toggle('low', game.phase === 'live' && tl <= 10 && !planted);
+  $('timer').classList.toggle('charge', planted && game.phase === 'live');
+  const plantMode = game.config.mode === 'plant';
+  const sideTxt = plantMode ? (p.team === game.attackers ? ' · ATTACK' : ' · DEFEND') : '';
+  setText('roundLabel', planted && game.phase === 'live' ? `CHARGE ON ${game.charge.site}` : game.phase === 'buy' ? 'BUY PHASE' + sideTxt : `ROUND ${game.round}${sideTxt}`);
+  for (const f of game.fighters) f.pipEl?.classList.toggle('carrier', plantMode && game.charge?.carrier === f && f.team === p.team);
+
+  // plant / defuse prompt + progress
+  let prompt = '';
+  if (plantMode && p.alive && game.phase === 'live') {
+    if (canPlant(p)) prompt = 'Hold <kbd>F</kbd> to plant';
+    else if (canDefuse(p)) prompt = `Hold <kbd>F</kbd> to defuse${game.charge.half ? ' (half saved)' : ''}`;
+    else if (game.charge?.carrier === p) prompt = 'You carry the Rift Charge — get to A or B';
+  }
+  $('prompt').hidden = !prompt || actionProgress >= 0;
+  if (textCache.get('prompt') !== prompt) { textCache.set('prompt', prompt); $('prompt').innerHTML = prompt; }
+  $('actionBar').hidden = actionProgress < 0;
+  if (actionProgress >= 0) {
+    $('actionBar').classList.toggle('defuse', planted);
+    $('actionBar').firstChild.style.width = `${Math.min(100, actionProgress * 100)}%`;
+  }
   setText('score0', String(game.score[0])); setText('score1', String(game.score[1]));
   for (const f of game.fighters) f.pipEl?.classList.toggle('dead', !f.alive);
 
@@ -707,6 +812,10 @@ function updateHud(dt) {
   $('scoreboard').hidden = !showBoard;
   if (showBoard) $('scoreboard').innerHTML = scoreboardHTML();
 
+  for (const el of $('hitDir').children) {
+    const rel = Math.atan2(Math.sin(el._yaw - p.yaw), Math.cos(el._yaw - p.yaw));
+    el.style.transform = `rotate(${-rel}rad)`;
+  }
   drawMinimap();
 }
 
@@ -714,7 +823,7 @@ function updateHud(dt) {
 // Player update
 // ---------------------------------------------------------------------------
 const _f = new THREE.Vector3(), _r = new THREE.Vector3();
-let stepT = 0, wasAirborne = false, airVel = 0;
+let stepT = 0, wasAirborne = false, airVel = 0, actionProgress = -1;
 
 function updatePlayer(dt) {
   const p = game.player;
@@ -729,7 +838,8 @@ function updatePlayer(dt) {
   }
   p.wish = { x: fx, z: fz };
   const walking = keys.ShiftLeft || keys.ShiftRight;
-  const speed = (walking ? MOVE.walk : MOVE.run) * p.speedMul * (aimK > 0.5 ? 0.8 : 1);
+  p.wantCrouch = !!keys.KeyC && !buyOpen;
+  const speed = (p.crouch > 0.5 ? MOVE.crouch : walking ? MOVE.walk : MOVE.run) * p.speedMul * (aimK > 0.5 ? 0.8 : 1);
   if (!p.onGround) airVel = Math.min(airVel, p.vel.y);
   moveFighter(p, fx, fz, speed, keys.Space && !buyOpen, dt);
   if (p.onGround && wasAirborne && airVel < -3) { sfx('land', { vol: Math.min(1, -airVel / 8) }); landT = Math.min(1, -airVel / 9); }
@@ -742,7 +852,10 @@ function updatePlayer(dt) {
     if (stepT <= 0) { stepT = 2.4; sfx('step', { vol: 0.45, surface: surfaceUnder(p.pos) }); }
   }
 
-  if (!buyOpen && locked()) {
+  // hold F to plant / defuse (must stand still)
+  actionProgress = keys.KeyF && !buyOpen && game.config.mode === 'plant' ? tickAction(p, dt) : -1;
+
+  if (!buyOpen && locked() && actionProgress < 0) {
     const w = p.weapon();
     if (p.furyShots > 0) { if (mouse.leftPressed) fireFury(p); }
     else if (w.auto ? mouse.left : mouse.leftPressed) tryFire(p);
@@ -917,6 +1030,7 @@ function step(dt) {
   playerVision();
   noiseFootsteps(dt);
   updateAbilities(dt);
+  if (game.config.mode === 'plant') { updateCharge(dt); updateTactics(); }
   updateFx(dt);
   updateRagdolls(dt);
   updateWorldFx(t);

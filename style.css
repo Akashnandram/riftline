@@ -162,3 +162,25 @@ button.ghost { background: transparent; color: var(--ink); border: 1px solid rgb
   .controls .grid { grid-template-columns: 1fr; }
 }
 #overBoard td:not(.num), #overBoard th:not(.num) { text-align: left; }
+
+#hitDir { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.hd { position: absolute; left: -110px; top: -110px; width: 220px; height: 220px; border-radius: 50%;
+  border-top: 6px solid rgba(255, 50, 70, 0.85); filter: drop-shadow(0 0 6px rgba(255, 40, 60, 0.8));
+  -webkit-mask: linear-gradient(90deg, transparent 32%, #000 42%, #000 58%, transparent 68%); mask: linear-gradient(90deg, transparent 32%, #000 42%, #000 58%, transparent 68%);
+  animation: hdFade 1.4s ease-in forwards; }
+@keyframes hdFade { 0%, 40% { opacity: 1; } 100% { opacity: 0; } }
+
+#prompt { position: absolute; top: 62%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.55); padding: 6px 16px; border-radius: 3px; font-size: 17px; font-weight: 600; letter-spacing: 1px; }
+#prompt kbd { font-size: 15px; }
+#actionBar { position: absolute; top: 67%; left: 50%; transform: translateX(-50%); width: 260px; height: 10px; background: rgba(0,0,0,0.55); border-radius: 5px; overflow: hidden; }
+#actionBar div { height: 100%; width: 0; background: #ffd23f; }
+#actionBar.defuse div { background: #3ee6d6; }
+#actionBar span { position: absolute; left: 50%; top: 0; width: 2px; height: 100%; background: rgba(255,255,255,0.6); }
+#actionBar:not(.defuse) span { display: none; }
+#comms { position: absolute; top: 214px; left: 12px; display: flex; flex-direction: column; gap: 4px; max-width: 300px; }
+.cm { background: rgba(0,0,0,0.5); padding: 3px 9px; border-radius: 3px; font-size: 14px; font-weight: 600; animation: kfIn 0.15s ease-out; }
+.cm b { color: #7fb2ff; margin-right: 6px; }
+.cm.sys { color: #ffd23f; }
+#timer.charge { color: #ff4655; }
+.pip.carrier::after { content: ''; position: absolute; width: 8px; height: 8px; border-radius: 50%; background: #ff4655; margin: -20px 0 0 20px; box-shadow: 0 0 4px #ff4655; }
+.pip { position: relative; }

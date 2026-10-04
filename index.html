@@ -34,10 +34,14 @@
 
     <div id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b></b></div>
     <div id="hitmarker"></div>
+    <div id="hitDir"></div>
     <div id="dmgNums"></div>
 
     <div id="centerMsg"><div id="msgMain"></div><div id="msgSub"></div></div>
     <div id="specLabel" hidden></div>
+    <div id="prompt" hidden></div>
+    <div id="actionBar" hidden><div></div><span></span></div>
+    <div id="comms"></div>
     <div id="buffs"></div>
 
     <div id="bottomLeft">
@@ -85,7 +89,10 @@
       <div id="agentCards"></div>
 
       <div class="opts">
-        <div class="opt"><h4>MODE</h4><div class="seg" id="segSize">
+        <div class="opt"><h4>GAME MODE</h4><div class="seg" id="segMode">
+          <button data-v="plant" class="on">Plant / Defuse</button><button data-v="elim">Elimination</button>
+        </div></div>
+        <div class="opt"><h4>TEAM SIZE</h4><div class="seg" id="segSize">
           <button data-v="1">1v1</button><button data-v="3">3v3</button><button data-v="5" class="on">5v5</button>
         </div></div>
         <div class="opt"><h4>BOT DIFFICULTY</h4><div class="seg" id="segDiff">
@@ -106,13 +113,13 @@
         <summary>Controls</summary>
         <div class="grid">
           <span><kbd>WASD</kbd> move</span><span><kbd>Mouse</kbd> aim / shoot</span>
-          <span><kbd>Shift</kbd> walk (silent, accurate)</span><span><kbd>Space</kbd> jump</span>
+          <span><kbd>Shift</kbd> walk (silent, accurate)</span><span><kbd>Space</kbd> jump</span><span><kbd>C</kbd> crouch (hold)</span>
           <span><kbd>RMB</kbd> scope / zoom</span><span><kbd>R</kbd> reload</span>
           <span><kbd>1</kbd>/<kbd>2</kbd> primary / sidearm</span><span><kbd>Q</kbd> <kbd>E</kbd> <kbd>X</kbd> abilities / ultimate</span>
-          <span><kbd>B</kbd> buy (buy phase)</span><span><kbd>Tab</kbd> scoreboard</span>
+          <span><kbd>F</kbd> hold to plant / defuse</span><span><kbd>B</kbd> buy (buy phase)</span><span><kbd>Tab</kbd> scoreboard</span>
           <span><kbd>M</kbd> mute</span><span><kbd>Esc</kbd> pause</span>
         </div>
-        <p>First team to win 5 rounds wins the match. Earn credits from kills and rounds, then buy guns and shields during the buy phase. Kills charge your ultimate. Stopping before you shoot makes you accurate.</p>
+        <p><b>Plant / Defuse:</b> attackers carry the Rift Charge and plant it on site A or B (hold F, 4s); defenders stop the plant or defuse it (hold F, 7s — progress saves at half). The charge detonates 45s after planting. Teams swap sides after round 4. <b>Elimination:</b> wipe the other team. First team to win 5 rounds wins the match. Earn credits from kills and rounds, then buy guns and shields during the buy phase. Kills charge your ultimate. Stopping before you shoot makes you accurate.</p>
       </details>
     </div>
   </div>

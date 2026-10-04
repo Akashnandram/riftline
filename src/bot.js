@@ -1,8 +1,10 @@
 import * as THREE from 'three';
-import { game, now, enemiesOf } from './state.js';
+import { game, now, enemiesOf, sideSign } from './state.js';
 import { DIFFICULTY, MOVE } from './config.js';
 import { hasLOS, findPath } from './world.js';
-import { moveFighter, tryFire, startReload, switchWeapon } from './entities.js';
+import { moveFighter, tryFire, startReload, switchWeapon, penetrable } from './entities.js';
+import { tacticalGoal, onSpotted, cornerToCheck } from './tactics.js';
+import { tickAction } from './objective.js';
 import { useAbility, abilityReady, fireFury, inPool } from './abilities.js';
 
 const _eye = new THREE.Vector3(), _tp = new THREE.Vector3(), _v = new THREE.Vector3();
@@ -27,12 +29,14 @@ export class BotBrain {
       holdUntil: 0, holdYaw: 0, wpI: 0, burst: 0, burstPauseUntil: 0,
       stuckT: 0, stuckPos: new THREE.Vector3(), sidestepUntil: 0, sidestep: 0,
       abilityT: rand(2, 6), noiseSeen: now(), lookYaw: this.f.yaw,
+      crouchShoot: false, wallbangUntil: 0, checkPt: null, checkT: 0, plan: null,
     });
+    this.f.wantCrouch = false;
   }
 
   planRound() {
     this.reset();
-    const s = this.f.team === 0 ? 1 : -1;
+    const s = -sideSign(this.f.team);
     const lane = LANES[Math.floor(Math.random() * 3)];
     const j = () => rand(-2.5, 2.5);
     this.waypoints = [
@@ -86,22 +90,37 @@ export class BotBrain {
       if (!this.canSee(e, e === this.target)) continue;
       const d = f.pos.distanceTo(e.pos);
       e.spottedUntil = Math.max(e.spottedUntil, f.team === game.player.team ? t + 0.3 : e.spottedUntil);
+      onSpotted(this, e);
       for (const a of game.fighters) if (a !== f && a.team === f.team && a.brain) a.brain.intel(e);
       if (d < bestD) { bestD = d; best = e; }
     }
     if (best) {
       if (best !== this.target || !this.visible) {
         const recent = t - this.lastSeenT < 1.5 && best === this.target;
-        this.reactAt = t + this.d.reaction * rand(0.8, 1.25) * (recent ? 0.4 : 1);
+        // enemies that appear off to the side take longer to react to
+        const yawTo = Math.atan2(-(best.pos.x - f.pos.x), -(best.pos.z - f.pos.z));
+        const off = Math.abs(wrap(yawTo - f.yaw));
+        const surprise = off > 0.6 ? 1 + (off - 0.6) * 0.8 : 1;
+        this.reactAt = t + this.d.reaction * rand(0.8, 1.25) * (recent ? 0.4 : surprise);
         this.aimHead = Math.random() < this.d.headChance;
-        const err = this.d.aimErr * (1 + bestD / 35);
-        this.errYaw = rand(-1, 1) * err; this.errPitch = rand(-0.6, 1) * err;
+        const err = this.d.aimErr * (1 + bestD / 35) * (recent ? 0.5 : 1);
+        // flicks overshoot in the direction of the turn, then settle
+        const turnSign = Math.sign(wrap(yawTo - f.yaw)) || 1;
+        this.errYaw = (off > 0.25 ? turnSign * rand(0.4, 1.2) : rand(-1, 1)) * err;
+        this.errPitch = rand(-0.6, 1) * err;
         this.still = Math.random() < this.d.still;
+        this.crouchShoot = this.still && bestD > 12 && Math.random() < this.d.crouch;
       }
       this.target = best; this.visible = true;
       this.lastSeen = best.pos.clone(); this.lastSeenT = t;
       this.holdUntil = 0;
     } else {
+      // just lost sight: maybe keep shooting through the cover they ducked behind
+      if (this.visible && this.target?.alive) {
+        const w = f.weapon();
+        const chest = _tp.set(this.lastSeen.x, this.lastSeen.y + 1.1, this.lastSeen.z);
+        if ((w.pen || 0) >= 0.6 && Math.random() < this.d.wallbang && penetrable(f.eye(_eye), chest, w.pen)) this.wallbangUntil = t + rand(0.6, 1.1);
+      }
       this.visible = false;
       if (this.target && !this.target.alive) this.target = null;
     }
@@ -125,11 +144,24 @@ export class BotBrain {
     const hunt = live && t - game.roundStartTime > 45;
 
     // ---------------- goal selection ----------------
-    let goal = null, lookAt = null;
+    let goal = null, lookAt = null, walk = false, action = null, holding = false;
+    const plantMode = game.config.mode === 'plant' && this.plan;
+    const tg = plantMode && live && !this.visible ? tacticalGoal(this) : null;
+    const anchored = tg && this.plan.side === 'def' && game.charge?.state !== 'planted';
+    const carrying = game.charge?.carrier === f;
     if (!live) {
       goal = null;
     } else if (this.visible) {
       lookAt = null;
+    } else if (plantMode && tg) {
+      if (this.lastSeen && t - this.lastSeenT < 3 && (anchored || carrying || tg.action)) {
+        // hold position and watch where they were instead of chasing
+        goal = tg.action ? tg.goal : null; lookAt = this.lastSeen; action = tg.action;
+      } else if (this.lastSeen && t - this.lastSeenT < 3 && !anchored) {
+        goal = this.lastSeen; lookAt = this.lastSeen; walk = true;
+      } else {
+        goal = tg.goal; lookAt = tg.look; walk = tg.walk; action = tg.action; holding = !!tg.hold;
+      }
     } else if (this.lastSeen && t - this.lastSeenT < 5) {
       goal = this.lastSeen; lookAt = this.lastSeen;
     } else if (this.intelPos && t - this.intelT < 8) {
@@ -181,8 +213,9 @@ export class BotBrain {
         if (dl > 0.3) { wx = dx / dl; wz = dz / dl; }
       }
       // walk (quiet, accurate) when close to where we expect an enemy
-      if (lookAt && f.pos.distanceTo(lookAt) < 12) speed = MOVE.walk * f.speedMul;
+      if (walk || (lookAt && f.pos.distanceTo(lookAt) < 12)) speed = MOVE.walk * f.speedMul;
     }
+    if (action) { wx = 0; wz = 0; }
     if (inPool(f)) { wx = -wx || rand(-1, 1); wz = -wz || rand(-1, 1); }
 
     // stuck detection
@@ -196,12 +229,15 @@ export class BotBrain {
     const wl = Math.hypot(wx, wz);
     if (wl > 1) { wx /= wl; wz /= wl; }
     f.wish = { x: wx, z: wz };
+    f.wantCrouch = this.visible && this.crouchShoot && f.reloadT <= 0 && t > this.reactAt;
     moveFighter(f, wx, wz, speed, false, dt);
+    if (action && !this.visible) tickAction(f, dt);
 
     // ---------------- aim ----------------
     let dYaw = f.yaw, dPitch = 0;
     const furyTarget = f.furyShots > 0 && this.lastSeen && t - this.lastSeenT < 3;
-    if ((this.visible && this.target) || furyTarget) {
+    const wallbanging = !this.visible && t < this.wallbangUntil && this.lastSeen;
+    if ((this.visible && this.target) || furyTarget || wallbanging) {
       const tgt = this.visible ? this.target.pos : this.lastSeen;
       const vel = this.visible ? this.target.vel : _v.set(0, 0, 0);
       f.eye(_eye);
@@ -217,8 +253,16 @@ export class BotBrain {
     } else if (t < this.holdUntil) {
       dYaw = this.holdYaw + Math.sin(t * 0.7 + f.id) * 0.25;
     } else if (wx || wz) {
-      dYaw = Math.atan2(-wx, -wz);
+      // moving: pre-aim the nearest corner ahead instead of staring along the path
+      if ((this.checkT -= dt) <= 0) { this.checkT = 0.35; this.checkPt = cornerToCheck(f, wx, wz); }
+      if (this.checkPt) {
+        f.eye(_eye);
+        const dx = this.checkPt.x - _eye.x, dz = this.checkPt.z - _eye.z;
+        dYaw = Math.atan2(-dx, -dz);
+        dPitch = Math.atan2(this.checkPt.y - _eye.y, Math.hypot(dx, dz));
+      } else dYaw = Math.atan2(-wx, -wz);
     }
+    if (holding && lookAt && !this.visible) dYaw += Math.sin(t * 0.6 + f.id * 1.7) * 0.22; // sweep the angle
     const blindWobble = t < f.blindUntil ? Math.sin(t * 9 + f.id) * 0.8 : 0;
     const k = Math.min(1, d.turn * dt);
     f.yaw += wrap(dYaw + blindWobble - f.yaw) * k;
@@ -228,6 +272,8 @@ export class BotBrain {
     if (live && t >= this.reactAt && t >= f.blindUntil) {
       if (furyTarget || (f.furyShots > 0 && this.visible)) {
         if (Math.abs(wrap(dYaw - f.yaw)) < 0.05) fireFury(f);
+      } else if (wallbanging) {
+        if (Math.abs(wrap(dYaw - f.yaw)) < 0.04 && t >= this.burstPauseUntil) tryFire(f);
       } else if (this.visible && this.target) {
         const dist = f.pos.distanceTo(this.target.pos);
         const tol = Math.atan(0.3 / Math.max(1, dist)) + 0.012;

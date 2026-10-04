@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { game, now } from './state.js';
-import { WEAPONS, AGENTS, MOVE, ECON, MATCH } from './config.js';
-import { boxes, raycastWorldHit, rayBox, raySphere, surfaceOf } from './world.js';
+import { game, now, sideSign } from './state.js';
+import { WEAPONS, AGENTS, MOVE, ECON, MATCH, HIT_ZONES, PENETRATION } from './config.js';
+import { boxes, rayBox, rayBoxRange, boxNormalAt, raySphere, surfaceOf } from './world.js';
 import { tracer, blood, impact, bulletHole, muzzleSprite } from './fx.js';
 import { sfx } from './audio.js';
 import { buildCharacter, setCharacterGun, animateCharacter, startRagdoll, flinch } from './characters.js';
@@ -34,6 +34,7 @@ export class Fighter {
     this.overchargeUntil = 0; this.slowUntil = 0; this.furyUntil = 0; this.furyShots = 0;
     this.healLeft = 0;
     this.dashT = 0; this.dashDir = new THREE.Vector3();
+    this.crouch = 0; this.wantCrouch = false;
     this.mesh = buildCharacter(TEAM_COLORS[team], this.agent);
     this.resetAbilities();
   }
@@ -45,7 +46,9 @@ export class Fighter {
   weapon() { return WEAPONS[this.cur === 'primary' && this.primary ? this.primary : this.secondary]; }
   weaponKey() { return this.weapon().key; }
 
-  eye(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + EYE, this.pos.z); }
+  get drop() { return MOVE.crouchDrop * this.crouch; }
+  get height() { return HEIGHT - this.drop; }
+  eye(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + EYE - this.drop, this.pos.z); }
 
   lookDir(out = new THREE.Vector3(), withRecoil = true) {
     const p = this.pitch + (withRecoil ? this.recoil : 0);
@@ -108,7 +111,7 @@ export function updateFighterMesh(f, dt, viewer) {
   const w = f.weapon();
   animateCharacter(m, {
     yaw: f.yaw, pitch: f.pitch + f.recoil * 0.5, vel: f.vel, onGround: f.onGround,
-    kick: f.kickT || 0, reload: f.reloadT > 0 ? 1 - f.reloadT / w.reload : -1,
+    kick: f.kickT || 0, reload: f.reloadT > 0 ? 1 - f.reloadT / w.reload : -1, crouch: f.crouch,
   }, dt);
   const t = now();
   u.ghost.visible = viewer && f.team !== viewer.team && t < f.revealedUntil;
@@ -121,7 +124,7 @@ export function updateFighterMesh(f, dt, viewer) {
 function overlaps(f, b, minY) {
   return f.pos.x + RADIUS > b.minX && f.pos.x - RADIUS < b.maxX
     && f.pos.z + RADIUS > b.minZ && f.pos.z - RADIUS < b.maxZ
-    && minY < b.maxY && f.pos.y + HEIGHT > b.minY;
+    && minY < b.maxY && f.pos.y + f.height > b.minY;
 }
 
 function resolveAxis(f, axis) {
@@ -138,6 +141,14 @@ function resolveAxis(f, axis) {
   }
 }
 
+function blockedAbove(f) {
+  for (const b of boxes) {
+    if (f.pos.x + RADIUS > b.minX && f.pos.x - RADIUS < b.maxX && f.pos.z + RADIUS > b.minZ && f.pos.z - RADIUS < b.maxZ
+      && b.minY > f.pos.y + f.height - 0.05 && b.minY < f.pos.y + HEIGHT) return true;
+  }
+  return false;
+}
+
 /** wishX/wishZ: desired horizontal direction (unit or zero). */
 export function moveFighter(f, wishX, wishZ, speed, jump, dt) {
   if (f.dashT > 0) {
@@ -150,7 +161,11 @@ export function moveFighter(f, wishX, wishZ, speed, jump, dt) {
     if (dl > a) { dx *= a / dl; dz *= a / dl; }
     f.vel.x += dx; f.vel.z += dz;
   }
-  if (jump && f.onGround) { f.vel.y = MOVE.jump; f.onGround = false; }
+  if (jump && f.onGround && f.crouch < 0.5) { f.vel.y = MOVE.jump; f.onGround = false; }
+  // crouch blends in/out; can't stand up under something
+  let want = f.wantCrouch ? 1 : 0;
+  if (!want && f.crouch > 0 && blockedAbove(f)) want = f.crouch;
+  f.crouch += (want - f.crouch) * Math.min(1, dt * 12);
 
   const steps = Math.max(1, Math.ceil(Math.hypot(f.vel.x, f.vel.z) * dt / 0.25));
   const h = dt / steps;
@@ -166,14 +181,14 @@ export function moveFighter(f, wishX, wishZ, speed, jump, dt) {
   if (f.pos.y <= 0) { f.pos.y = 0; f.vel.y = 0; f.onGround = true; }
   for (const b of boxes) {
     if (!(f.pos.x + RADIUS > b.minX && f.pos.x - RADIUS < b.maxX && f.pos.z + RADIUS > b.minZ && f.pos.z - RADIUS < b.maxZ)) continue;
-    if (f.pos.y < b.maxY && f.pos.y + HEIGHT > b.minY) {
+    if (f.pos.y < b.maxY && f.pos.y + f.height > b.minY) {
       if (f.vel.y <= 0 && prevY >= b.maxY - 0.06) { f.pos.y = b.maxY; f.vel.y = 0; f.onGround = true; }
-      else if (f.vel.y > 0) { f.pos.y = b.minY - HEIGHT; f.vel.y = 0; }
+      else if (f.vel.y > 0) { f.pos.y = b.minY - f.height; f.vel.y = 0; }
     } else if (f.vel.y <= 0 && Math.abs(f.pos.y - b.maxY) < 0.02) f.onGround = true;
   }
 
   if (game.phase === 'buy') {
-    if (f.team === 0) f.pos.x = Math.min(f.pos.x, -31);
+    if (sideSign(f.team) < 0) f.pos.x = Math.min(f.pos.x, -31);
     else f.pos.x = Math.max(f.pos.x, 31);
   }
 }
@@ -185,7 +200,7 @@ export function separateFighters() {
     if (!a.alive || !b.alive) continue;
     const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
     const d = Math.hypot(dx, dz), min = RADIUS * 2;
-    if (d < min && d > 1e-4 && Math.abs(a.pos.y - b.pos.y) < HEIGHT) {
+    if (d < min && d > 1e-4 && Math.abs(a.pos.y - b.pos.y) < a.height) {
       const push = (min - d) / 2, nx = dx / d, nz = dz / d;
       a.pos.x -= nx * push; a.pos.z -= nz * push;
       b.pos.x += nx * push; b.pos.z += nz * push;
@@ -199,22 +214,79 @@ export function separateFighters() {
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _m = new THREE.Vector3(), _end = new THREE.Vector3();
 const _hc = new THREE.Vector3();
 
-/** Find the first enemy hit along a ray before walls. Returns { target, head, t }. */
-export function traceShot(shooter, o, d, maxT = 150, pierce = false) {
-  const wall = pierce ? null : raycastWorldHit(o, d, maxT);
-  const wallT = pierce ? maxT : wall.t;
-  let best = wallT, target = null, head = false;
+/** Enemy hitboxes (crouch-aware): head sphere, torso box, legs box. Returns { t, zone } or null. */
+function hitFighter(e, o, d) {
+  const drop = e.drop, y = e.pos.y;
+  _hc.set(e.pos.x, y + 1.62 - drop, e.pos.z);
+  const th = raySphere(o, d, _hc, 0.21);
+  const legsTop = y + 0.9 - drop * 0.55;
+  const tb = rayBox(o, d, { minX: e.pos.x - 0.3, maxX: e.pos.x + 0.3, minY: legsTop, maxY: y + 1.44 - drop, minZ: e.pos.z - 0.3, maxZ: e.pos.z + 0.3 });
+  const tl = rayBox(o, d, { minX: e.pos.x - 0.25, maxX: e.pos.x + 0.25, minY: y, maxY: legsTop, minZ: e.pos.z - 0.25, maxZ: e.pos.z + 0.25 });
+  const t = Math.min(th, tb, tl);
+  if (t === Infinity) return null;
+  return { t, zone: t === th ? 'head' : t === tb ? 'body' : 'legs' };
+}
+
+/** Solid surfaces along a ray, sorted: [{ t0, t1, kind, box }] (floor has t1 = Infinity). */
+function wallsAlong(o, d, maxT) {
+  const out = [];
+  for (const b of boxes) {
+    const r = rayBoxRange(o, d, b);
+    if (r && r[0] < maxT) out.push({ t0: r[0], t1: r[1], kind: b.kind, box: b });
+  }
+  if (d.y < 0) { const tf = -o.y / d.y; if (tf < maxT) out.push({ t0: tf, t1: Infinity, kind: 'floor', box: null }); }
+  out.sort((x, y) => x.t0 - y.t0);
+  return out;
+}
+
+/**
+ * Trace a bullet. `pen` = metres of wood the round can punch through (see PENETRATION).
+ * Returns { target, zone, head, t, mul (damage multiplier from walls), hits (pierce mode), wall (stop surface), pens }.
+ */
+export function traceShot(shooter, o, d, maxT = 150, pierce = false, pen = 0) {
+  let stopT = maxT, stop = null;
+  const pens = []; // penetrated walls: { t0, t1, kind, box, mul }
+  if (!pierce) {
+    let left = pen, mul = 1;
+    for (const w of wallsAlong(o, d, maxT)) {
+      const cost = (w.t1 - w.t0) * (PENETRATION[w.kind] ?? Infinity);
+      if (pen > 0 && cost <= left && w.t1 < maxT) {
+        left -= cost;
+        mul *= Math.max(0.35, 0.75 - 0.35 * cost / pen);
+        pens.push({ ...w, mul });
+      } else { stopT = w.t0; stop = w; break; }
+    }
+  }
+  let best = stopT, target = null, zone = null;
   const hits = [];
   for (const e of game.fighters) {
     if (!e.alive || e.team === shooter.team) continue;
-    _hc.set(e.pos.x, e.pos.y + 1.62, e.pos.z);
-    const th = raySphere(o, d, _hc, 0.21);
-    const tb = rayBox(o, d, { minX: e.pos.x - 0.31, maxX: e.pos.x + 0.31, minY: e.pos.y, maxY: e.pos.y + 1.44, minZ: e.pos.z - 0.31, maxZ: e.pos.z + 0.31 });
-    const t = Math.min(th, tb);
-    if (pierce && t < maxT) hits.push({ target: e, head: th <= tb, t });
-    if (t < best) { best = t; target = e; head = th <= tb; }
+    const h = hitFighter(e, o, d);
+    if (!h) continue;
+    if (pierce && h.t < maxT) hits.push({ target: e, head: h.zone === 'head', zone: h.zone, t: h.t });
+    if (h.t < best) { best = h.t; target = e; zone = h.zone; }
   }
-  return { target, head, t: best, hits, wall };
+  let mul = 1;
+  for (const p of pens) if (p.t1 <= best) mul = p.mul;
+  let wall = null;
+  if (!target && stop) {
+    const point = o.clone().addScaledVector(d, stop.t0);
+    wall = { t: stop.t0, kind: stop.kind, n: stop.box ? boxNormalAt(stop.box, point) : new THREE.Vector3(0, 1, 0) };
+  }
+  return { target, zone, head: zone === 'head', t: best, mul, hits, wall, pens: pens.filter((p) => p.t1 <= best) };
+}
+
+/** Can a round with `pen` reach from a to b through the walls in between? */
+export function penetrable(a, b, pen) {
+  const d = new THREE.Vector3().subVectors(b, a);
+  const len = d.length(); d.divideScalar(len || 1);
+  let cost = 0;
+  for (const w of wallsAlong(a, d, len)) {
+    if (w.kind === 'floor') return false;
+    cost += (Math.min(w.t1, len) - w.t0) * (PENETRATION[w.kind] ?? Infinity);
+    if (cost > pen) return false;
+  }
+  return true;
 }
 
 export function spreadDir(out, dir, spread) {
@@ -233,7 +305,8 @@ export function currentSpread(f) {
   const hs = Math.hypot(f.vel.x, f.vel.z);
   const moveK = Math.max(0, Math.min(1, (hs - 1.2) / (MOVE.run - 1.2)));
   const base = w.scope && f.scoped ? w.scopedSpread : w.spread;
-  return base + f.bloom + w.move * moveK + (f.onGround ? 0 : 0.12);
+  const crouchK = f.onGround ? 1 - 0.3 * f.crouch : 1;
+  return (base + f.bloom + w.move * moveK) * crouchK + (f.onGround ? 0 : 0.12);
 }
 
 export function tryFire(f) {
@@ -250,12 +323,24 @@ export function tryFire(f) {
   f.bloom = Math.min(w.maxBloom, f.bloom + w.bloom);
   applyRecoil(f, w);
 
-  const { target, head, t, wall } = traceShot(f, _o, _d);
+  const { target, zone, head, t, wall, mul, pens } = traceShot(f, _o, _d, 150, false, w.pen || 0);
   _end.copy(_o).addScaledVector(_d, t);
+  // entry + exit holes on every wall the round punched through
+  for (const p of pens) {
+    const surf = surfaceOf(p.kind);
+    for (const [tt, sign] of [[p.t0, 1], [p.t1, -1]]) {
+      const pt = _o.clone().addScaledVector(_d, tt);
+      const n = boxNormalAt(p.box, pt);
+      impact(pt, n, surf);
+      bulletHole(pt, n, surf);
+      if (sign > 0 && Math.random() < 0.6) sfx('impact', { pos: pt, surface: surf, vol: 0.6 });
+    }
+  }
   if (target) {
-    let dmg = head ? w.head : w.dmg;
-    if (w.key === 'p9' && t > 30) dmg = Math.round(dmg * 0.85);
-    applyDamage(target, dmg, f, { head, weapon: w.key, dir: _d });
+    let dmg = head ? w.head : w.dmg * HIT_ZONES[zone];
+    if (w.falloff && t > w.falloff[0]) dmg *= w.falloff[1];
+    dmg = Math.round(dmg * mul);
+    applyDamage(target, dmg, f, { head, zone, weapon: w.key, dir: _d, wallbang: pens.length > 0 });
     blood(_end, _d);
   } else if (wall && wall.t < 150) {
     const surf = wall.kind === 'floor' ? 'floor' : surfaceOf(wall.kind);
