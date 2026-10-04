@@ -7,7 +7,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { game, now, sideSign } from './state.js';
 import { WEAPONS, ARMOR, AGENTS, ECON, MATCH, MOVE, BOT_NAMES } from './config.js';
-import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx, setSpawnColors, SITE_RECTS } from './world.js';
+import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx, setSpawnColors, SITE_RECTS, isWalkable } from './world.js';
 import { resetCharge, hideCharge, updateCharge, tickAction, canPlant, canDefuse, siteAt } from './objective.js';
 import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
 import {
@@ -19,7 +19,10 @@ import { BotBrain } from './bot.js';
 import { useAbility, abilityReady, updateAbilities, updateAbilityState, clearAbilities, fireFury } from './abilities.js';
 import { buy, botBuy } from './shop.js';
 import { updateFx, clearFx, smokePuff } from './fx.js';
-import { initAudio, sfx, setMuted, isMuted, updateListener } from './audio.js';
+import { initAudio, sfx, setMuted, isMuted, updateListener, setVolume } from './audio.js';
+import { S, save as saveSettings, held, isAction, drawCrosshair, openSettings, onSettingsChange } from './settings.js';
+import { profile, levelInfo, unlockedSkins, skinFor, equip, startTracking, trackKill, trackRound, trackObjective, finishMatch, completeTutorial, categoryOf } from './progress.js';
+import { SKINS, SKIN_BY_KEY, applySkin } from './skins.js';
 import { buildGun, casingGeo, casingMat } from './guns.js';
 import { flashTexture } from './textures.js';
 
@@ -127,8 +130,9 @@ resize();
 
 function setViewModel(f) {
   const key = f.weaponKey();
-  const ck = key + f.team;
-  if (!vmCache[ck]) vmCache[ck] = buildGun(key, TEAM_COLORS[f.team]);
+  const skin = skinFor(key);
+  const ck = key + f.team + skin;
+  if (!vmCache[ck]) vmCache[ck] = applySkin(buildGun(key, TEAM_COLORS[f.team]), skin);
   if (vmGun === vmCache[ck]) return;
   if (vmGun) vmHolder.remove(vmGun);
   vmGun = vmCache[ck];
@@ -169,7 +173,8 @@ function updateCasings(dt) {
 // ---------------------------------------------------------------------------
 const keys = {};
 const mouse = { left: false, leftPressed: false, right: false };
-let sens = store.get('sens', 1);
+setVolume(S.volume);
+onSettingsChange(() => setVolume(S.volume));
 let swayX = 0, swayY = 0;
 let buyOpen = false;
 
@@ -185,9 +190,9 @@ document.addEventListener('pointerlockerror', () => { if (['buy', 'live', 'end']
 addEventListener('mousemove', (e) => {
   if (!locked() || game.paused) return;
   const p = game.player;
-  const s = sens * 0.0022 * (p?.scoped ? 0.45 : 1);
   if (!p) return;
-  const mx = Math.max(-200, Math.min(200, e.movementX)), my = Math.max(-200, Math.min(200, e.movementY));
+  const s = S.sens * 0.0022 * (p.scoped ? 0.5 * S.adsSens : aimK > 0.5 ? S.adsSens : 1);
+  const mx = Math.max(-200, Math.min(200, e.movementX)), my = Math.max(-200, Math.min(200, e.movementY)) * (S.invertY ? -1 : 1);
   if (game.spectating) return;
   p.yaw -= mx * s;
   p.pitch = Math.max(-1.5, Math.min(1.5, p.pitch - my * s));
@@ -202,12 +207,13 @@ addEventListener('mouseup', (e) => { if (e.button === 0) mouse.left = false; if 
 addEventListener('contextmenu', (e) => e.preventDefault());
 
 addEventListener('keydown', (e) => {
-  if (e.code === 'Tab') e.preventDefault();
+  if (e.code === 'Tab' || isAction(e.code, 'scoreboard')) e.preventDefault();
   if (e.repeat) { keys[e.code] = true; return; }
   keys[e.code] = true;
+  if (!$('settings').hidden) return;
   if (!game.player || game.phase === 'menu' || game.phase === 'over') return;
   const p = game.player;
-  if (e.code === 'KeyB') { toggleBuy(); return; }
+  if (isAction(e.code, 'buy')) { toggleBuy(); return; }
   if (buyOpen) {
     const it = BUY_LIST.find((b) => b.hot === e.key);
     if (it) doBuy(it.key);
@@ -215,17 +221,18 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (game.paused || !p.alive) {
-    if (e.code === 'Space' && game.spectating) cycleSpectate();
+    if (isAction(e.code, 'jump') && game.spectating) cycleSpectate();
     return;
   }
-  switch (e.code) {
-    case 'KeyR': startReload(p); break;
-    case 'Digit1': switchWeapon(p, 'primary'); break;
-    case 'Digit2': switchWeapon(p, 'secondary'); break;
-    case 'KeyQ': playerAbility('q'); break;
-    case 'KeyE': playerAbility('e'); break;
-    case 'KeyX': playerAbility('x'); break;
-    case 'KeyM': setMuted(!isMuted()); break;
+  const act = Object.keys(S.binds).find((a) => S.binds[a] === e.code);
+  switch (act) {
+    case 'reload': startReload(p); break;
+    case 'primary': switchWeapon(p, 'primary'); break;
+    case 'secondary': switchWeapon(p, 'secondary'); break;
+    case 'ability1': playerAbility('q'); break;
+    case 'ability2': playerAbility('e'); break;
+    case 'ultimate': playerAbility('x'); break;
+    case 'mute': setMuted(!isMuted()); break;
   }
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -241,6 +248,7 @@ function onRightClick() {
 function playerAbility(slot) {
   const p = game.player;
   if (useAbility(p, slot)) {
+    tutFlags.ability = true;
     if (slot === 'x') flashMsg(p.agent[slot].name.toUpperCase(), 'Ultimate activated', 1.4);
   } else if (game.phase === 'live' && !abilityReady(p, slot)) sfx('empty');
 }
@@ -269,25 +277,101 @@ function renderMenu() {
       btn.onclick = () => { choice[prop] = parse(btn.dataset.v); store.set(prop, choice[prop]); renderMenu(); };
     }
   }
+  renderProfile();
+  $('fps').hidden = !S.showFps;
 }
-for (const btn of $('segQuality').querySelectorAll('button')) {
-  btn.classList.toggle('on', btn.dataset.v === QUALITY);
-  btn.onclick = () => { if (btn.dataset.v !== QUALITY) { store.set('quality', btn.dataset.v); location.reload(); } };
+const MODE_HINTS = {
+  plant: 'Attack: plant the Rift Charge on A or B. Defend: stop or defuse it. First to 5 rounds, sides swap at half.',
+  elim: 'Round-based: wipe the other team. First to 5 rounds.',
+  tdm: 'Quick match: instant respawns, free loadout (press B). First team to the kill target in 5 minutes wins.',
+};
+
+function renderProfile() {
+  const L = levelInfo();
+  $('profileBadge').innerHTML = `<span class="lv">${L.level}</span><div><div>LEVEL ${L.level}</div><div class="bar"><i style="width:${(L.into / L.need) * 100}%"></i></div><small>${L.into} / ${L.need} XP</small></div>`;
+  $('dailyBox').innerHTML = `<h4>DAILY CHALLENGES · reset at midnight</h4>${profile.daily.list.map((c) => `
+    <div class="ch${c.done ? ' done' : ''}"><span>${c.done ? '✓ ' : ''}${c.desc}</span><div class="bar"><i style="width:${(c.prog / c.goal) * 100}%"></i></div><em>+${c.xp} XP</em></div>`).join('')}`;
+  $('newHere').hidden = profile.tutorialDone;
+  $('modeHint').textContent = MODE_HINTS[choice.mode] || '';
 }
-$('sens').value = sens; $('sensVal').textContent = sens.toFixed(2);
-$('sens').oninput = (e) => { sens = +e.target.value; $('sensVal').textContent = sens.toFixed(2); store.set('sens', sens); };
+
 $('touchWarn').hidden = !matchMedia('(pointer: coarse)').matches;
 $('lockIn').onclick = () => { initAudio(); startMatch({ ...choice }); lock(); };
 $('resume').onclick = () => { initAudio(); lock(); };
 $('quit').onclick = () => toMenu();
-$('again').onclick = () => { startMatch(game.config); lock(); };
+$('again').onclick = () => { if (game.config.mode === 'range') startRange(game.config.tutorial); else startMatch(game.config); lock(); };
 $('toMenu').onclick = () => toMenu();
+$('btnRange').onclick = () => { initAudio(); startRange(false); lock(); };
+$('btnTutorial').onclick = $('btnTutorial2').onclick = () => { initAudio(); startRange(true); lock(); };
+$('btnSettings').onclick = () => showSettings();
+$('pauseSettings').onclick = () => showSettings();
+$('btnLoadout').onclick = () => openLoadout();
 renderMenu();
+
+function showSettings() {
+  openSettings($('settings'), {
+    quality: QUALITY,
+    setQuality: (q) => { store.set('quality', q); location.reload(); },
+    onClose: () => { $('fps').hidden = !S.showFps; },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Loadout & skins (with a small 3D preview of the selected gun)
+// ---------------------------------------------------------------------------
+let lo = null;
+function openLoadout() {
+  $('loadout').hidden = false;
+  if (!lo) {
+    const r = new THREE.WebGLRenderer({ canvas: $('loPreview'), antialias: true, alpha: true });
+    r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping;
+    const sc = new THREE.Scene();
+    sc.environment = scene.environment; sc.environmentIntensity = 0.8;
+    sc.add(new THREE.HemisphereLight(0xdfe8ff, 0x3a3228, 0.8));
+    const key = new THREE.DirectionalLight(0xfff0dd, 2); key.position.set(1, 2, 2); sc.add(key);
+    const rim = new THREE.DirectionalLight(0xbcd6ff, 1.5); rim.position.set(-2, 1, -2); sc.add(rim);
+    const cam = new THREE.PerspectiveCamera(30, 640 / 300, 0.01, 10); cam.position.set(0, 0.04, 1.5);
+    lo = { r, sc, cam, holder: new THREE.Group(), weapon: 'raptor', t: 0 };
+    sc.add(lo.holder);
+  }
+  renderLoadout();
+  const spin = () => {
+    if ($('loadout').hidden) return;
+    lo.t += 0.012;
+    lo.holder.rotation.y = Math.PI / 2 + Math.sin(lo.t) * 0.6;
+    lo.r.render(lo.sc, lo.cam);
+    requestAnimationFrame(spin);
+  };
+  spin();
+}
+function renderLoadout() {
+  const L = levelInfo();
+  $('loadoutLevel').textContent = `Level ${L.level} · ${unlockedSkins().length}/${SKINS.length} skins unlocked`;
+  $('loWeapons').innerHTML = Object.values(WEAPONS).map((w) => `<button data-k="${w.key}" class="${w.key === lo.weapon ? 'on' : ''}">${w.name}<small>${SKIN_BY_KEY[skinFor(w.key)].name}</small></button>`).join('');
+  $('loWeapons').querySelectorAll('button').forEach((b) => { b.onclick = () => { lo.weapon = b.dataset.k; renderLoadout(); }; });
+  const cur = skinFor(lo.weapon);
+  $('loName').textContent = `${WEAPONS[lo.weapon].name.toUpperCase()} · ${SKIN_BY_KEY[cur].name.toUpperCase()}`;
+  $('loSkins').innerHTML = SKINS.map((sk) => {
+    const locked = sk.level > L.level;
+    return `<button class="skin${sk.key === cur ? ' on' : ''}${locked ? ' locked' : ''}" data-s="${sk.key}" ${locked ? 'disabled' : ''}>
+      <div class="sw2" style="background:${sk.swatch}"></div>${sk.name}<small>${locked ? `Unlocks at level ${sk.level}` : sk.key === cur ? 'Equipped' : 'Click to equip'}</small></button>`;
+  }).join('');
+  $('loSkins').querySelectorAll('.skin:not(.locked)').forEach((b) => { b.onclick = () => { equip(lo.weapon, b.dataset.s); renderLoadout(); }; });
+  // preview model, centred and scaled to fit
+  lo.holder.clear();
+  const g = applySkin(buildGun(lo.weapon, TEAM_COLORS[0], false), cur);
+  const box = new THREE.Box3().setFromObject(g), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  g.position.sub(c);
+  const k = 1.15 / Math.max(size.x, size.y, size.z);
+  const wrap = new THREE.Group(); wrap.scale.setScalar(k); wrap.add(g);
+  lo.holder.add(wrap);
+}
+$('loadoutDone').onclick = () => { $('loadout').hidden = true; renderMenu(); };
 
 function toMenu() {
   teardown();
   game.phase = 'menu';
-  for (const id of ['hud', 'pause', 'over', 'buyMenu', 'scoreboard']) $(id).hidden = true;
+  for (const id of ['hud', 'pause', 'over', 'buyMenu', 'scoreboard', 'rangeStats', 'tutorial']) $(id).hidden = true;
   $('menu').hidden = false;
   if (locked()) document.exitPointerLock();
   renderMenu();
@@ -340,12 +424,41 @@ function startMatch(cfg) {
       if (isPlayer) game.player = f;
     }
   }
+  if (cfg.mode === 'tdm') {
+    game.tdmTarget = cfg.teamSize * 8;
+    for (const f of game.fighters) f.loadout = f.isPlayer ? { primary: 'raptor', secondary: 'p9' } : botLoadout();
+  }
+  startTracking(cfg.mode);
+  showMatchHud();
+  startRound();
+}
+
+function showMatchHud() {
   $('menu').hidden = true; $('over').hidden = true; $('hud').hidden = false;
   $('killfeed').innerHTML = '';
   $('comms').innerHTML = '';
+  $('topbar').hidden = game.config.mode === 'range';
+  $('rangeStats').hidden = game.config.mode !== 'range';
+  $('tutorial').hidden = !game.config.tutorial;
   setupAbilityHud();
   buildPips();
-  startRound();
+}
+
+const pickW = (opts) => { let r = Math.random() * opts.reduce((t, o) => t + o[1], 0); for (const [k, w] of opts) if ((r -= w) <= 0) return k; return opts[0][0]; };
+function botLoadout() {
+  return {
+    primary: pickW([['raptor', 5], ['wraith', 4], ['talon', 3], ['hornet', 3], ['warden', 2], ['sentry', 2], ['hammer', 1], ['longbow', 1]]),
+    secondary: pickW([['p9', 3], ['wasp', 2], ['magnum', 2]]),
+  };
+}
+function giveLoadout(f) {
+  const L = f.loadout;
+  if (!L) return;
+  f.primary = null;
+  f.give(L.secondary || 'p9');
+  if (L.primary) f.give(L.primary);
+  f.cur = L.primary ? 'primary' : 'secondary';
+  setGunLook(f);
 }
 
 function spawnPoint(team, i) {
@@ -392,7 +505,12 @@ function startRound() {
   }
   // west spawn zone shows the colour of whoever spawns there
   setSpawnColors(TEAM_COLORS[sideSign(0) < 0 ? 0 : 1], TEAM_COLORS[sideSign(0) < 0 ? 1 : 0]);
-  if (plantMode) {
+  if (game.config.mode === 'tdm') {
+    for (const f of game.fighters) { giveLoadout(f); f.armor = 50; f.ult = 0; }
+    hideCharge();
+    game.phaseT = 5;
+    flashMsg('TEAM DEATHMATCH', `First to ${game.tdmTarget} kills · press B to change loadout (free)`, 4);
+  } else if (plantMode) {
     resetCharge();
     planTactics();
     const attacking = game.player.team === game.attackers;
@@ -419,6 +537,7 @@ function endRound(winner, reason) {
   }
   game.lossStreak[loser]++; game.lossStreak[winner] = 0;
   const won = winner === game.player.team;
+  if (won) trackRound();
   flashMsg(won ? 'ROUND WON' : 'ROUND LOST', reason, MATCH.endTime, won ? 'win' : 'lose');
   sfx(won ? 'round' : 'lose');
   if (buyOpen) toggleBuy(false);
@@ -426,9 +545,12 @@ function endRound(winner, reason) {
 
 function matchOver() {
   game.phase = 'over';
-  const won = game.score[game.player.team] >= MATCH.roundsToWin;
-  $('overTitle').textContent = won ? 'VICTORY' : 'DEFEAT';
-  $('overTitle').className = won ? 'win' : 'lose';
+  const me = game.player.team, them = 1 - me;
+  const draw = game.config.mode === 'tdm' && game.score[me] === game.score[them];
+  const won = game.config.mode === 'tdm' ? game.score[me] > game.score[them] : game.score[me] >= MATCH.roundsToWin;
+  $('overTitle').textContent = draw ? 'DRAW' : won ? 'VICTORY' : 'DEFEAT';
+  $('overTitle').className = draw ? '' : won ? 'win' : 'lose';
+  renderXpSummary(finishMatch({ won, assists: game.player.assists }));
   $('overScore').textContent = `${game.score[0]} – ${game.score[1]}`;
   $('overBoard').innerHTML = scoreboardHTML(true);
   $('over').hidden = false; $('hud').hidden = true;
@@ -437,11 +559,17 @@ function matchOver() {
 }
 
 function updatePhase(dt) {
+  if (game.config.mode === 'range') return;
   game.phaseT -= dt;
+  if (game.config.mode === 'tdm' && game.phase === 'live') {
+    if (Math.max(...game.score) >= game.tdmTarget || game.phaseT <= 0) matchOver();
+    return;
+  }
   if (game.phase === 'buy' && game.phaseT <= 0) {
     game.phase = 'live';
-    game.phaseT = MATCH.roundTime;
-    game.roundStartTime = game.time;
+    game.phaseT = game.config.mode === 'tdm' ? 300 : MATCH.roundTime;
+    // in TDM bots start hunting soon instead of walking lanes all match
+    game.roundStartTime = game.config.mode === 'tdm' ? game.time - 25 : game.time;
     if (buyOpen) { toggleBuy(false); }
     flashMsg('FIGHT', '', 1.2);
     sfx('round');
@@ -469,9 +597,190 @@ function updatePhase(dt) {
 }
 
 // ---------------------------------------------------------------------------
+// Respawn modes (Team Deathmatch, Practice Range)
+// ---------------------------------------------------------------------------
+/** Best of several random spawn spots on the team's side: the one furthest from any enemy. */
+function tdmSpawnPoint(f) {
+  const s = sideSign(f.team);
+  let best = null, bestD = -1;
+  for (let i = 0; i < 14; i++) {
+    const x = s * (31.8 + Math.random() * 7), z = -27 + Math.random() * 54;
+    if (!isWalkable(x, z)) continue;
+    let d = Infinity;
+    for (const e of game.fighters) if (e.alive && e.team !== f.team) d = Math.min(d, Math.hypot(e.pos.x - x, e.pos.z - z));
+    if (d > bestD) { bestD = d; best = new THREE.Vector3(x, 0, z); }
+  }
+  return best || spawnPoint(f.team, f.id % 5);
+}
+
+function respawnFighter(f) {
+  resetFighterMesh(f);
+  Object.assign(f, {
+    alive: true, hp: 100, armor: game.config.mode === 'tdm' ? 50 : 0, respawnAt: 0,
+    blindUntil: 0, revealedUntil: 0, spottedUntil: 0, overchargeUntil: 0, slowUntil: 0, furyUntil: 0, nearsightUntil: 0,
+    furyShots: 0, healLeft: 0, dashT: 0, crouch: 0, wantCrouch: false, reloadT: 0, fireCD: 0.3, recoil: 0, recoilYaw: 0,
+    protectUntil: now() + 1.5,
+  });
+  f.vel.set(0, 0, 0);
+  f.damagedBy.clear();
+  f.resetAbilities();
+  if (f.dummy) {
+    f.pos.set(f.dummy.x, 0, f.dummy.z);
+    f.yaw = 0;
+  } else {
+    f.pos.copy(tdmSpawnPoint(f));
+    f.yaw = sideSign(f.team) < 0 ? -Math.PI / 2 : Math.PI / 2; f.pitch = 0;
+    giveLoadout(f);
+  }
+  if (f.brain) f.brain.planRound();
+  if (f === game.player) { game.spectating = false; setViewModel(f); }
+  setGunLook(f);
+}
+
+// ---------------------------------------------------------------------------
+// Practice range + tutorial (in the west spawn corridor: ~60m long, targets at 10–50m)
+// ---------------------------------------------------------------------------
+const RANGE_TARGETS = [
+  { x: -35.5, z: -17 },                        // 10 m
+  { x: -32.5, z: -12, crouch: true },          // 15 m, crouched
+  { x: -38, z: -7, move: [-39, -32], v: 3 },   // 20 m, strafing
+  { x: -35, z: 3 },                            // 30 m
+  { x: -36, z: 13, move: [-39, -32], v: 4.5 }, // 40 m, strafing
+  { x: -35, z: 23 },                           // 50 m
+];
+const rs2 = { shots: 0, hits: 0, heads: 0, kills: 0, ttk: 0, ttkN: 0 };
+const tutFlags = {};
+let tut = null;
+
+function startRange(tutorial) {
+  teardown();
+  setPaused(false);
+  game.config = { mode: 'range', tutorial, agent: choice.agent, teamSize: 1, difficulty: 'easy' };
+  game.time = 0; game.round = 1; game.score = [0, 0]; game.lossStreak = [0, 0]; game.noises = []; game.attackers = 0;
+  Object.assign(rs2, { shots: 0, hits: 0, heads: 0, kills: 0, ttk: 0, ttkN: 0 });
+  for (const k in tutFlags) delete tutFlags[k];
+  const p = new Fighter({ id: 0, name: 'You', team: 0, agent: choice.agent, isPlayer: true });
+  game.player = p; game.fighters.push(p); scene.add(p.mesh);
+  RANGE_TARGETS.forEach((slot, i) => {
+    const d = new Fighter({ id: i + 1, name: `Target ${i + 1}`, team: 1, agent: Object.keys(AGENTS)[i % 4] });
+    d.dummy = { ...slot, dir: 1 };
+    d.pos.set(slot.x, 0, slot.z);
+    d.give('raptor');
+    game.fighters.push(d); scene.add(d.mesh);
+  });
+  p.loadout = tutorial ? { secondary: 'p9' } : { primary: 'raptor', secondary: 'p9' };
+  giveLoadout(p);
+  p.pos.set(-35.5, 0, -27); p.yaw = Math.PI; p.pitch = 0;
+  p.ult = MATCH.ultCost;
+  hideCharge();
+  setSpawnColors(TEAM_COLORS[0], TEAM_COLORS[1]);
+  game.phase = 'live'; game.phaseT = 0; game.roundStartTime = 0;
+  startTracking('range');
+  showMatchHud();
+  tut = tutorial ? { i: 0, yawAcc: 0, lastYaw: p.yaw, start: p.pos.clone() } : null;
+  if (tutorial) renderTutorial();
+  flashMsg(tutorial ? 'TUTORIAL' : 'PRACTICE RANGE', tutorial ? 'Follow the steps at the top of the screen' : 'Press B for any weapon (free) · Esc to quit', 3);
+}
+
+function updateDummy(f, dt) {
+  const d = f.dummy;
+  let wx = 0;
+  if (d.move) {
+    if (f.pos.x <= d.move[0]) d.dir = 1;
+    if (f.pos.x >= d.move[1]) d.dir = -1;
+    wx = d.dir;
+  }
+  f.wantCrouch = !!d.crouch;
+  moveFighter(f, wx, 0, d.v || 0, false, dt);
+  // face the shooter
+  const p = game.player;
+  f.yaw = Math.atan2(-(p.pos.x - f.pos.x), -(p.pos.z - f.pos.z));
+}
+
+const TUT_STEPS = [
+  { t: 'Look around', sub: 'Move your mouse', done: () => tut.yawAcc > 2.5 },
+  { t: 'Move', sub: () => `Use ${['forward', 'left', 'back', 'right'].map((a) => keyLabel(a)).join(' ')} to walk around`, done: () => game.player.pos.distanceTo(tut.start) > 5 },
+  { t: 'Jump', sub: () => `Press ${keyLabel('jump')}`, done: () => !game.player.onGround },
+  { t: 'Crouch', sub: () => `Hold ${keyLabel('crouch')} — crouching makes you smaller and more accurate`, done: () => game.player.crouch > 0.9 },
+  { t: 'Shoot a target', sub: 'Left click. Stand still for the best accuracy', done: () => rs2.kills >= 1 },
+  { t: 'Reload', sub: () => `Fire a few shots, then press ${keyLabel('reload')}`, done: () => game.player.reloadT > 0 },
+  { t: 'Aim down sights', sub: 'Hold right click and hit one of the far targets (20m+)', done: () => tutFlags.adsFar },
+  { t: 'Buy a primary weapon', sub: () => `Press ${keyLabel('buy')} to open the armory and pick a rifle, SMG or shotgun (free here)`, done: () => game.player.primary && categoryOf(game.player.primary) !== 'secondary' },
+  { t: 'Use an ability', sub: () => `Press ${keyLabel('ability1')} or ${keyLabel('ability2')} — your agent's skills`, done: () => tutFlags.ability },
+  { t: 'Land a headshot kill', sub: 'Aim for the head — it does much more damage', done: () => tutFlags.headKill },
+];
+const keyLabel = (a) => `<kbd>${({ Space: 'Space', ShiftLeft: 'Shift' })[S.binds[a]] || S.binds[a].replace(/^Key|^Digit/, '')}</kbd>`;
+
+function renderTutorial() {
+  const el = $('tutorial');
+  if (tut.i >= TUT_STEPS.length) {
+    el.className = 'done';
+    el.innerHTML = `<div class="step">TUTORIAL COMPLETE</div><div class="txt">You know the basics!</div>
+      <div class="sub">In matches you buy guns each round, plant the Rift Charge on A or B with <kbd>F</kbd>, or defend it.${tut.xp ? ` <b style="color:#ffd23f">+${tut.xp} XP</b>` : ''}</div>
+      <button class="big" id="tutPlay">PLAY A MATCH</button><button class="ghost" id="tutStay">Keep practicing</button>`;
+    $('tutPlay').onclick = () => { startMatch({ ...choice }); lock(); };
+    $('tutStay').onclick = () => { tut = null; el.hidden = true; lock(); };
+    return;
+  }
+  const st = TUT_STEPS[tut.i];
+  el.className = '';
+  el.innerHTML = `<div class="step">STEP ${tut.i + 1} / ${TUT_STEPS.length}</div><div class="txt">${st.t}</div>
+    <div class="sub">${typeof st.sub === 'function' ? st.sub() : st.sub}</div><div class="bar"><i style="width:${(tut.i / TUT_STEPS.length) * 100}%"></i></div>`;
+}
+
+let rangeT = 0;
+function updateRange(dt) {
+  const p = game.player;
+  // keep abilities and ultimate topped up so they can be tried freely
+  if ((rangeT += dt) > 6) { rangeT = 0; p.resetAbilities(); p.ult = MATCH.ultCost; }
+  const acc = rs2.shots ? Math.round((rs2.hits / rs2.shots) * 100) : 0;
+  const hs = rs2.hits ? Math.round((rs2.heads / rs2.hits) * 100) : 0;
+  const ttk = rs2.ttkN ? (rs2.ttk / rs2.ttkN).toFixed(2) + 's' : '—';
+  const html = `<span>Accuracy <b>${acc}%</b></span><span>Headshots <b>${hs}%</b></span><span>Kills <b>${rs2.kills}</b></span><span>Avg time-to-kill <b>${ttk}</b></span>`;
+  if (textCache.get('rangeStats') !== html) { textCache.set('rangeStats', html); $('rangeStats').innerHTML = html; }
+  if (!tut || tut.i >= TUT_STEPS.length) return;
+  tut.yawAcc += Math.abs(Math.atan2(Math.sin(p.yaw - tut.lastYaw), Math.cos(p.yaw - tut.lastYaw)));
+  tut.lastYaw = p.yaw;
+  if (TUT_STEPS[tut.i].done()) {
+    tut.i++;
+    sfx('buy');
+    if (tut.i >= TUT_STEPS.length) {
+      tut.xp = completeTutorial();
+      if (locked()) document.exitPointerLock();
+      setTimeout(() => setPaused(false), 50);
+    }
+    renderTutorial();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Results: XP breakdown, level bar, unlocks, daily challenges
+// ---------------------------------------------------------------------------
+function renderXpSummary(sum) {
+  const el = $('xpPanel');
+  if (!sum) { el.innerHTML = ''; return; }
+  const { before, after } = sum;
+  const pct = (L) => (L.into / L.need) * 100;
+  el.innerHTML = `${sum.lines.map(([l, x]) => `<div class="xp-line"><span>${l}</span><em>+${x}</em></div>`).join('')}
+    <div class="xp-line xp-total"><span>Total</span><em>+${sum.total} XP</em></div>
+    <div class="xp-line"><span>Level ${after.level}${after.level > before.level ? ' — LEVEL UP!' : ''}</span><span>${after.into} / ${after.need}</span></div>
+    <div class="xp-bar"><i style="width:${after.level > before.level ? 0 : pct(before)}%"></i></div>
+    ${sum.unlocks.map((u) => `<div class="unlock">New skin unlocked: ${u.name} — equip it in Loadout &amp; Skins</div>`).join('')}`;
+  requestAnimationFrame(() => requestAnimationFrame(() => { const bar = el.querySelector('.xp-bar i'); if (bar) bar.style.width = pct(after) + '%'; }));
+}
+
+// ---------------------------------------------------------------------------
 // Kill / hit feedback
 // ---------------------------------------------------------------------------
 game.onKill = (attacker, target, opts) => {
+  const mode = game.config.mode;
+  if (attacker === game.player && target.team !== attacker.team) {
+    trackKill(opts.weapon, opts.head);
+    if (mode === 'range') { rs2.kills++; if (target.firstHitT != null) { rs2.ttk += now() - target.firstHitT; rs2.ttkN++; } if (opts.head) tutFlags.headKill = true; }
+  }
+  target.firstHitT = null;
+  if (mode === 'tdm' && attacker && attacker.team !== target.team) game.score[attacker.team]++;
+  if (mode === 'tdm' || mode === 'range') target.respawnAt = now() + (mode === 'tdm' ? 3 : 1.5);
   const el = document.createElement('div');
   const mine = attacker === game.player || target === game.player;
   el.className = 'kf' + (mine ? ' mine' : '');
@@ -483,11 +792,12 @@ game.onKill = (attacker, target, opts) => {
   while ($('killfeed').children.length > 6) $('killfeed').lastChild.remove();
   if (attacker === game.player) sfx('kill');
   if (target === game.player) {
-    flashMsg('ELIMINATED', attacker ? `by ${attacker.name}` : '', 2.2, 'lose');
+    const respawning = mode === 'tdm' || mode === 'range';
+    flashMsg('ELIMINATED', (attacker ? `by ${attacker.name}` : '') + (respawning ? ' · respawning in 3' : ''), 2.2, 'lose');
     game.specIndex = -1;
-    setTimeout(() => { if (!game.player.alive && game.phase !== 'over') { game.spectating = true; cycleSpectate(); } }, 1200);
+    if (!respawning) setTimeout(() => { if (!game.player.alive && game.phase !== 'over') { game.spectating = true; cycleSpectate(); } }, 1200);
   }
-  if (aliveCount(game.player.team) === 1 && game.player.alive && aliveCount(1 - game.player.team) > 1 && game.phase === 'live') {
+  if (mode !== 'range' && mode !== 'tdm' && aliveCount(game.player.team) === 1 && game.player.alive && aliveCount(1 - game.player.team) > 1 && game.phase === 'live') {
     flashMsg('LAST ALIVE', `1 v ${aliveCount(1 - game.player.team)}`, 1.5);
   }
 };
@@ -504,6 +814,7 @@ function comms(text, who = null, sys = false) {
 game.onCallout = (bot, text) => comms(text, bot.name);
 game.onChargeEvent = (kind, f) => {
   onChargeEvent(kind);
+  if ((kind === 'planted' || kind === 'defused') && f === game.player) trackObjective();
   const mine = game.player.team === game.attackers;
   const c = game.charge;
   if (kind === 'planted') {
@@ -516,6 +827,13 @@ game.onChargeEvent = (kind, f) => {
 
 let hitT = 0;
 game.onPlayerHit = (target, dmg, head, killed) => {
+  if (game.config.mode === 'range') {
+    rs2.hits++; if (head) rs2.heads++;
+    // time-to-kill restarts if the target went 2s without being hit
+    if (target.firstHitT == null || now() - (target.lastPlayerHitT ?? -9) > 2) target.firstHitT = now();
+    target.lastPlayerHitT = now();
+    if (aimK > 0.5 && target.pos.distanceTo(game.player.pos) > 20) tutFlags.adsFar = true;
+  }
   const hm = $('hitmarker');
   hm.classList.add('show'); hm.classList.toggle('kill', killed);
   hitT = 0.12;
@@ -576,6 +894,7 @@ function stepSprings(dt) {
 }
 const _muz = new THREE.Vector3();
 game.onPlayerShot = (p, w) => {
+  if (game.config.mode === 'range') rs2.shots++;
   kickViewModel(w);
   smokePuff(p.muzzle(_muz), w.slot === 'primary' ? 1 : 0.7);
   muzzleFlash.visible = true;
@@ -617,9 +936,10 @@ const BUY_LIST = [
   { key: 'light', cat: 'armor', hot: 'z' }, { key: 'heavy', cat: 'armor', hot: 'x' },
 ];
 
+const freeLoadout = () => game.config.mode === 'tdm' || game.config.mode === 'range';
 function toggleBuy(force) {
   const open = force ?? !buyOpen;
-  if (open && (game.phase !== 'buy' || !game.player.alive)) return;
+  if (open && !freeLoadout() && (game.phase !== 'buy' || !game.player.alive)) return;
   buyOpen = open;
   $('buyMenu').hidden = !open;
   if (open) { if (locked()) document.exitPointerLock(); renderBuy(); }
@@ -627,7 +947,20 @@ function toggleBuy(force) {
 }
 
 function doBuy(key) {
-  if (buy(game.player, key)) { sfx('buy'); setViewModel(game.player); }
+  const p = game.player;
+  if (freeLoadout()) {
+    if (ARMOR[key]) { if (game.config.mode === 'range') p.armor = ARMOR[key].value; }
+    else {
+      p.loadout ??= {};
+      p.loadout[WEAPONS[key].slot] = key;
+      // take it right away in the range, in spawn, or before the match starts
+      if (p.alive && (game.config.mode === 'range' || game.phase === 'buy' || sideSign(p.team) * p.pos.x > 30)) { p.give(key); if (key === 'raptor' || WEAPONS[key].slot === 'primary') tutFlags.bought = true; }
+      else flashMsg('LOADOUT SAVED', 'You get it on your next respawn', 1.5);
+    }
+    sfx('buy'); setViewModel(p); renderBuy();
+    return;
+  }
+  if (buy(p, key)) { sfx('buy'); setViewModel(p); }
   renderBuy();
 }
 
@@ -643,7 +976,9 @@ function renderBuy() {
     b.className = 'item' + (owned ? ' owned' : '') + (!owned && p.credits < def.cost ? ' poor' : '');
     const mode = def.pellets ? `${def.pellets} pellets` : def.burst ? `${def.burst}-round burst` : def.auto ? 'auto' : 'semi';
     const info = isArmor ? `+${def.value} shield` : `${def.dmg} body · ${def.head} head · ${mode}${def.suppressed ? ' · suppressed' : ''}`;
-    b.innerHTML = `<span><span class="k">${it.hot}</span>${def.name}<small>${info}</small></span><span class="c">${def.cost ? '¤ ' + def.cost : 'FREE'}</span>`;
+    const price = freeLoadout() || !def.cost ? 'FREE' : '¤ ' + def.cost;
+    if (freeLoadout()) b.classList.remove('poor');
+    b.innerHTML = `<span><span class="k">${it.hot}</span>${def.name}<small>${info}</small></span><span class="c">${price}</span>`;
     b.onclick = () => doBuy(it.key);
     document.querySelector(`#buyMenu .items[data-cat="${it.cat}"]`).appendChild(b);
   }
@@ -703,7 +1038,7 @@ function scoreboardHTML(final = false) {
         <td class="num">${team === game.player.team && !final ? '¤ ' + f.credits : ''}</td></tr>`);
     }
   }
-  return `<table><tr><th>AGENT</th><th>PLAYER</th><th class="num">K</th><th class="num">D</th><th class="num">A</th><th class="num">ADR</th><th class="num">CREDITS</th></tr>${rows.join('')}</table>`;
+  return `<table><tr><th>AGENT</th><th>PLAYER</th><th class="num">K</th><th class="num">D</th><th class="num">A</th><th class="num">${game.config.mode === 'tdm' ? 'DMG' : 'ADR'}</th><th class="num">CREDITS</th></tr>${rows.join('')}</table>`;
 }
 
 const mm = $('minimap'), mg = mm.getContext('2d');
@@ -771,7 +1106,9 @@ function updateHud(dt) {
   $('timer').classList.toggle('charge', planted && game.phase === 'live');
   const plantMode = game.config.mode === 'plant';
   const sideTxt = plantMode ? (p.team === game.attackers ? ' · ATTACK' : ' · DEFEND') : '';
-  setText('roundLabel', planted && game.phase === 'live' ? `CHARGE ON ${game.charge.site}` : game.phase === 'buy' ? 'BUY PHASE' + sideTxt : `ROUND ${game.round}${sideTxt}`);
+  if (game.config.mode === 'tdm') setText('roundLabel', game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget}`);
+  else setText('roundLabel', planted && game.phase === 'live' ? `CHARGE ON ${game.charge.site}` : game.phase === 'buy' ? 'BUY PHASE' + sideTxt : `ROUND ${game.round}${sideTxt}`);
+  $('credits').hidden = freeLoadout();
   for (const f of game.fighters) f.pipEl?.classList.toggle('carrier', plantMode && game.charge?.carrier === f && f.team === p.team);
 
   // plant / defuse prompt + progress
@@ -838,18 +1175,17 @@ function updateHud(dt) {
   $('scope').style.opacity = scoped ? 1 : 0;
   $('crosshair').style.opacity = scoped || game.spectating ? 0 : 1;
 
-  // crosshair gap follows spread
+  // crosshair (user style) + optional gap that follows spread
   if (p.alive && !game.spectating) {
-    const gap = 3 + Math.min(30, (p.weapon().spread + p.bloom + (Math.hypot(p.vel.x, p.vel.z) > 1.2 ? p.weapon().move * 0.5 : 0)) * 260);
-    const ch = $('crosshair').children;
-    ch[0].style.top = -(gap + 6) + 'px'; ch[1].style.top = gap + 'px';
-    ch[2].style.left = -(gap + 6) + 'px'; ch[3].style.left = gap + 'px';
+    const extra = S.crosshair.dynamic ? Math.min(30, (p.bloom + (Math.hypot(p.vel.x, p.vel.z) > 1.2 ? p.weapon().move * 0.5 : 0)) * 260) : 0;
+    drawCrosshair($('crosshair'), extra);
   }
+
 
   // buy timer
   if (buyOpen) setText('buyTimer', `${Math.ceil(game.phaseT)}s left`);
 
-  const showBoard = keys.Tab && game.phase !== 'over';
+  const showBoard = held(keys, 'scoreboard') && game.phase !== 'over';
   $('scoreboard').hidden = !showBoard;
   if (showBoard) $('scoreboard').innerHTML = scoreboardHTML();
 
@@ -871,18 +1207,18 @@ function updatePlayer(dt) {
   if (!p.alive) return;
   let fx = 0, fz = 0;
   if (!buyOpen) {
-    const fwd = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
-    const side = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+    const fwd = (held(keys, 'forward') ? 1 : 0) - (held(keys, 'back') ? 1 : 0);
+    const side = (held(keys, 'right') ? 1 : 0) - (held(keys, 'left') ? 1 : 0);
     const sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
     fx = -sy * fwd + cy * side; fz = -cy * fwd - sy * side;
     const l = Math.hypot(fx, fz); if (l > 0) { fx /= l; fz /= l; }
   }
   p.wish = { x: fx, z: fz };
-  const walking = keys.ShiftLeft || keys.ShiftRight;
-  p.wantCrouch = !!keys.KeyC && !buyOpen;
+  const walking = held(keys, 'walk');
+  p.wantCrouch = held(keys, 'crouch') && !buyOpen;
   const speed = (p.crouch > 0.5 ? MOVE.crouch : walking ? MOVE.walk : MOVE.run) * p.speedMul * (aimK > 0.5 ? 0.8 : 1);
   if (!p.onGround) airVel = Math.min(airVel, p.vel.y);
-  moveFighter(p, fx, fz, speed, keys.Space && !buyOpen, dt);
+  moveFighter(p, fx, fz, speed, held(keys, 'jump') && !buyOpen, dt);
   if (p.onGround && wasAirborne && airVel < -3) { sfx('land', { vol: Math.min(1, -airVel / 8) }); landT = Math.min(1, -airVel / 9); }
   wasAirborne = !p.onGround;
   if (p.onGround) airVel = 0;
@@ -894,7 +1230,7 @@ function updatePlayer(dt) {
   }
 
   // hold F to plant / defuse (must stand still)
-  actionProgress = keys.KeyF && !buyOpen && game.config.mode === 'plant' ? tickAction(p, dt) : -1;
+  actionProgress = held(keys, 'use') && !buyOpen && game.config.mode === 'plant' ? tickAction(p, dt) : -1;
 
   if (!buyOpen && locked() && actionProgress < 0) {
     const w = p.weapon();
@@ -953,7 +1289,7 @@ function reloadSounds(p, k) {
 
 function updateCamera(dt) {
   const p = game.player;
-  let fov = 75;
+  let fov = S.fov;
   const w = p.weapon();
   const wantAim = (mouse.right && locked() || forceAim) && p.alive && !w.scope && p.reloadT <= 0 && !game.spectating;
   aimK += ((wantAim ? 1 : 0) - aimK) * Math.min(1, dt * 14);
@@ -977,8 +1313,9 @@ function updateCamera(dt) {
       camera.position.set(body.x + Math.sin(p.yaw) * 2.6, body.y + 1.9, body.z + Math.cos(p.yaw) * 2.6);
       camera.lookAt(body.x, body.y, body.z);
     }
-    if (p.scoped) fov = 75 / w.scope;
-    else fov = 75 - aimK * (75 - (w.adsFov || 62));
+    const base = S.fov;
+    if (p.scoped) fov = base / w.scope;
+    else fov = base - aimK * (base - (w.adsFov || 62) * base / 75);
   } else {
     const s = game.specTarget && game.specTarget.alive ? game.specTarget : null;
     if (!s) cycleSpectate();
@@ -1068,10 +1405,13 @@ function updateCamera(dt) {
 // Main loop
 // ---------------------------------------------------------------------------
 let last = performance.now();
+let fpsAcc = 0, fpsN = 0;
 function frame(ts) {
   requestAnimationFrame(frame);
-  const dt = Math.min(0.05, (ts - last) / 1000);
+  const raw = (ts - last) / 1000;
+  const dt = Math.min(0.05, raw);
   last = ts;
+  if (S.showFps) { fpsAcc += raw; if (++fpsN >= 20) { $('fps').textContent = `${Math.round(fpsN / fpsAcc)} FPS`; fpsAcc = 0; fpsN = 0; } }
   if (game.phase === 'menu') { idleCamera(ts); render(); return; }
   if (!game.paused && game.phase !== 'over') step(dt);
   render();
@@ -1085,8 +1425,9 @@ function step(dt) {
   if (game.phase === 'over') return;
   updatePlayer(dt);
   for (const f of game.fighters) {
-    if (!f.alive) continue;
+    if (!f.alive) { if (f.respawnAt && game.time >= f.respawnAt && game.phase === 'live') respawnFighter(f); continue; }
     if (f.brain) f.brain.think(dt);
+    else if (f.dummy) updateDummy(f, dt);
     updateWeapon(f, dt);
     updateAbilityState(f, dt);
   }
@@ -1100,6 +1441,7 @@ function step(dt) {
   updateRagdolls(dt);
   updateWorldFx(t);
   for (const f of game.fighters) updateFighterMesh(f, dt, game.player);
+  if (game.config.mode === 'range') updateRange(dt);
   updateCamera(dt);
   if (debugCam) { camera.position.copy(debugCam.pos); camera.lookAt(debugCam.look); vmRoot.visible = false; }
   updateHud(dt);

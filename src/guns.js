@@ -51,7 +51,16 @@ const M = {
   shell: std(0x9a2a22, 0.35, 0.2),
   tritium: new THREE.MeshBasicMaterial({ color: 0x7dff9a }),
 };
+export const GUN_MATS = M;
 const accentCache = {};
+/** Which part of the gun a material belongs to (used by skins). */
+export function materialRole(mat) {
+  if (mat === M.steel || mat === M.bright) return 'metal';
+  if (mat === M.dark) return 'dark';
+  if (mat === M.polymer) return 'polymer';
+  if (Object.values(accentCache).includes(mat)) return 'accent';
+  return null;
+}
 const accent = (c) => (accentCache[c] ??= std(c, 0.15, 0.7, { bumpMap: stipple, bumpScale: 0.2 }));
 const sleeveCache = {};
 const sleeve = (c) => (sleeveCache[c] ??= std(new THREE.Color(0x24272d).lerp(new THREE.Color(c), 0.1), 0, 0.9));

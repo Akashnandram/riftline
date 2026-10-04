@@ -31,7 +31,7 @@ export function initAudio() {
   comp.threshold.value = -14; comp.knee.value = 10; comp.ratio.value = 4;
   comp.connect(ctx.destination);
   master = ctx.createGain();
-  master.gain.value = muted ? 0 : 0.6;
+  master.gain.value = muted ? 0 : volume;
   master.connect(comp);
   const conv = ctx.createConvolver();
   conv.buffer = impulse(1.8, 3.2);
@@ -59,7 +59,9 @@ async function loadSamples() {
   } catch { /* no recordings shipped — synth only */ }
 }
 
-export function setMuted(m) { muted = m; if (master) master.gain.value = m ? 0 : 0.6; }
+let volume = 0.6;
+export function setVolume(v) { volume = v * 0.85; if (master) master.gain.value = muted ? 0 : volume; }
+export function setMuted(m) { muted = m; if (master) master.gain.value = m ? 0 : volume; }
 export const isMuted = () => muted;
 
 /** Call every frame with camera position + forward vector. */

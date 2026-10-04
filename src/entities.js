@@ -4,7 +4,8 @@ import { WEAPONS, AGENTS, MOVE, ECON, MATCH, HIT_ZONES, PENETRATION } from './co
 import { boxes, rayBox, rayBoxRange, boxNormalAt, raySphere, surfaceOf } from './world.js';
 import { tracer, blood, impact, bulletHole, muzzleSprite } from './fx.js';
 import { sfx } from './audio.js';
-import { buildCharacter, setCharacterGun, animateCharacter, startRagdoll, flinch } from './characters.js';
+import { buildCharacter, setCharacterGun, animateCharacter, startRagdoll, flinch, removeRagdoll } from './characters.js';
+import { skinFor } from './progress.js';
 
 export const RADIUS = 0.35, HEIGHT = 1.8, EYE = 1.62;
 export const TEAM_COLORS = [0x3d8bff, 0xff4655];
@@ -90,12 +91,13 @@ export class Fighter {
 // Mesh (articulated character rig — see characters.js)
 // ---------------------------------------------------------------------------
 export function setGunLook(f) {
-  if (!f.mesh.userData.ragdoll) setCharacterGun(f.mesh, f.weaponKey());
+  if (!f.mesh.userData.ragdoll) setCharacterGun(f.mesh, f.weaponKey(), f.isPlayer ? skinFor(f.weaponKey()) : f.skin);
 }
 
 /** Swap in a fresh rig after a ragdoll death (called at round start). */
 export function resetFighterMesh(f) {
   if (!f.mesh.userData.ragdoll) return;
+  removeRagdoll(f.mesh, game.scene);
   game.scene.remove(f.mesh);
   f.mesh = buildCharacter(TEAM_COLORS[f.team], f.agent);
   game.scene.add(f.mesh);
@@ -469,6 +471,7 @@ export function switchWeapon(f, slot) {
 // ---------------------------------------------------------------------------
 export function applyDamage(target, amount, attacker, opts = {}) {
   if (!target.alive || game.phase === 'end' || game.phase === 'over') return;
+  if (now() < (target.protectUntil || 0)) return;   // respawn protection
   const before = target.hp + target.armor;
   let a = amount;
   if (target.armor > 0) { const ab = Math.min(target.armor, a); target.armor -= ab; a -= ab; }

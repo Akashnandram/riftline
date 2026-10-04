@@ -92,15 +92,25 @@
   <!-- ===================== MENUS ===================== -->
   <div id="menu" class="screen">
     <div class="menuInner">
+      <div class="menuTop">
+        <div id="profileBadge" class="badge"></div>
+        <div class="navBtns">
+          <button id="btnTutorial" class="ghost">Tutorial</button>
+          <button id="btnRange" class="ghost">Practice Range</button>
+          <button id="btnLoadout" class="ghost">Loadout &amp; Skins</button>
+          <button id="btnSettings" class="ghost">Settings</button>
+        </div>
+      </div>
       <h1>RIFT<span>LINE</span></h1>
       <p class="tag">Tactical 5v5 hero shooter · pick an agent · win the rounds</p>
+      <div id="newHere" hidden>New here? <button id="btnTutorial2">Play the 2-minute tutorial</button> (+500 XP)</div>
 
       <h3>CHOOSE YOUR AGENT</h3>
       <div id="agentCards"></div>
 
       <div class="opts">
         <div class="opt"><h4>GAME MODE</h4><div class="seg" id="segMode">
-          <button data-v="plant" class="on">Plant / Defuse</button><button data-v="elim">Elimination</button>
+          <button data-v="plant" class="on">Plant / Defuse</button><button data-v="elim">Elimination</button><button data-v="tdm">Team Deathmatch</button>
         </div></div>
         <div class="opt"><h4>TEAM SIZE</h4><div class="seg" id="segSize">
           <button data-v="1">1v1</button><button data-v="3">3v3</button><button data-v="5" class="on">5v5</button>
@@ -108,29 +118,13 @@
         <div class="opt"><h4>BOT DIFFICULTY</h4><div class="seg" id="segDiff">
           <button data-v="easy">Easy</button><button data-v="normal" class="on">Normal</button><button data-v="hard">Hard</button>
         </div></div>
-        <div class="opt"><h4>GRAPHICS</h4><div class="seg" id="segQuality">
-          <button data-v="low">Low</button><button data-v="medium" class="on">Medium</button><button data-v="high">High</button>
-        </div></div>
-        <div class="opt"><h4>SENSITIVITY <span id="sensVal">1.0</span></h4>
-          <input type="range" id="sens" min="0.2" max="3" step="0.05" value="1" />
-        </div>
       </div>
+      <p id="modeHint" class="hint"></p>
 
       <button id="lockIn" class="big">LOCK IN</button>
       <p id="touchWarn" hidden>Riftline needs a keyboard and mouse — open it on a desktop browser.</p>
 
-      <details class="controls">
-        <summary>Controls</summary>
-        <div class="grid">
-          <span><kbd>WASD</kbd> move</span><span><kbd>Mouse</kbd> aim / shoot</span>
-          <span><kbd>Shift</kbd> walk (silent, accurate)</span><span><kbd>Space</kbd> jump</span><span><kbd>C</kbd> crouch (hold)</span>
-          <span><kbd>RMB</kbd> scope / zoom</span><span><kbd>R</kbd> reload</span>
-          <span><kbd>1</kbd>/<kbd>2</kbd> primary / sidearm</span><span><kbd>Q</kbd> <kbd>E</kbd> <kbd>X</kbd> abilities / ultimate</span>
-          <span><kbd>F</kbd> hold to plant / defuse</span><span><kbd>B</kbd> buy (buy phase)</span><span><kbd>Tab</kbd> scoreboard</span>
-          <span><kbd>M</kbd> mute</span><span><kbd>Esc</kbd> pause</span>
-        </div>
-        <p><b>Plant / Defuse:</b> attackers carry the Rift Charge and plant it on site A or B (hold F, 4s); defenders stop the plant or defuse it (hold F, 7s — progress saves at half). The charge detonates 45s after planting. Teams swap sides after round 4. <b>Elimination:</b> wipe the other team. First team to win 5 rounds wins the match. Earn credits from kills and rounds, then buy guns and shields during the buy phase. Kills charge your ultimate. Stopping before you shoot makes you accurate.</p>
-      </details>
+      <div id="dailyBox" class="daily"></div>
     </div>
   </div>
 
@@ -138,6 +132,7 @@
     <div class="menuInner small">
       <h2>PAUSED</h2>
       <button id="resume" class="big">CLICK TO RESUME</button>
+      <button id="pauseSettings" class="ghost">Settings</button>
       <button id="quit" class="ghost">Quit to menu</button>
     </div>
   </div>
@@ -146,13 +141,35 @@
     <div class="menuInner">
       <h2 id="overTitle">VICTORY</h2>
       <p id="overScore" class="tag"></p>
+      <div id="xpPanel"></div>
       <div id="overBoard"></div>
       <div class="row">
         <button id="again" class="big">PLAY AGAIN</button>
-        <button id="toMenu" class="ghost">Change agent</button>
+        <button id="toMenu" class="ghost">Main menu</button>
       </div>
     </div>
   </div>
+
+  <div id="settings" class="screen dim" hidden></div>
+  <div id="loadout" class="screen dim" hidden>
+    <div class="menuInner loadout">
+      <div class="set-head"><h2>LOADOUT &amp; SKINS</h2><div id="loadoutLevel"></div><button class="big" id="loadoutDone">DONE</button></div>
+      <div class="lo-grid">
+        <div id="loWeapons" class="lo-list"></div>
+        <div>
+          <canvas id="loPreview" width="640" height="300"></canvas>
+          <div id="loName" class="lo-name"></div>
+          <div id="loSkins" class="lo-skins"></div>
+          <p class="hint">Level up by playing matches to unlock more skins. Any unlocked skin works on every gun.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- practice range / tutorial overlays -->
+  <div id="rangeStats" hidden></div>
+  <div id="tutorial" hidden></div>
+  <div id="fps" hidden></div>
 
   <script type="module" src="src/game.js"></script>
   <script defer src="/_vercel/insights/script.js"></script>

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { boxes } from './world.js';
 import { buildGun } from './guns.js';
+import { applySkin } from './skins.js';
 
 // Articulated soldier rig built from primitives: a joint hierarchy (hips → spine → chest → neck →
 // head, shoulders → elbows → hands, thighs → knees → feet) animated procedurally, with two-bone
@@ -181,12 +182,12 @@ export function buildCharacter(teamColor, agent) {
   return root;
 }
 
-export function setCharacterGun(root, key) {
+export function setCharacterGun(root, key, skin = 'default') {
   const u = root.userData;
-  if (u.gunKey === key) return;
+  if (u.gunKey === key && u.gunSkin === skin) return;
   if (u.gun) u.gunMount.remove(u.gun);
-  u.gun = buildGun(key, u.teamColor, false);
-  u.gunKey = key;
+  u.gun = applySkin(buildGun(key, u.teamColor, false), skin);
+  u.gunKey = key; u.gunSkin = skin;
   u.gunMount.add(u.gun);
   const pistol = !!u.gun.userData.pistol;
   u.gunMount.position.set(pistol ? 0.05 : 0.12, pistol ? 0.22 : 0.24, pistol ? -0.38 : -0.12);
@@ -474,6 +475,15 @@ export function updateRagdolls(dt) {
     for (const p of props) { if ((p.t += h) < 4) stepProp(p, h); }
   }
   for (const r of ragdolls) if (!r.sleep || r.t < 4.05) poseRagdoll(r);
+}
+
+/** Remove one fighter's ragdoll (respawn modes). */
+export function removeRagdoll(root, scene) {
+  const r = root.userData.ragdoll;
+  if (!r) return;
+  scene.remove(r.holder);
+  const i = ragdolls.indexOf(r); if (i >= 0) ragdolls.splice(i, 1);
+  for (let k = props.length - 1; k >= 0; k--) if (props[k].obj.parent === r.holder || !props[k].obj.parent) props.splice(k, 1);
 }
 
 /** Remove all ragdolls / dropped props (round reset). */

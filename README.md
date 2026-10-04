@@ -41,10 +41,25 @@ barrels, trees, street lamps and a market stall. The layout lives in `WEST` / `C
 
 ## Modes
 
+- **Tutorial**: 10 guided steps in the practice range (look, move, jump, crouch, shoot, reload, aim, buy,
+  ability, headshot). +500 XP the first time.
+- **Practice Range**: targets at 10–50 m (static, crouched, strafing) in the west spawn corridor, live accuracy /
+  headshot % / time-to-kill, free weapons (B), abilities refill.
+- **Team Deathmatch**: 5-minute quick match, instant respawns with spawn protection, free loadout (B), first team
+  to 8 kills per player wins.
+
 - **Plant / Defuse** (default): attackers spawn west and carry the Rift Charge; plant it on site A or B
   (hold F, 4s, standing still). Defenders stop the plant, or defuse (hold F, 7s — progress is kept at the
   halfway mark). The charge detonates 45s after planting. Teams swap sides and economies reset after round 4.
 - **Elimination**: wipe the other team. First to 5 rounds in both modes.
+
+## Progression & settings
+
+- XP for kills, headshots, assists, rounds, plants/defuses, wins and three daily challenges; levels unlock weapon
+  skins (Arctic, Jungle, Tiger, Carbon, Crimson, Desert, Neon, Gold) equipped per gun in **Loadout & Skins**.
+  Everything is stored in the browser (`localStorage`: `riftline.profile`, `riftline.settings`).
+- **Settings**: sensitivity, ADS multiplier, invert Y, FOV, FPS counter, graphics quality, volume, crosshair editor
+  (colour, length, thickness, gap, dot, outline, opacity, dynamic) and full key rebinding.
 
 ## Weapons
 
@@ -104,7 +119,10 @@ Callouts from your teammates appear under the minimap.
 - `src/tactics.js` – team strategy for Plant mode, callouts, hold spots, corner checks
 - `src/objective.js` – plant sites, the Rift Charge (carry/drop/plant/defuse/detonate), zone names
 - `src/shop.js` – buy logic for player and bots
-- `src/game.js` – match/round flow, input, camera, HUD, minimap, main loop
+- `src/settings.js` – settings storage, crosshair drawing, settings screen with key rebinding
+- `src/progress.js` – XP/levels, daily challenges, skin unlocks + equipped skins
+- `src/skins.js` – weapon skin catalogue and procedural patterns
+- `src/game.js` – match/round flow, TDM/range/tutorial, input, camera, HUD, minimap, loadout screen, main loop
 
 ## Multiplayer later
 
