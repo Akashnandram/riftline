@@ -154,6 +154,12 @@ const GUN = {
   hornet:  { crack: 0.4, crackF: 5000, body: 0.75, bodyF: 1900, bodyD: 0.05, thump: 0.45, thumpF: 180, tail: 0.2, tailD: 0.3, mech: 0.3 },
   raptor:  { crack: 0.8, crackF: 3600, body: 1.1, bodyF: 1150, bodyD: 0.09, thump: 0.9, thumpF: 120, tail: 0.4, tailD: 0.6, mech: 0.3 },
   longbow: { crack: 1.2, crackF: 2800, body: 1.4, bodyF: 700, bodyD: 0.2, thump: 1.4, thumpF: 85, tail: 0.7, tailD: 1.2, mech: 0.5 },
+  wasp:    { crack: 0.35, crackF: 4800, body: 0.7, bodyF: 2100, bodyD: 0.05, thump: 0.4, thumpF: 190, tail: 0.18, tailD: 0.28, mech: 0.3 },
+  warden:  { crack: 0.9, crackF: 2400, body: 1.5, bodyF: 600, bodyD: 0.22, thump: 1.5, thumpF: 75, tail: 0.75, tailD: 1.0, mech: 0.2 },
+  talon:   { crack: 0.7, crackF: 3800, body: 1.0, bodyF: 1250, bodyD: 0.08, thump: 0.8, thumpF: 125, tail: 0.35, tailD: 0.5, mech: 0.3 },
+  sentry:  { crack: 1.0, crackF: 3100, body: 1.2, bodyF: 950, bodyD: 0.13, thump: 1.1, thumpF: 100, tail: 0.55, tailD: 0.85, mech: 0.35 },
+  wraith:  { crack: 0.15, crackF: 2600, body: 0.55, bodyF: 520, bodyD: 0.07, thump: 0.5, thumpF: 140, tail: 0.08, tailD: 0.2, mech: 0.55, quiet: true },
+  hammer:  { crack: 0.85, crackF: 3300, body: 1.15, bodyF: 1000, bodyD: 0.1, thump: 1.0, thumpF: 105, tail: 0.45, tailD: 0.7, mech: 0.25 },
 };
 
 function gunshot(out, t, g, close) {
@@ -203,11 +209,12 @@ export function sfx(name, opts = {}) {
   const pos = opts.pos || null;
   if (pos && Math.hypot(pos.x - L.x, pos.z - L.z) > 140) return;
   const t = ctx.currentTime;
-  const reverb = GUN[name] ? 0.35 : 0.15;
+  const reverb = GUN[name] ? (GUN[name].quiet ? 0.12 : 0.35) : 0.15;
   const out = voice(pos, vol, reverb);
   if (playSample(name, out)) return;
   switch (name) {
     case 'p9': case 'magnum': case 'hornet': case 'raptor': case 'longbow':
+    case 'wasp': case 'warden': case 'talon': case 'sentry': case 'wraith': case 'hammer':
       gunshot(out, t, GUN[name], !pos); break;
     case 'step': (STEP[opts.surface] || STEP.concrete)(out, t, 1); break;
     case 'land': hiss(out, t, { dur: 0.1, freq: 300, type: 'lowpass', peak: 1 }); break;
@@ -222,6 +229,7 @@ export function sfx(name, opts = {}) {
     case 'magout': osc(out, t, { freq: 700, dur: 0.03, type: 'square', peak: 0.12 }); hiss(out, t, { dur: 0.05, freq: 2500, q: 3, peak: 0.4 }); break;
     case 'magin': hiss(out, t, { dur: 0.04, freq: 1800, q: 2, peak: 0.6 }); osc(out, t + 0.02, { freq: 420, dur: 0.05, type: 'square', peak: 0.12 }); break;
     case 'bolt': hiss(out, t, { dur: 0.05, freq: 3200, q: 3, peak: 0.5 }); hiss(out, t + 0.09, { dur: 0.04, freq: 2200, q: 3, peak: 0.6 }); osc(out, t + 0.09, { freq: 900, dur: 0.03, type: 'square', peak: 0.1 }); break;
+    case 'pump': hiss(out, t, { dur: 0.06, freq: 1400, q: 2, peak: 0.7 }); osc(out, t + 0.01, { freq: 300, dur: 0.05, type: 'square', peak: 0.12 }); hiss(out, t + 0.16, { dur: 0.06, freq: 1900, q: 2, peak: 0.8 }); osc(out, t + 0.17, { freq: 420, dur: 0.05, type: 'square', peak: 0.12 }); break;
     case 'empty': osc(out, t, { freq: 1100, dur: 0.025, type: 'square', peak: 0.1 }); break;
     case 'equip': hiss(out, t, { dur: 0.08, freq: 2000, q: 1.5, peak: 0.35 }); osc(out, t + 0.05, { freq: 600, dur: 0.03, type: 'square', peak: 0.06 }); break;
     case 'shell': osc(out, t, { freq: 3800 + Math.random() * 900, dur: 0.06, type: 'triangle', peak: 0.04 }); osc(out, t + 0.07, { freq: 4200 + Math.random() * 600, dur: 0.04, type: 'triangle', peak: 0.025 }); break;

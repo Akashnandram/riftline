@@ -127,7 +127,7 @@ export class BotBrain {
     // gunfire we can hear
     for (const n of game.noises) {
       if (n.t <= this.noiseSeen || n.team === f.team) continue;
-      if (n.pos.distanceTo(f.pos) < 32 && !this.visible) { this.intelPos = n.pos.clone(); this.intelT = n.t; }
+      if (n.pos.distanceTo(f.pos) < (n.quiet ? 14 : 32) && !this.visible) { this.intelPos = n.pos.clone(); this.intelT = n.t; }
     }
     this.noiseSeen = t;
   }

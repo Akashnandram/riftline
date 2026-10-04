@@ -35,6 +35,7 @@ export class Fighter {
     this.healLeft = 0;
     this.dashT = 0; this.dashDir = new THREE.Vector3();
     this.crouch = 0; this.wantCrouch = false;
+    this.burstLeft = 0; this.burstT = 0;
     this.mesh = buildCharacter(TEAM_COLORS[team], this.agent);
     this.resetAbilities();
   }
@@ -309,57 +310,88 @@ export function currentSpread(f) {
   return (base + f.bloom + w.move * moveK) * crouchK + (f.onGround ? 0 : 0.12);
 }
 
+/** Damage multiplier at range t. falloff is [dist, mul] or a list of such steps. */
+function falloffMul(w, t) {
+  if (!w.falloff) return 1;
+  const steps = Array.isArray(w.falloff[0]) ? w.falloff : [w.falloff];
+  let m = 1;
+  for (const [d, mul] of steps) if (t > d) m = mul;
+  return m;
+}
+
 export function tryFire(f) {
   const w = f.weapon();
-  if (!f.alive || f.reloadT > 0 || f.fireCD > 0 || game.phase === 'buy' || game.phase === 'end') return false;
+  if (!f.alive || f.reloadT > 0 || f.fireCD > 0 || f.burstLeft > 0 || game.phase === 'buy' || game.phase === 'end') return false;
   if ((f.ammo[w.key] ?? 0) <= 0) { startReload(f); if (f.isPlayer) sfx('empty'); return false; }
   const rateMul = now() < f.overchargeUntil ? 1.25 : 1;
   f.fireCD = 1 / (w.rate * rateMul);
+  // burst weapons: one trigger pull queues the rest of the burst (fired from updateWeapon)
+  if (w.burst) { f.burstLeft = w.burst - 1; f.burstT = w.burstInterval; }
+  fireRound(f, w);
+  return true;
+}
+
+const _pd = new THREE.Vector3(), _aim = new THREE.Vector3();
+/** One trigger "round": a bullet, or a spread of shotgun pellets. */
+function fireRound(f, w) {
   f.ammo[w.key]--;
   f.shotsInRow++;
-
   f.eye(_o);
-  spreadDir(_d, f.lookDir(_m), currentSpread(f));
+  f.lookDir(_aim);
+  const spread = currentSpread(f);
+  const pellets = w.pellets || 1;
+  const hits = new Map(); // target -> { dmg, head, zone, wallbang }
+  let firstEnd = null, impactsSounded = 0;
+  for (let i = 0; i < pellets; i++) {
+    spreadDir(_pd, _aim, spread);
+    if (pellets > 1) spreadDir(_pd, _pd, w.pelletSpread);
+    const { target, zone, head, t, wall, mul, pens } = traceShot(f, _o, _pd, 150, false, w.pen || 0);
+    _end.copy(_o).addScaledVector(_pd, t);
+    if (!firstEnd) { firstEnd = _end.clone(); _d.copy(_pd); }
+    // entry + exit holes on every wall the round punched through
+    for (const p of pens) {
+      const surf = surfaceOf(p.kind);
+      for (const [tt, sign] of [[p.t0, 1], [p.t1, -1]]) {
+        const pt = _o.clone().addScaledVector(_pd, tt);
+        const n = boxNormalAt(p.box, pt);
+        impact(pt, n, surf);
+        bulletHole(pt, n, surf);
+        if (sign > 0 && impactsSounded++ < 2 && Math.random() < 0.6) sfx('impact', { pos: pt, surface: surf, vol: 0.6 });
+      }
+    }
+    if (target) {
+      const dmg = (head ? w.head : w.dmg * HIT_ZONES[zone]) * falloffMul(w, t) * mul;
+      const h = hits.get(target) || { dmg: 0, head: false, zone, wallbang: false, dir: _pd.clone() };
+      h.dmg += dmg; h.head ||= head; h.wallbang ||= pens.length > 0;
+      if (head) h.zone = 'head';
+      hits.set(target, h);
+      blood(_end, _pd);
+    } else if (wall && wall.t < 150) {
+      const surf = wall.kind === 'floor' ? 'floor' : surfaceOf(wall.kind);
+      impact(_end, wall.n, surf);
+      bulletHole(_end, wall.n, surf);
+      if (impactsSounded++ < 2 && Math.random() < 0.6) sfx('impact', { pos: _end, surface: surf, vol: 0.6 });
+    }
+    const muz = f.muzzle(_m);
+    // suppressed guns leave no tracers; shotguns show a couple of pellet streaks
+    if (!w.suppressed && (pellets > 1 ? i < 3 : Math.random() < (w.auto ? 0.5 : 1) || !f.isPlayer)) tracer(muz, _end, 0xffe6b0);
+  }
+  // pellets that hit the same target land as one hit (one hit marker / damage number)
+  for (const [target, h] of hits) {
+    applyDamage(target, Math.round(h.dmg), f, { head: h.head, zone: h.zone, weapon: w.key, dir: h.dir, wallbang: h.wallbang });
+  }
   f.bloom = Math.min(w.maxBloom, f.bloom + w.bloom);
   applyRecoil(f, w);
-
-  const { target, zone, head, t, wall, mul, pens } = traceShot(f, _o, _d, 150, false, w.pen || 0);
-  _end.copy(_o).addScaledVector(_d, t);
-  // entry + exit holes on every wall the round punched through
-  for (const p of pens) {
-    const surf = surfaceOf(p.kind);
-    for (const [tt, sign] of [[p.t0, 1], [p.t1, -1]]) {
-      const pt = _o.clone().addScaledVector(_d, tt);
-      const n = boxNormalAt(p.box, pt);
-      impact(pt, n, surf);
-      bulletHole(pt, n, surf);
-      if (sign > 0 && Math.random() < 0.6) sfx('impact', { pos: pt, surface: surf, vol: 0.6 });
-    }
-  }
-  if (target) {
-    let dmg = head ? w.head : w.dmg * HIT_ZONES[zone];
-    if (w.falloff && t > w.falloff[0]) dmg *= w.falloff[1];
-    dmg = Math.round(dmg * mul);
-    applyDamage(target, dmg, f, { head, zone, weapon: w.key, dir: _d, wallbang: pens.length > 0 });
-    blood(_end, _d);
-  } else if (wall && wall.t < 150) {
-    const surf = wall.kind === 'floor' ? 'floor' : surfaceOf(wall.kind);
-    impact(_end, wall.n, surf);
-    bulletHole(_end, wall.n, surf);
-    if (Math.random() < 0.6) sfx('impact', { pos: _end, surface: surf, vol: 0.6 });
-  }
   const muz = f.muzzle(_m);
-  if (Math.random() < (w.auto ? 0.5 : 1) || !f.isPlayer) tracer(muz, _end, 0xffe6b0);
-  if (!f.isPlayer || game.spectating) muzzleSprite(muz, w.slot === 'primary' ? 0.5 : 0.35);
-  bulletPassBy(f, _o, _d, t);
+  if (!f.isPlayer || game.spectating) muzzleSprite(muz, (w.slot === 'primary' ? 0.5 : 0.35) * (w.suppressed ? 0.35 : 1));
+  bulletPassBy(f, _o, _d, _o.distanceTo(firstEnd));
   f.lastShotT = now();
   if (f.isPlayer) game.onPlayerShot?.(f, w);
   game.onAnyShot?.(f, muz);
 
   emitSound(f, w.key);
-  game.noises.push({ pos: f.pos.clone(), team: f.team, t: now(), shooter: f });
+  game.noises.push({ pos: f.pos.clone(), team: f.team, t: now(), shooter: f, quiet: !!w.suppressed });
   if (w.key === 'longbow' && f.isPlayer) f.scoped = false;
-  return true;
 }
 
 /** Recoil pattern: climb for `climb` shots, then plateau with a left/right sway. */
@@ -403,6 +435,11 @@ export function startReload(f) {
 export function updateWeapon(f, dt) {
   f.fireCD = Math.max(0, f.fireCD - dt);
   const w = f.weapon();
+  if (f.burstLeft > 0) {
+    f.burstT -= dt;
+    if (!f.alive || f.reloadT > 0 || !w.burst || (f.ammo[w.key] ?? 0) <= 0 || game.phase !== 'live') f.burstLeft = 0;
+    else if (f.burstT <= 0) { fireRound(f, w); f.burstLeft--; f.burstT += w.burstInterval; }
+  }
   if (f.reloadT > 0) {
     f.reloadT -= dt;
     if (f.reloadT <= 0) { f.reloadT = 0; f.ammo[w.key] = w.mag; }
@@ -421,7 +458,7 @@ export function updateWeapon(f, dt) {
 export function switchWeapon(f, slot) {
   if (slot === f.cur || (slot === 'primary' && !f.primary)) return;
   f.cur = slot;
-  f.reloadT = 0; f.scoped = false;
+  f.reloadT = 0; f.scoped = false; f.burstLeft = 0;
   f.fireCD = Math.max(f.fireCD, 0.35);
   setGunLook(f);
   emitSound(f, 'equip', 0.7);

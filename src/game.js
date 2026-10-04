@@ -585,7 +585,10 @@ game.onPlayerShot = (p, w) => {
   p.muzzle(playerLight.position);
   playerLight.intensity = 9;
   if (vmGun) { vmFlashLight.position.copy(vmGun.userData.tip); vmGun.localToWorld(vmFlashLight.position); vmFlashLight.intensity = 3; }
-  if (w.key !== 'magnum') setTimeout(ejectCasing, w.key === 'longbow' ? 350 : 15);
+  // casings: pump and bolt guns eject when the action is worked, revolvers keep theirs
+  if (w.pump) setTimeout(() => { sfx('pump'); ejectCasing(); }, 300);
+  else if (w.key === 'longbow') setTimeout(ejectCasing, 350);
+  else if (w.key !== 'magnum') setTimeout(ejectCasing, 15);
 };
 game.onAnyShot = (f, muz) => {
   if (f === game.player && !game.spectating) return;
@@ -607,9 +610,11 @@ function cycleSpectate() {
 // Buy menu
 // ---------------------------------------------------------------------------
 const BUY_LIST = [
-  { key: 'p9', cat: 'secondary', hot: '1' }, { key: 'magnum', cat: 'secondary', hot: '2' },
-  { key: 'hornet', cat: 'primary', hot: '3' }, { key: 'raptor', cat: 'primary', hot: '4' }, { key: 'longbow', cat: 'primary', hot: '5' },
-  { key: 'light', cat: 'armor', hot: '6' }, { key: 'heavy', cat: 'armor', hot: '7' },
+  { key: 'p9', cat: 'secondary', hot: '1' }, { key: 'wasp', cat: 'secondary', hot: '2' }, { key: 'magnum', cat: 'secondary', hot: '3' },
+  { key: 'hornet', cat: 'close', hot: '4' }, { key: 'warden', cat: 'close', hot: '5' },
+  { key: 'talon', cat: 'rifle', hot: '6' }, { key: 'raptor', cat: 'rifle', hot: '7' }, { key: 'wraith', cat: 'rifle', hot: '8' },
+  { key: 'sentry', cat: 'heavy', hot: '9' }, { key: 'hammer', cat: 'heavy', hot: '0' }, { key: 'longbow', cat: 'heavy', hot: '-' },
+  { key: 'light', cat: 'armor', hot: 'z' }, { key: 'heavy', cat: 'armor', hot: 'x' },
 ];
 
 function toggleBuy(force) {
@@ -636,7 +641,8 @@ function renderBuy() {
     const owned = isArmor ? p.armor >= def.value : p.primary === it.key || p.secondary === it.key;
     const b = document.createElement('button');
     b.className = 'item' + (owned ? ' owned' : '') + (!owned && p.credits < def.cost ? ' poor' : '');
-    const info = isArmor ? `+${def.value} shield` : `${def.dmg} body · ${def.head} head · ${def.auto ? 'auto' : 'semi'}`;
+    const mode = def.pellets ? `${def.pellets} pellets` : def.burst ? `${def.burst}-round burst` : def.auto ? 'auto' : 'semi';
+    const info = isArmor ? `+${def.value} shield` : `${def.dmg} body · ${def.head} head · ${mode}${def.suppressed ? ' · suppressed' : ''}`;
     b.innerHTML = `<span><span class="k">${it.hot}</span>${def.name}<small>${info}</small></span><span class="c">${def.cost ? '¤ ' + def.cost : 'FREE'}</span>`;
     b.onclick = () => doBuy(it.key);
     document.querySelector(`#buyMenu .items[data-cat="${it.cat}"]`).appendChild(b);
@@ -972,7 +978,7 @@ function updateCamera(dt) {
       camera.lookAt(body.x, body.y, body.z);
     }
     if (p.scoped) fov = 75 / w.scope;
-    else fov = 75 - aimK * 13;
+    else fov = 75 - aimK * (75 - (w.adsFov || 62));
   } else {
     const s = game.specTarget && game.specTarget.alive ? game.specTarget : null;
     if (!s) cycleSpectate();
@@ -1044,7 +1050,11 @@ function updateCamera(dt) {
     const blow = shotT < 0.025 ? shotT / 0.025 : Math.max(0, 1 - (shotT - 0.025) / 0.06);
     if (u.slide) u.bolt.position.z += blow * 0.034 + pull * 0.03;
     else if (u.revolver) u.bolt.rotation.x += shotT < 0.03 ? 0.5 : Math.max(0, 0.5 * (1 - (shotT - 0.03) / 0.22));
-    else if (u.boltAction) {
+    else if (u.pumpAction) {
+      // pump racks back and forward after each shot
+      const back = THREE.MathUtils.smoothstep(shotT, 0.22, 0.34) - THREE.MathUtils.smoothstep(shotT, 0.4, 0.55);
+      u.bolt.position.z += back * 0.11 + pull * 0.08;
+    } else if (u.boltAction) {
       const lift = THREE.MathUtils.smoothstep(shotT, 0.3, 0.42) - THREE.MathUtils.smoothstep(shotT, 0.78, 0.9);
       const back = THREE.MathUtils.smoothstep(shotT, 0.42, 0.58) - THREE.MathUtils.smoothstep(shotT, 0.6, 0.76);
       u.bolt.rotation.z += lift * 1.2;

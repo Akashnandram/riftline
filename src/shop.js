@@ -31,17 +31,23 @@ export function buy(f, item) {
   return true;
 }
 
+const pick = (opts) => { let r = Math.random() * opts.reduce((t, o) => t + o[1], 0); for (const [k, wt] of opts) if ((r -= wt) <= 0) return k; return opts[0][0]; };
+
 export function botBuy(f) {
   const r = Math.random();
   const pistolRound = game.round === 1 || (game.config.mode === 'plant' && game.round === MATCH.halfRounds + 1);
+  // defenders lean on shotguns/LMGs for holding close angles; attackers prefer rifles
+  const defending = game.config.mode === 'plant' && f.team !== game.attackers;
   if (!f.primary) {
     if (pistolRound) {
-      if (r < 0.45) buy(f, 'magnum');
-      else buy(f, 'light');
-    } else if (f.credits >= 5700 && r < 0.2) { buy(f, 'longbow'); }
-    else if (f.credits >= 2900) buy(f, 'raptor');
-    else if (f.credits >= 2000 || (game.lossStreak[f.team] >= 2 && f.credits >= 1600)) buy(f, 'hornet');
+      buy(f, pick([['magnum', 3], ['wasp', 3], ['light', 4]]));
+    } else if (f.credits >= 5700 && r < 0.18) buy(f, 'longbow');
+    else if (f.credits >= 3200 && r < 0.12) buy(f, 'hammer');
+    else if (f.credits >= 2900) buy(f, pick([['raptor', 5], ['wraith', 4], ['sentry', 1]]));
+    else if (f.credits >= 2050) buy(f, pick([['talon', 4], ['sentry', 2], ['warden', defending ? 3 : 1], ['hornet', 2]]));
+    else if (f.credits >= 1600 || (game.lossStreak[f.team] >= 2 && f.credits >= 1600)) buy(f, pick([['hornet', 3], ['warden', defending ? 3 : 1]]));
     else if (f.credits >= 800 && r < 0.4) buy(f, 'magnum');
+    else if (f.credits >= 450 && r < 0.6) buy(f, 'wasp');
   }
   if (f.armor < 50 && f.credits >= 1000) buy(f, 'heavy');
   else if (f.armor < 25 && f.credits >= 400) buy(f, 'light');

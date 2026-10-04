@@ -40,6 +40,50 @@ export const WEAPONS = {
     pen: 1.6, scope: 2.6, color: 0x4a5a44, len: 0.95,
     vm: { back: 0.11, up: 0.03, pitch: 0.3, yaw: 0.03, roll: 0.08, shake: 2.2 },
   },
+
+  // --- added guns ---
+  wasp: {
+    key: 'wasp', name: 'Wasp MP', slot: 'secondary', cost: 450,
+    dmg: 24, head: 66, rate: 10, auto: true, mag: 15, reload: 1.8,
+    spread: 0.012, move: 0.02, bloom: 0.006, maxBloom: 0.05, kick: 0.009, climb: 8, sway: 0.006, speedMul: 1,
+    pen: 0.3, falloff: [12, 0.8], color: 0x6a4f7a, len: 0.3,
+    vm: { back: 0.02, up: 0.008, pitch: 0.05, yaw: 0.03, roll: 0.04, shake: 0.4 },
+  },
+  warden: {
+    key: 'warden', name: 'Warden Shotgun', slot: 'primary', cost: 1850,
+    dmg: 20, head: 40, pellets: 8, pelletSpread: 0.06, rate: 1.1, auto: false, mag: 6, reload: 2.7,
+    spread: 0, move: 0.015, bloom: 0, maxBloom: 0, kick: 0.05, climb: 1, sway: 0, speedMul: 0.95,
+    pen: 0.25, falloff: [[8, 0.75], [14, 0.45]], color: 0x5b3a26, len: 0.75, pump: true,
+    vm: { back: 0.09, up: 0.035, pitch: 0.32, yaw: 0.04, roll: 0.07, shake: 2 },
+  },
+  talon: {
+    key: 'talon', name: 'Talon Burst Rifle', slot: 'primary', cost: 2050,
+    dmg: 35, head: 115, rate: 4.2, burst: 3, burstInterval: 0.065, auto: false, mag: 24, reload: 2.4,
+    spread: 0.003, move: 0.06, bloom: 0.006, maxBloom: 0.04, kick: 0.01, climb: 3, sway: 0.004, speedMul: 0.95,
+    pen: 0.7, color: 0x46505c, len: 0.62,
+    vm: { back: 0.03, up: 0.01, pitch: 0.055, yaw: 0.02, roll: 0.04, shake: 0.6 },
+  },
+  sentry: {
+    key: 'sentry', name: 'Sentry DMR', slot: 'primary', cost: 2250,
+    dmg: 65, head: 195, rate: 4.5, auto: false, mag: 12, reload: 2.8,
+    spread: 0.0015, move: 0.1, bloom: 0.02, maxBloom: 0.05, kick: 0.03, climb: 2, sway: 0.005, speedMul: 0.9,
+    pen: 1.0, adsFov: 50, color: 0x7a6a4a, len: 0.9,
+    vm: { back: 0.05, up: 0.02, pitch: 0.12, yaw: 0.02, roll: 0.05, shake: 1.1 },
+  },
+  wraith: {
+    key: 'wraith', name: 'Wraith SR', slot: 'primary', cost: 2900,
+    dmg: 39, head: 140, rate: 11, auto: true, mag: 30, reload: 2.4,
+    spread: 0.0025, move: 0.07, bloom: 0.0035, maxBloom: 0.035, kick: 0.011, climb: 9, sway: 0.009, speedMul: 0.94,
+    pen: 0.7, falloff: [25, 0.85], suppressed: true, color: 0x3a3f46, len: 0.8,
+    vm: { back: 0.028, up: 0.008, pitch: 0.045, yaw: 0.02, roll: 0.04, shake: 0.45 },
+  },
+  hammer: {
+    key: 'hammer', name: 'Hammer LMG', slot: 'primary', cost: 3200,
+    dmg: 33, head: 110, rate: 12, auto: true, mag: 50, reload: 3.4,
+    spread: 0.006, move: 0.08, bloom: 0.002, maxBloom: 0.045, kick: 0.008, climb: 14, sway: 0.012, speedMul: 0.86,
+    pen: 1.0, color: 0x4d5440, len: 0.85,
+    vm: { back: 0.03, up: 0.012, pitch: 0.05, yaw: 0.03, roll: 0.05, shake: 0.7 },
+  },
 };
 
 export const ARMOR = {

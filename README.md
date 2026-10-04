@@ -46,6 +46,22 @@ barrels, trees, street lamps and a market stall. The layout lives in `WEST` / `C
   halfway mark). The charge detonates 45s after planting. Teams swap sides and economies reset after round 4.
 - **Elimination**: wipe the other team. First to 5 rounds in both modes.
 
+## Weapons
+
+| Slot | Gun | Cost | Notes |
+|---|---|---|---|
+| Sidearm | P9 Sidearm | free | semi |
+| Sidearm | Wasp MP | 450 | full-auto machine pistol |
+| Sidearm | Magnum | 800 | revolver, one-tap head |
+| SMG | Hornet SMG | 1600 | run-and-gun |
+| Shotgun | Warden | 1850 | pump, 8 pellets, brutal up close |
+| Rifle | Talon Burst Rifle | 2050 | 3-round burst per click |
+| Rifle | Raptor AR | 2900 | classic full-auto |
+| Rifle | Wraith SR | 2900 | suppressed: quiet, no tracers, small flash, bots hear it from closer |
+| Heavy | Sentry DMR | 2250 | semi marksman rifle, extra ADS zoom |
+| Heavy | Hammer LMG | 3200 | 50-round box, slow to move with |
+| Sniper | Longbow | 4700 | scoped bolt-action |
+
 ## Combat rules
 
 - Hit zones: head (weapon head damage), body, legs (×0.82). Some guns lose damage at range (`falloff`).
