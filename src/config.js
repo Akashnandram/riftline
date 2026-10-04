@@ -1,37 +1,44 @@
 // All balance numbers live here.
 // Recoil: each shot after the first climbs by `kick` (rad) for `climb` shots, then the spray
 // plateaus and sways left/right by `sway` — a fixed, learnable pattern like tactical shooters.
+// `vm` is the first-person kick per shot (spring impulses): back/up in metres, pitch/yaw/roll in
+// radians, shake = camera shake strength.
 
 export const WEAPONS = {
   p9: {
     key: 'p9', name: 'P9 Sidearm', slot: 'secondary', cost: 0,
     dmg: 26, head: 78, rate: 6.75, auto: false, mag: 12, reload: 1.6,
     spread: 0.004, move: 0.035, bloom: 0.012, maxBloom: 0.05, kick: 0.012, climb: 5, sway: 0.003, speedMul: 1,
-    pen: 0.4, falloff: [30, 0.85], color: 0x30343c, len: 0.28,
+    pen: 0.4, falloff: [30, 0.85], color: 0x8c7d62, len: 0.28,
+    vm: { back: 0.045, up: 0.02, pitch: 0.16, yaw: 0.03, roll: 0.05, shake: 0.6 },
   },
   magnum: {
     key: 'magnum', name: 'Magnum', slot: 'secondary', cost: 800,
     dmg: 55, head: 159, rate: 4, auto: false, mag: 6, reload: 2.2,
     spread: 0.003, move: 0.06, bloom: 0.035, maxBloom: 0.07, kick: 0.045, climb: 3, sway: 0.008, speedMul: 1,
     pen: 0.7, falloff: [30, 0.9], color: 0x6d5a3e, len: 0.34,
+    vm: { back: 0.07, up: 0.045, pitch: 0.42, yaw: 0.05, roll: 0.09, shake: 1.6 },
   },
   hornet: {
     key: 'hornet', name: 'Hornet SMG', slot: 'primary', cost: 1600,
     dmg: 26, head: 72, rate: 13.3, auto: true, mag: 30, reload: 2.25,
     spread: 0.01, move: 0.012, bloom: 0.0025, maxBloom: 0.035, kick: 0.0055, climb: 10, sway: 0.004, speedMul: 0.98,
-    pen: 0.45, falloff: [20, 0.85], color: 0x3b4a5c, len: 0.5,
+    pen: 0.45, falloff: [20, 0.85], color: 0x5c6648, len: 0.5,
+    vm: { back: 0.018, up: 0.006, pitch: 0.035, yaw: 0.02, roll: 0.03, shake: 0.35 },
   },
   raptor: {
     key: 'raptor', name: 'Raptor AR', slot: 'primary', cost: 2900,
     dmg: 40, head: 156, rate: 9.75, auto: true, mag: 25, reload: 2.5,
     spread: 0.0025, move: 0.07, bloom: 0.003, maxBloom: 0.03, kick: 0.012, climb: 8, sway: 0.01, speedMul: 0.94,
-    pen: 0.8, color: 0x2a2d33, len: 0.7,
+    pen: 0.8, color: 0x9a8a68, len: 0.7,
+    vm: { back: 0.032, up: 0.01, pitch: 0.06, yaw: 0.025, roll: 0.045, shake: 0.6 },
   },
   longbow: {
     key: 'longbow', name: 'Longbow', slot: 'primary', cost: 4700,
     dmg: 150, head: 255, rate: 0.75, auto: false, mag: 5, reload: 3.5,
     spread: 0.06, scopedSpread: 0.0008, move: 0.15, bloom: 0, maxBloom: 0, kick: 0.07, climb: 1, sway: 0, speedMul: 0.85,
-    pen: 1.6, scope: 2.6, color: 0x3d5240, len: 0.95,
+    pen: 1.6, scope: 2.6, color: 0x4a5a44, len: 0.95,
+    vm: { back: 0.11, up: 0.03, pitch: 0.3, yaw: 0.03, roll: 0.08, shake: 2.2 },
   },
 };
 

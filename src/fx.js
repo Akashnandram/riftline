@@ -101,6 +101,18 @@ export function bulletHole(pos, normal, kind) {
   if (!m.parent) game.scene.add(m);
 }
 
+/** Thin gun smoke drifting up from a muzzle. */
+export function smokePuff(pos, size = 1) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: softTexture(), color: 0xc8c8c8, transparent: true, depthWrite: false, opacity: 0.22 }));
+  s.position.copy(pos);
+  const drift = new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.35 + Math.random() * 0.2, (Math.random() - 0.5) * 0.3);
+  addFx(s, 0.9, (k, dt) => {
+    s.position.addScaledVector(drift, dt);
+    s.scale.setScalar((0.05 + k * 0.32) * size);
+    s.material.opacity = 0.22 * (1 - k);
+  }, true);
+}
+
 export function blood(pos, dir) {
   for (let i = 0; i < 7; i++) {
     const v = new THREE.Vector3((Math.random() - 0.5) * 2.5, Math.random() * 2.2, (Math.random() - 0.5) * 2.5);

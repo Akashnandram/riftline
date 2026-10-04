@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { Sky } from 'three/addons/objects/Sky.js';
 import { buildMaterials, TILE, softTexture } from './textures.js';
 
 // ---------------------------------------------------------------------------
@@ -116,7 +115,7 @@ function addTrims(scene, b) {
   }
 }
 
-let dust = null;
+let dust = null, skyMat = null;
 const spawnMats = [];
 // plant site rectangles [minX, minZ, maxX, maxZ] (kept in sync with objective.js SITES)
 export const SITE_RECTS = [[12, -29, 28, -11], [12, 11, 28, 29]];
@@ -124,6 +123,7 @@ export function setSpawnColors(west, east) {
   for (const s of spawnMats) { const c = s.side < 0 ? west : east; s.zoneMat.color.setHex(c); s.lineMat.color.setHex(c); }
 }
 export function updateWorldFx(t) {
+  if (skyMat) skyMat.uniforms.time.value = t;
   if (!dust) return;
   dust.rotation.y = t * 0.004;
   dust.position.y = Math.sin(t * 0.2) * 0.3;
@@ -132,13 +132,44 @@ export function updateWorldFx(t) {
 export function buildWorld(scene, renderer, quality = 'medium') {
   MATS = buildMaterials(quality);
 
-  // physically-based sky + matching image-based lighting
-  const sky = new Sky();
-  sky.scale.setScalar(150);
-  const u = sky.material.uniforms;
-  u.turbidity.value = 6; u.rayleigh.value = 1.4; u.mieCoefficient.value = 0.006; u.mieDirectionalG.value = 0.85;
+  // custom sky dome: deep-blue gradient, small soft sun (no glare halo) and drifting clouds.
+  // Values stay below the bloom threshold so the sky never blooms or washes out the view.
   const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(55), THREE.MathUtils.degToRad(-130));
-  u.sunPosition.value.copy(sunDir);
+  skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: { sun: { value: sunDir }, time: { value: 0 } },
+    vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); vec4 p = projectionMatrix*modelViewMatrix*vec4(position,1.0); gl_Position = vec4(p.xy, p.w * 0.99999, p.w); }',
+    fragmentShader: `uniform vec3 sun; uniform float time; varying vec3 vDir;
+      float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float n(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+        return mix(mix(h(i), h(i+vec2(1,0)), f.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), f.x), f.y); }
+      float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { v += a*n(p); p *= 2.03; a *= 0.5; } return v; }
+      void main(){
+        vec3 d = normalize(vDir);
+        float y = max(d.y, 0.0);
+        vec3 zenith = vec3(0.10, 0.25, 0.55), mid = vec3(0.26, 0.45, 0.72), horizon = vec3(0.56, 0.66, 0.78);
+        vec3 c = mix(horizon, mid, smoothstep(0.0, 0.25, y));
+        c = mix(c, zenith, smoothstep(0.25, 0.9, y));
+        float s = max(dot(d, sun), 0.0);
+        c += vec3(1.0, 0.85, 0.6) * pow(s, 24.0) * 0.12;           // faint warm sky near the sun
+        // clouds projected onto a flat layer, fading toward the horizon
+        vec2 uv = d.xz / (d.y + 0.12) * 1.4 + vec2(time * 0.004, time * 0.0015);
+        float cl = smoothstep(0.52, 0.78, fbm(uv));
+        float edge = smoothstep(0.02, 0.22, d.y);
+        vec3 cloudCol = mix(vec3(0.62, 0.66, 0.72), vec3(0.92, 0.92, 0.9), fbm(uv * 2.0 + 3.0));
+        cloudCol += vec3(0.12, 0.09, 0.05) * pow(s, 6.0);
+        c = mix(c, cloudCol, cl * edge * 0.85);
+        float disc = smoothstep(0.9993, 0.9997, s);                    // small sun disc, no bloom halo
+        c = mix(c, vec3(0.98, 0.95, 0.86), disc * (1.0 - cl * 0.8));
+        if (d.y < 0.0) c = mix(horizon, vec3(0.32, 0.34, 0.36), smoothstep(0.0, 0.3, -d.y));
+        gl_FragColor = vec4(c, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(200, 32, 16), skyMat);
+  sky.frustumCulled = false;
+  sky.renderOrder = -1;
   scene.add(sky);
   // image-based lighting from a controlled gradient sky (the Sky shader's HDR values are far too hot)
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -150,16 +181,17 @@ export function buildWorld(scene, renderer, quality = 'medium') {
     fragmentShader: `uniform vec3 sun; varying vec3 vDir;
       void main(){
         float y = vDir.y;
-        vec3 top = vec3(0.32, 0.45, 0.68), hor = vec3(0.75, 0.78, 0.8), gnd = vec3(0.22, 0.2, 0.18);
+        vec3 top = vec3(0.26, 0.42, 0.68), hor = vec3(0.6, 0.68, 0.76), gnd = vec3(0.22, 0.2, 0.18);
         vec3 c = y > 0.0 ? mix(hor, top, pow(y, 0.6)) : mix(hor, gnd, pow(-y, 0.4));
-        c += vec3(1.0, 0.9, 0.75) * pow(max(dot(vDir, sun), 0.0), 64.0) * 6.0;
+        c += vec3(1.0, 0.9, 0.75) * pow(max(dot(vDir, sun), 0.0), 64.0) * 4.0;
         gl_FragColor = vec4(c, 1.0);
       }`,
   });
   envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat));
   scene.environment = pmrem.fromScene(envScene, 0.02).texture;
   scene.environmentIntensity = 0.6;
-  scene.fog = new THREE.Fog(0xb9c8d6, 75, 200);
+  // light haze only, tinted to the horizon colour so distant walls aren't bleached
+  scene.fog = new THREE.Fog(0x9fb0c2, 95, 260);
 
   scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x5a4e40, 0.15));
   const sun = new THREE.DirectionalLight(0xffe9cf, 2.0);

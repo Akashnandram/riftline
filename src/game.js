@@ -18,7 +18,7 @@ import { updateRagdolls, clearRagdolls } from './characters.js';
 import { BotBrain } from './bot.js';
 import { useAbility, abilityReady, updateAbilities, updateAbilityState, clearAbilities, fireFury } from './abilities.js';
 import { buy, botBuy } from './shop.js';
-import { updateFx, clearFx } from './fx.js';
+import { updateFx, clearFx, smokePuff } from './fx.js';
 import { initAudio, sfx, setMuted, isMuted, updateListener } from './audio.js';
 import { buildGun, casingGeo, casingMat } from './guns.js';
 import { flashTexture } from './textures.js';
@@ -83,7 +83,8 @@ if (QUALITY !== 'low') {
     ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1, scale: 1 });
     composer.addPass(ao);
   }
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.5, 0.92));
+  // high threshold: only muzzle flashes, sparks and ability glows bloom — never the sky
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(256, 256), 0.3, 0.45, 1.05));
   composer.addPass(new OutputPass());
   gradePass = new ShaderPass(GradeShader);
   composer.addPass(gradePass);
@@ -95,6 +96,8 @@ vmScene.environment = scene.environment;
 vmScene.environmentIntensity = 0.7;
 vmScene.add(new THREE.HemisphereLight(0xdfe8ff, 0x3a3228, 0.6));
 const vmLight = new THREE.DirectionalLight(0xfff0dd, 1.6); vmLight.position.set(0.6, 1.5, 0.4); vmScene.add(vmLight);
+// cool rim light from ahead-left outlines the gun against bright backgrounds
+const vmRim = new THREE.DirectionalLight(0xbcd6ff, 1.4); vmRim.position.set(-0.8, 0.7, -1.4); vmScene.add(vmRim);
 const vmFlashLight = new THREE.PointLight(0xffaa55, 0, 1.5, 2); vmScene.add(vmFlashLight);
 const vmRoot = new THREE.Group(); vmScene.add(vmRoot);
 const vmHolder = new THREE.Group(); vmRoot.add(vmHolder);
@@ -544,9 +547,37 @@ let flashEnd = 0, flashDur = 1;
 game.onBlind = (dur) => { flashEnd = now() + dur; flashDur = dur; };
 game.onBlackout = () => {};
 
-let shotKick = 0;
+// ---- first-person recoil: damped springs kicked on every shot ----
+const rs = { p: new THREE.Vector3(), vp: new THREE.Vector3(), r: new THREE.Vector3(), vr: new THREE.Vector3() };
+const SPRING_K = 240, SPRING_W = Math.sqrt(SPRING_K), SPRING_C = 2 * SPRING_W * 0.5; // slightly underdamped: snaps back with a small bounce
+let shotT = 9, fovKick = 0, camShake = 0, cylAngle = 0, camFov = 75;
+function kickViewModel(w) {
+  const v = w.vm, ads = 1 - aimK * 0.55, W = SPRING_W;
+  rs.vp.z += v.back * W * ads;
+  rs.vp.y += v.up * W * ads;
+  rs.vp.x += (Math.random() - 0.5) * v.back * 0.5 * W;
+  rs.vr.x += v.pitch * W * ads * (0.85 + Math.random() * 0.3);
+  rs.vr.y += (Math.random() - 0.5) * 2 * v.yaw * W;
+  rs.vr.z += (Math.random() - 0.5) * 2 * v.roll * W;
+  shotT = 0;
+  fovKick = Math.max(fovKick, v.shake * 0.45);
+  camShake = Math.max(camShake, v.shake);
+  if (w.key === 'magnum') cylAngle += Math.PI / 3;
+}
+function stepSprings(dt) {
+  const n = Math.max(1, Math.ceil(dt / 0.006)), h = dt / n;
+  for (let i = 0; i < n; i++) {
+    for (const [x, v] of [[rs.p, rs.vp], [rs.r, rs.vr]]) {
+      v.x += (-SPRING_K * x.x - SPRING_C * v.x) * h; x.x += v.x * h;
+      v.y += (-SPRING_K * x.y - SPRING_C * v.y) * h; x.y += v.y * h;
+      v.z += (-SPRING_K * x.z - SPRING_C * v.z) * h; x.z += v.z * h;
+    }
+  }
+}
+const _muz = new THREE.Vector3();
 game.onPlayerShot = (p, w) => {
-  shotKick = 1;
+  kickViewModel(w);
+  smokePuff(p.muzzle(_muz), w.slot === 'primary' ? 1 : 0.7);
   muzzleFlash.visible = true;
   muzzleFlash.rotation.z = Math.random() * 3;
   muzzleFlash.scale.setScalar((w.slot === 'primary' ? 1 : 0.7) * (0.8 + Math.random() * 0.4));
@@ -556,7 +587,11 @@ game.onPlayerShot = (p, w) => {
   if (vmGun) { vmFlashLight.position.copy(vmGun.userData.tip); vmGun.localToWorld(vmFlashLight.position); vmFlashLight.intensity = 3; }
   if (w.key !== 'magnum') setTimeout(ejectCasing, w.key === 'longbow' ? 350 : 15);
 };
-game.onAnyShot = (f, muz) => { if (f === game.player && !game.spectating) return; otherLight.position.copy(muz); otherLight.intensity = 7; };
+game.onAnyShot = (f, muz) => {
+  if (f === game.player && !game.spectating) return;
+  otherLight.position.copy(muz); otherLight.intensity = 7;
+  if (Math.random() < 0.35) smokePuff(muz, 0.8);
+};
 
 // ---------------------------------------------------------------------------
 // Spectating
@@ -923,12 +958,13 @@ function updateCamera(dt) {
     bob += hs * dt * 1.6;
     if (p.onGround && hs > 1) camera.position.y += Math.sin(bob * 2) * 0.022 * (1 - aimK * 0.7);
     camera.position.y -= landT * 0.12;
-    // tiny shake on every shot, scaled by the gun's kick
-    const shake = (p.kickT || 0) * w.kick * 0.35;
+    // shake on every shot (decays fast), scaled per gun
+    camShake *= Math.exp(-16 * dt);
+    const shake = camShake * 0.0035 * (1 - aimK * 0.5);
     camera.rotation.set(p.pitch + p.recoil + (Math.random() - 0.5) * shake, p.yaw + p.recoilYaw + (Math.random() - 0.5) * shake, 0);
-    // lean into strafes
+    // lean into strafes + a little roll from the kick
     const side = Math.cos(p.yaw) * p.vel.x - Math.sin(p.yaw) * p.vel.z;
-    camera.rotation.z = -side * 0.0025;
+    camera.rotation.z = -side * 0.0025 + rs.r.z * 0.08;
     if (!p.alive) {
       // death cam: pull back and look at your own ragdoll
       const body = p.mesh.userData.ragdoll ? p.mesh.userData.ragdoll.pts[0] : p.pos;
@@ -947,7 +983,10 @@ function updateCamera(dt) {
     camera.position.copy(eye).addScaledVector(back, Math.max(0.3, dist));
     camera.rotation.set(tgt.pitch - 0.2, tgt.yaw, 0);
   }
-  if (Math.abs(camera.fov - fov) > 0.01) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 18); camera.updateProjectionMatrix(); }
+  camFov += (fov - camFov) * Math.min(1, dt * 18);
+  fovKick *= Math.exp(-22 * dt);
+  const nf = camFov + fovKick;
+  if (Math.abs(camera.fov - nf) > 0.005) { camera.fov = nf; camera.updateProjectionMatrix(); }
   camera.getWorldDirection(_fwd);
   updateListener(camera.position, _fwd);
 
@@ -964,24 +1003,30 @@ function updateCamera(dt) {
   const u = vmGun.userData;
   const pose = POSE[w.slot];
   swayX *= Math.exp(-9 * dt); swayY *= Math.exp(-9 * dt);
-  shotKick *= Math.exp(-16 * dt);
+  stepSprings(dt);
+  shotT += dt;
   drawT = Math.max(0, drawT - dt * 3.2);
   const hs = Math.hypot(p.vel.x, p.vel.z) / MOVE.run;
   const k = p.reloadT > 0 ? Math.min(1, 1 - p.reloadT / w.reload) : 0;
   if (p.reloadT > 0) reloadSounds(p, k); else lastReloadStage = -1;
   const tilt = p.reloadT > 0 ? Math.sin(Math.min(1, k * 1.15) * Math.PI) : 0;
-  const hip = pose.hip, ads = [0, -u.sightY, -0.2];
+  // the sniper's long scope sits further out so the eyepiece doesn't crowd the camera
+  const hip = u.boltAction ? [pose.hip[0] + 0.01, pose.hip[1] - 0.01, pose.hip[2] - 0.07] : pose.hip, ads = [0, -u.sightY, -0.2];
   const bobAmt = (1 - aimK * 0.85) * hs;
   const breathe = Math.sin(now() * 1.6) * 0.002 * (1 - aimK);
   vmRoot.position.set(
     hip[0] + (ads[0] - hip[0]) * aimK - swayX * (1 - aimK * 0.7) + Math.sin(bob) * 0.012 * bobAmt,
     hip[1] + (ads[1] - hip[1]) * aimK + swayY + breathe - Math.abs(Math.cos(bob)) * 0.01 * bobAmt - tilt * 0.06 - drawT * 0.25 - landT * 0.03,
-    hip[2] + (ads[2] - hip[2]) * aimK + shotKick * (0.05 - aimK * 0.025),
+    hip[2] + (ads[2] - hip[2]) * aimK,
   );
+  vmRoot.position.add(rs.p);
+  // bolt-action: gun rolls and dips while the bolt is worked
+  const cyc = u.boltAction && shotT > 0.28 && shotT < 0.95 ? Math.sin((shotT - 0.28) / 0.67 * Math.PI) : 0;
+  vmRoot.position.y -= cyc * 0.02;
   vmRoot.rotation.set(
-    shotKick * (0.09 - aimK * 0.06) - tilt * 0.55 + drawT * 0.6,
-    pose.rot * (1 - aimK) + swayX * 1.5,
-    tilt * 0.55 - swayX * 1.2,
+    rs.r.x - tilt * 0.55 + drawT * 0.6 - cyc * 0.05,
+    pose.rot * (1 - aimK) + swayX * 1.5 + rs.r.y,
+    tilt * 0.55 - swayX * 1.2 + rs.r.z + cyc * 0.22,
   );
   // magazine out / in, then bolt or slide
   if (u.mag) {
@@ -993,10 +1038,20 @@ function updateCamera(dt) {
   }
   if (u.bolt) {
     u.bolt.position.copy(u.boltBase);
+    u.bolt.rotation.copy(u.boltRot);
     const pull = k > 0.82 && k < 0.95 ? Math.sin((k - 0.82) / 0.13 * Math.PI) : 0;
-    const cycle = shotKick > 0.3 ? shotKick * 0.6 : 0;
-    u.bolt.position.z += (pull + cycle) * 0.04;
+    // per-shot action: slide blowback / charging handle twitch / hammer fall / bolt cycle
+    const blow = shotT < 0.025 ? shotT / 0.025 : Math.max(0, 1 - (shotT - 0.025) / 0.06);
+    if (u.slide) u.bolt.position.z += blow * 0.034 + pull * 0.03;
+    else if (u.revolver) u.bolt.rotation.x += shotT < 0.03 ? 0.5 : Math.max(0, 0.5 * (1 - (shotT - 0.03) / 0.22));
+    else if (u.boltAction) {
+      const lift = THREE.MathUtils.smoothstep(shotT, 0.3, 0.42) - THREE.MathUtils.smoothstep(shotT, 0.78, 0.9);
+      const back = THREE.MathUtils.smoothstep(shotT, 0.42, 0.58) - THREE.MathUtils.smoothstep(shotT, 0.6, 0.76);
+      u.bolt.rotation.z += lift * 1.2;
+      u.bolt.position.z += back * 0.085 + pull * 0.06;
+    } else u.bolt.position.z += (blow * 0.35 + pull) * 0.04;
   }
+  if (u.cylinder) u.cylinder.rotation.z += (cylAngle - u.cylinder.rotation.z) * Math.min(1, dt * 30);
 }
 
 // ---------------------------------------------------------------------------
