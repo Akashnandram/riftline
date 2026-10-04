@@ -264,7 +264,7 @@ const IMPL = {
       const c = { x: f.pos.x + fx * 3, z: f.pos.z + fz * 3 };
       const alongX = Math.abs(fz) > Math.abs(fx);
       const hw = alongX ? 3 : 0.3, hd = alongX ? 0.3 : 3;
-      const b = { minX: c.x - hw, maxX: c.x + hw, minZ: c.z - hd, maxZ: c.z + hd, minY: 0, maxY: 3.2, kind: 'barrier' };
+      const b = { minX: c.x - hw, maxX: c.x + hw, minZ: c.z - hd, maxZ: c.z + hd, minY: f.pos.y, maxY: f.pos.y + 3.2, kind: 'barrier' };
       addDynamicBox(b);
       const mesh = boxMesh(b, 0x3ee6d6, { transparent: true, opacity: 0.45, emissive: 0x1aa79b, emissiveIntensity: 0.6 });
       game.scene.add(mesh);

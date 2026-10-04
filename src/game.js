@@ -7,14 +7,15 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { game, now, sideSign } from './state.js';
 import { WEAPONS, ARMOR, AGENTS, ECON, MATCH, MOVE, BOT_NAMES } from './config.js';
-import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx, setSpawnColors, SITE_RECTS, isWalkable } from './world.js';
+import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx, setSpawnColors, SITE_RECTS, isWalkable, loadMap, MAP } from './world.js';
+import { MAP_LIST, MAPS, randomMap } from './maps/index.js';
 import { resetCharge, hideCharge, updateCharge, tickAction, canPlant, canDefuse, siteAt, applyChargeSnapshot } from './objective.js';
 import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
 import {
   Fighter, TEAM_COLORS, EYE, updateFighterMesh, moveFighter, separateFighters, tryFire, startReload,
   updateWeapon, switchWeapon, setGunLook, emitSound, resetFighterMesh, remoteFire, playShotFx,
 } from './entities.js';
-import { updateRagdolls, clearRagdolls } from './characters.js';
+import { updateRagdolls, clearRagdolls, disposeCharacter } from './characters.js';
 import { BotBrain } from './bot.js';
 import { useAbility, abilityReady, updateAbilities, updateAbilityState, clearAbilities, fireFury } from './abilities.js';
 import { buy, botBuy } from './shop.js';
@@ -277,7 +278,8 @@ function playerAbility(slot) {
 // ---------------------------------------------------------------------------
 // Menu
 // ---------------------------------------------------------------------------
-let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 5), difficulty: store.get('difficulty', 'normal'), mode: store.get('mode', 'plant') };
+let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 5), difficulty: store.get('difficulty', 'normal'), mode: store.get('mode', 'plant'), map: store.get('map', 'random') };
+if (choice.map !== 'random' && !MAPS[choice.map]) choice.map = 'random';
 
 function renderMenu() {
   const wrap = $('agentCards');
@@ -292,7 +294,8 @@ function renderMenu() {
     b.onclick = () => { choice.agent = a.key; store.set('agent', a.key); renderMenu(); };
     wrap.appendChild(b);
   }
-  for (const [id, prop, parse] of [['segSize', 'teamSize', Number], ['segDiff', 'difficulty', String], ['segMode', 'mode', String]]) {
+  $('segMap').innerHTML = [['random', 'Random'], ...MAP_LIST.map((m) => [m.id, m.name])].map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('');
+  for (const [id, prop, parse] of [['segSize', 'teamSize', Number], ['segDiff', 'difficulty', String], ['segMode', 'mode', String], ['segMap', 'map', String]]) {
     for (const btn of $(id).querySelectorAll('button')) {
       btn.classList.toggle('on', parse(btn.dataset.v) === choice[prop]);
       btn.onclick = () => { choice[prop] = parse(btn.dataset.v); store.set(prop, choice[prop]); renderMenu(); };
@@ -317,10 +320,10 @@ function renderProfile() {
 }
 
 $('touchWarn').hidden = !matchMedia('(pointer: coarse)').matches;
-$('lockIn').onclick = () => { initAudio(); startMatch({ ...choice }); lock(); };
+$('lockIn').onclick = () => { initAudio(); startLocal({ ...choice }); lock(); };
 $('resume').onclick = () => { initAudio(); lock(); };
 $('quit').onclick = () => toMenu();
-$('again').onclick = () => { if (game.config.mode === 'range') startRange(game.config.tutorial); else startMatch(game.config); lock(); };
+$('again').onclick = () => { if (game.config.mode === 'range') startRange(game.config.tutorial); else startLocal(game.config); lock(); };
 $('toMenu').onclick = () => toMenu();
 $('btnRange').onclick = () => { initAudio(); startRange(false); lock(); };
 $('btnTutorial').onclick = $('btnTutorial2').onclick = () => { initAudio(); startRange(true); lock(); };
@@ -433,14 +436,35 @@ function teardown() {
   game.tac = null;
   clearAbilities();
   clearRagdolls(scene);
-  for (const f of game.fighters) scene.remove(f.mesh);
+  for (const f of game.fighters) { scene.remove(f.mesh); disposeCharacter(f.mesh); }
   game.fighters = []; game.player = null;
 }
 
-function startMatch(cfg, roster = null) {
+/** Load a map's layout and rebuild the scene for it (no-op when it's already loaded). */
+function switchMap(id) {
+  if (!loadMap(id)) return;
+  buildWorld(scene, renderer, QUALITY);
+  renderer.shadowMap.needsUpdate = true;
+}
+/** 'random' (or nothing) → a random map id, avoiding the one just played. */
+const resolveMap = (m) => (m && m !== 'random' && MAPS[m] ? m : randomMap(MAP?.id));
+
+/** Local match: show a loading card for a frame when the map has to be built first. */
+function startLocal(cfg) {
+  const id = resolveMap(cfg.map);
+  if (id === MAP.id) { startMatch(cfg, null, id); return; }
+  $('loading').hidden = false;
+  $('loadingName').textContent = MAPS[id].name.toUpperCase();
+  $('loadingDesc').textContent = MAPS[id].desc;
+  setTimeout(() => { try { startMatch(cfg, null, id); } finally { $('loading').hidden = true; } }, 40);
+}
+
+function startMatch(cfg, roster = null, mapId = null) {
   teardown();
   setPaused(false);
+  switchMap(mapId || (roster ? cfg.map : resolveMap(cfg.map)));
   game.config = cfg;
+  game.mapId = MAP.id;
   game.config.mode ??= 'plant';
   game.time = 0; game.round = 0; game.score = [0, 0]; game.lossStreak = [0, 0];
   game.attackers = Math.random() < 0.5 ? 0 : 1;
@@ -586,16 +610,16 @@ function startRound() {
     for (const f of game.fighters) { giveLoadout(f); f.armor = 50; f.ult = 0; }
     hideCharge();
     game.phaseT = 5;
-    flashMsg('TEAM DEATHMATCH', `First to ${game.tdmTarget} kills · press B to change loadout (free)`, 4);
+    flashMsg('TEAM DEATHMATCH', `${MAP.name} · first to ${game.tdmTarget} kills · press B to change loadout (free)`, 4);
   } else if (plantMode) {
     resetCharge();
     planTactics();
     const attacking = game.player.team === game.attackers;
     const role = attacking ? 'ATTACK — plant the Rift Charge on A or B' : 'DEFEND — stop the plant or defuse it';
-    flashMsg(halftime ? 'SWITCHING SIDES' : `ROUND ${game.round}`, `${role} · press B to buy`, 3.5);
+    flashMsg(halftime ? 'SWITCHING SIDES' : game.round === 1 ? MAP.name.toUpperCase() : `ROUND ${game.round}`, `${game.round === 1 ? 'ROUND 1 · ' : ''}${role} · press B to buy`, 3.5);
   } else {
     hideCharge();
-    flashMsg(`ROUND ${game.round}`, 'BUY PHASE — press B to open the armory', 3);
+    flashMsg(game.round === 1 ? MAP.name.toUpperCase() : `ROUND ${game.round}`, `${game.round === 1 ? 'ROUND 1 · ' : ''}BUY PHASE — press B to open the armory`, 3);
   }
   sfx('round');
 }
@@ -634,7 +658,7 @@ function matchOver() {
   $('overBoard').innerHTML = scoreboardHTML(true);
   // results buttons: offline defaults, or lobby controls for online matches
   $('again').textContent = 'PLAY AGAIN'; $('toMenu').textContent = 'Main menu';
-  $('again').onclick = () => { if (game.config.mode === 'range') startRange(game.config.tutorial); else startMatch(game.config); lock(); };
+  $('again').onclick = () => { if (game.config.mode === 'range') startRange(game.config.tutorial); else startLocal(game.config); lock(); };
   $('toMenu').onclick = () => toMenu();
   if (online()) onlineMatchOver();
   $('over').hidden = false; $('hud').hidden = true;
@@ -803,7 +827,7 @@ function renderTutorial() {
     el.innerHTML = `<div class="step">TUTORIAL COMPLETE</div><div class="txt">You know the basics!</div>
       <div class="sub">In matches you buy guns each round, plant the Rift Charge on A or B with <kbd>F</kbd>, or defend it.${tut.xp ? ` <b style="color:#ffd23f">+${tut.xp} XP</b>` : ''}</div>
       <button class="big" id="tutPlay">PLAY A MATCH</button><button class="ghost" id="tutStay">Keep practicing</button>`;
-    $('tutPlay').onclick = () => { startMatch({ ...choice }); lock(); };
+    $('tutPlay').onclick = () => { startLocal({ ...choice }); lock(); };
     $('tutStay').onclick = () => { tut = null; el.hidden = true; lock(); };
     return;
   }
@@ -894,6 +918,8 @@ function buildRosterFighters(cfg, roster, client) {
 function startClientMatch(cfg, roster) {
   teardown();
   setPaused(false);
+  switchMap(cfg.map);
+  game.mapId = MAP.id;
   game.config = cfg;
   game.time = 0; game.round = 0; game.score = [0, 0]; game.lossStreak = [0, 0]; game.noises = [];
   buildRosterFighters(cfg, roster, true);
@@ -1631,7 +1657,7 @@ function updateCamera(dt) {
   aimK += ((wantAim ? 1 : 0) - aimK) * Math.min(1, dt * 14);
   landT = Math.max(0, landT - dt * 4);
   if (!game.spectating) {
-    p.eye(camera.position);
+    p.viewEye(camera.position);
     const hs = Math.hypot(p.vel.x, p.vel.z);
     bob += hs * dt * 1.6;
     if (p.onGround && hs > 1) camera.position.y += Math.sin(bob * 2) * 0.022 * (1 - aimK * 0.7);
@@ -1827,12 +1853,16 @@ function render() {
     renderer.clearDepth();
     renderer.render(vmScene, vmCam);
   }
+  // view frustum for next frame's animation culling
+  game.frustum.setFromProjectionMatrix(_pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
 }
+const _pv = new THREE.Matrix4();
+game.frustum = new THREE.Frustum();
 requestAnimationFrame(frame);
 
 // debug handle for testing in the console
 window.__riftline = {
-  game, startMatch, vmScene, cam(pos, look) { debugCam = pos ? { pos: new THREE.Vector3(...pos), look: new THREE.Vector3(...look) } : null; }, renderer, composer, noPost(v) { debugNoPost = v; }, aim(v) { forceAim = v; },
+  game, startMatch, vmScene, switchMap, MAP: () => MAP, cam(pos, look) { debugCam = pos ? { pos: new THREE.Vector3(...pos), look: new THREE.Vector3(...look) } : null; }, renderer, composer, noPost(v) { debugNoPost = v; }, aim(v) { forceAim = v; },
   spray(n) { const p = game.player, out = []; for (let i = 0; i < n * 8; i++) { if (i % 8 === 0) { tryFire(p); out.push([+(p.recoil * 1000).toFixed(0), +(p.recoilYaw * 1000).toFixed(0)]); } step(1 / 120); } return out; },
   tick(n = 1, dt = 1 / 60) { for (let i = 0; i < n; i++) if ((!game.paused || game.net) && game.phase !== 'over' && game.phase !== 'menu') step(dt); render(); },
 };

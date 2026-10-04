@@ -1,5 +1,6 @@
 // Online UI: account chip + login, username, "Play online" (create/join, friends), lobby screen,
 // invite toasts. Talks to the game through the small `api` passed to initOnlineUI().
+import { MAP_LIST } from '../maps/index.js';
 import { AGENTS } from '../config.js';
 import {
   configured, me, initBackend, onAuthChange, signIn, signUp, signInGoogle, signOut, setUsername, pushProgress,
@@ -192,7 +193,7 @@ function renderFriends() {
 async function createLobby() {
   if (!(await needName())) return;
   const c = api.choice();
-  lobby = await Lobby.host({ mode: c.mode, teamSize: c.teamSize, difficulty: c.difficulty }, c.agent);
+  lobby = await Lobby.host({ mode: c.mode, teamSize: c.teamSize, difficulty: c.difficulty, map: c.map || 'random' }, c.agent);
   lobby.systemChat(`Lobby created — share code ${lobby.code}`);
   wireLobby();
   showLobby();
@@ -252,7 +253,8 @@ function renderLobby() {
         <section><h3>MATCH ${lobby.isHost ? '' : '<small>(host decides)</small>'}</h3>
           ${seg('mode', [['plant', 'Plant / Defuse'], ['elim', 'Elimination'], ['tdm', 'Team DM']])}
           ${seg('teamSize', [[1, '1v1'], [2, '2v2'], [3, '3v3'], [5, '5v5']])}
-          ${seg('difficulty', [['veryeasy', 'Super easy bots'], ['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}</section>
+          ${seg('difficulty', [['veryeasy', 'Super easy bots'], ['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}
+          ${seg('map', [['random', 'Random map'], ...MAP_LIST.map((m) => [m.id, m.name])])}</section>
         <section><h3>INVITE</h3><div id="lbInv"></div></section>
         <section class="chat"><h3>CHAT</h3><div class="log" id="lbLog">${lobby.chat.map((c) => c.name ? `<div><b>${esc(c.name)}:</b> ${esc(c.text)}</div>` : `<div class="sys">${esc(c.text)}</div>`).join('')}</div>
           <input id="lbMsg" maxlength="140" placeholder="Say something…"></section>

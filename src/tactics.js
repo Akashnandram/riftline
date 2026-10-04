@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { game, now } from './state.js';
-import { boxes, isWalkable, hasLOS, BOUNDS } from './world.js';
+import { boxes, isWalkable, hasLOS, BOUNDS, onMapLoad, navHeight, snapWalkable } from './world.js';
 import { SITES, siteAt, zoneName } from './objective.js';
 
 // Team-level bot strategy for plant mode:
@@ -14,20 +14,27 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 // ---------------------------------------------------------------------------
-// Static analysis of the map (once)
+// Static analysis of the map (redone whenever a map loads)
 // ---------------------------------------------------------------------------
+/** Point at standing/aim height above whatever floor is at (x, z). */
+const at = (x, z, h = 1.4) => V(x, navHeight(x, z) + h, z);
+
 /** Corners of tall cover that bots "check" (pre-aim) while moving. */
 export const CORNERS = [];
-for (const b of boxes) {
-  if (b.maxY < 1.6 || b.minY > 1 || b.kind === 'outer' || b.kind === 'roof') continue;
-  for (const [x, z] of [[b.minX - 0.45, b.minZ - 0.45], [b.maxX + 0.45, b.minZ - 0.45], [b.minX - 0.45, b.maxZ + 0.45], [b.maxX + 0.45, b.maxZ + 0.45]]) {
-    if (x > BOUNDS.minX + 1 && x < BOUNDS.maxX - 1 && z > BOUNDS.minZ + 1 && z < BOUNDS.maxZ - 1 && isWalkable(x, z)) CORNERS.push(V(x, 1.4, z));
+function findCorners() {
+  CORNERS.length = 0;
+  for (const b of boxes) {
+    if (b.walk || b.maxY - b.minY < 1.6 || b.kind === 'outer' || b.kind === 'roof') continue;
+    for (const [x, z] of [[b.minX - 0.45, b.minZ - 0.45], [b.maxX + 0.45, b.minZ - 0.45], [b.minX - 0.45, b.maxZ + 0.45], [b.maxX + 0.45, b.maxZ + 0.45]]) {
+      if (x > BOUNDS.minX + 1 && x < BOUNDS.maxX - 1 && z > BOUNDS.minZ + 1 && z < BOUNDS.maxZ - 1 && isWalkable(x, z) && Math.abs(navHeight(x, z) - b.minY) < 0.5) CORNERS.push(at(x, z));
+    }
   }
 }
 
 function nearCover(x, z) {
+  const h = navHeight(x, z);
   for (const b of boxes) {
-    if (b.maxY < 1.0 || b.minY > 1 || b.kind === 'outer') continue;
+    if (b.maxY < h + 1.0 || b.minY > h + 1 || b.kind === 'outer') continue;
     const dx = Math.max(b.minX - x, 0, x - b.maxX), dz = Math.max(b.minZ - z, 0, z - b.maxZ);
     if (Math.hypot(dx, dz) < 1.2) return true;
   }
@@ -42,14 +49,16 @@ function holdSpots(area, entries, n) {
     for (let z = area.min.z + 0.5; z < area.max.z; z += 1) {
       if (!isWalkable(x, z)) continue;
       let score = 0, watch = null;
-      eye.set(x, 1.6, z);
+      const h = navHeight(x, z);
+      eye.set(x, h + 1.6, z);
       for (const e of entries) {
         const d = Math.hypot(e.x - x, e.z - z);
         if (d < 6 || d > 26) continue;
-        if (hasLOS(eye, tgt.set(e.x, 1.4, e.z), true)) { score += 2 - Math.abs(d - 13) / 13; watch = watch || e; }
+        if (hasLOS(eye, tgt.set(e.x, navHeight(e.x, e.z) + 1.4, e.z), true)) { score += 2 - Math.abs(d - 13) / 13; watch = watch || e; }
       }
       if (!watch) continue;
       if (nearCover(x, z)) score += 0.8;
+      if (h > 0.9) score += 0.5;                      // high ground is worth holding
       cands.push({ x, z, score, watch });
     }
   }
@@ -62,24 +71,25 @@ function holdSpots(area, entries, n) {
   return out;
 }
 
-const MID_AREA = { min: { x: 6, z: -8 }, max: { x: 16, z: 8 } };
-const MID_ENTRIES = [{ x: -6, z: 0 }, { x: -6, z: 5 }, { x: -6, z: -5 }];
-export const HOLDS = {
-  A: holdSpots({ min: { x: 12, z: -29 }, max: { x: 29, z: -11 } }, SITES.A.entries, 4),
-  B: holdSpots({ min: { x: 12, z: 11 }, max: { x: 29, z: 29 } }, SITES.B.entries, 4),
-  mid: holdSpots(MID_AREA, MID_ENTRIES, 2),
-};
-for (const [k, area] of [['A', SITES.A], ['B', SITES.B], ['mid', { center: { x: 11, z: 0 }, entries: MID_ENTRIES }]]) {
-  if (!HOLDS[k].length) HOLDS[k].push({ x: area.center.x, z: area.center.z, score: 0, watch: area.entries[0] });
-}
-// angles defenders retake from / attackers watch after the plant
-const RETAKE_FROM = { A: [{ x: 30, z: -19.5 }, { x: 18, z: -8.5 }], B: [{ x: 30, z: 19.5 }, { x: 18, z: 8.5 }] };
-
-// attack routes (attackers come from -x)
-const ROUTES = {
-  A: { main: [{ x: -8, z: -21 }, { x: 7, z: -20 }], split: [{ x: -10, z: -1 }, { x: 13, z: -5 }, { x: 18, z: -13 }] },
-  B: { main: [{ x: -9, z: 21 }, { x: 7, z: 20 }], split: [{ x: -10, z: 1 }, { x: 13, z: 5 }, { x: 18, z: 13 }] },
-};
+export const HOLDS = { A: [], B: [], mid: [] };
+let RETAKE_FROM = { A: [], B: [] };
+let ROUTES = {};
+onMapLoad((m) => {
+  findCorners();
+  const mid = m.mid || { area: { min: { x: 6, z: -8 }, max: { x: 16, z: 8 } }, center: { x: 11, z: 0 }, entries: [{ x: -6, z: 0 }] };
+  const midEntries = mid.entries.map(snapWalkable);
+  HOLDS.A = holdSpots(SITES.A, SITES.A.entries, 4);
+  HOLDS.B = holdSpots(SITES.B, SITES.B.entries, 4);
+  HOLDS.mid = holdSpots(mid.area, midEntries, 2);
+  for (const [k, area] of [['A', SITES.A], ['B', SITES.B], ['mid', { center: snapWalkable(mid.center), entries: midEntries }]]) {
+    if (!HOLDS[k].length) HOLDS[k].push({ x: area.center.x, z: area.center.z, score: 0, watch: area.entries[0] });
+  }
+  // angles defenders retake from / attackers watch after the plant
+  RETAKE_FROM = { A: m.retake.A.map(snapWalkable), B: m.retake.B.map(snapWalkable) };
+  // attack routes (attackers come from -x)
+  ROUTES = {};
+  for (const k of ['A', 'B']) ROUTES[k] = { main: m.routes[k].main.map(snapWalkable), split: m.routes[k].split.map(snapWalkable) };
+});
 
 // ---------------------------------------------------------------------------
 // Round planning
@@ -194,7 +204,7 @@ export function tacticalGoal(bot) {
     }
     if (c.state === 'planted') {
       const h = postPlantSpot(f, c.site);
-      return { goal: h, look: V(h.watch.x, 1.4, h.watch.z), walk: false, hold: true };
+      return { goal: h, look: at(h.watch.x, h.watch.z), walk: false, hold: true };
     }
     const carrier = c.state === 'carried' && c.carrier === f;
     if (!tac.go) {
@@ -202,7 +212,7 @@ export function tacticalGoal(bot) {
       const stage = plan.route[0];
       if (Math.hypot(stage.x - f.pos.x, stage.z - f.pos.z) < 3) plan.staged = true;
       const nextLook = plan.route[1] || SITES[site].center;
-      return { goal: stage, look: plan.staged ? V(nextLook.x, 1.4, nextLook.z) : null, walk: false, hold: plan.staged };
+      return { goal: stage, look: plan.staged ? at(nextLook.x, nextLook.z) : null, walk: false, hold: plan.staged };
     }
     // executing: run the rest of the route, then onto the site
     while (plan.i < plan.route.length && Math.hypot(plan.route[plan.i].x - f.pos.x, plan.route[plan.i].z - f.pos.z) < 2.5) plan.i++;
@@ -214,7 +224,7 @@ export function tacticalGoal(bot) {
       return { goal: at ? null : p, look: null, walk: false, action: at ? 'plant' : null };
     }
     const h = postPlantSpot(f, site);
-    return { goal: h, look: V(h.watch.x, 1.4, h.watch.z), walk: false, hold: true };
+    return { goal: h, look: at(h.watch.x, h.watch.z), walk: false, hold: true };
   }
 
   // defenders
@@ -233,13 +243,13 @@ export function tacticalGoal(bot) {
     const ang = k * 2.1 + (c.site === 'A' ? 0 : Math.PI);
     const cover = { x: c.pos.x + Math.cos(ang) * 4, z: c.pos.z + Math.sin(ang) * 4 };
     const near = Math.hypot(cover.x - f.pos.x, cover.z - f.pos.z) < 1.2;
-    const out = V(c.pos.x + Math.cos(ang) * 14, 1.4, c.pos.z + Math.sin(ang) * 14);
-    return { goal: near ? null : (isWalkable(cover.x, cover.z) ? cover : c.pos), look: d < 8 ? out : V(c.pos.x, 1.2, c.pos.z), walk: d < 14, hold: near };
+    const out = V(c.pos.x + Math.cos(ang) * 14, c.pos.y + 1.4, c.pos.z + Math.sin(ang) * 14);
+    return { goal: near ? null : (isWalkable(cover.x, cover.z) ? cover : c.pos), look: d < 8 ? out : V(c.pos.x, c.pos.y + 1.2, c.pos.z), walk: d < 14, hold: near };
   }
   const s = plan.spot;
   if (!s) return null;
   const there = Math.hypot(s.x - f.pos.x, s.z - f.pos.z) < 1;
-  return { goal: there ? null : s, look: V(s.watch.x, 1.5, s.watch.z), walk: false, hold: there };
+  return { goal: there ? null : s, look: at(s.watch.x, s.watch.z, 1.5), walk: false, hold: there };
 }
 const MATCH_SAFETY = 9; // seconds left when a defender will gamble on a defuse even with enemies around
 

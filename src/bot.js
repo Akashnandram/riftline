@@ -1,14 +1,13 @@
 import * as THREE from 'three';
 import { game, now, enemiesOf, sideSign } from './state.js';
 import { DIFFICULTY, MOVE } from './config.js';
-import { hasLOS, findPath } from './world.js';
+import { hasLOS, findPath, MAP, snapWalkable } from './world.js';
 import { moveFighter, tryFire, startReload, switchWeapon, penetrable } from './entities.js';
 import { tacticalGoal, onSpotted, cornerToCheck } from './tactics.js';
 import { tickAction } from './objective.js';
 import { useAbility, abilityReady, fireFury, inPool } from './abilities.js';
 
 const _eye = new THREE.Vector3(), _tp = new THREE.Vector3(), _v = new THREE.Vector3();
-const LANES = [-20, 0, 20];
 const rand = (a, b) => a + Math.random() * (b - a);
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -37,7 +36,8 @@ export class BotBrain {
   planRound() {
     this.reset();
     const s = -sideSign(this.f.team);
-    const lane = LANES[Math.floor(Math.random() * 3)];
+    const lanes = MAP.lanes || [-20, 0, 20];
+    const lane = lanes[Math.floor(Math.random() * lanes.length)];
     const j = () => rand(-2.5, 2.5);
     this.waypoints = [
       { x: -27 * s, z: lane * 0.975 + j() * 0.3 },
@@ -46,7 +46,7 @@ export class BotBrain {
       { x: 14 * s, z: lane + j() },
       { x: 26 * s, z: lane + j() },
       { x: 36 * s, z: rand(-8, 8) },
-    ];
+    ].map(snapWalkable);
   }
 
   intel(e) {

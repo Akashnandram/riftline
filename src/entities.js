@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { game, now, sideSign } from './state.js';
 import { WEAPONS, AGENTS, MOVE, ECON, MATCH, HIT_ZONES, PENETRATION } from './config.js';
-import { boxes, rayBox, rayBoxRange, boxNormalAt, raySphere, surfaceOf } from './world.js';
+import { rayBox, rayBoxRange, boxNormalAt, raySphere, surfaceOf, boxesNear, boxesAlongRay, STEP_UP } from './world.js';
 import { tracer, blood, impact, bulletHole, muzzleSprite } from './fx.js';
 import { sfx } from './audio.js';
-import { buildCharacter, setCharacterGun, animateCharacter, startRagdoll, flinch, removeRagdoll } from './characters.js';
+import { buildCharacter, setCharacterGun, animateCharacter, startRagdoll, flinch, removeRagdoll, disposeCharacter } from './characters.js';
 import { skinFor } from './progress.js';
 
 export const RADIUS = 0.35, HEIGHT = 1.8, EYE = 1.62;
@@ -51,6 +51,8 @@ export class Fighter {
   get drop() { return MOVE.crouchDrop * this.crouch; }
   get height() { return HEIGHT - this.drop; }
   eye(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + EYE - this.drop, this.pos.z); }
+  /** Eye for the camera: smoothed over stair steps. */
+  viewEye(out = new THREE.Vector3()) { return this.eye(out).setY(out.y + (this.stepOff || 0)); }
 
   lookDir(out = new THREE.Vector3(), withRecoil = true) {
     const p = this.pitch + (withRecoil ? this.recoil : 0);
@@ -99,23 +101,35 @@ export function resetFighterMesh(f) {
   if (!f.mesh.userData.ragdoll) return;
   removeRagdoll(f.mesh, game.scene);
   game.scene.remove(f.mesh);
+  disposeCharacter(f.mesh);
   f.mesh = buildCharacter(TEAM_COLORS[f.team], f.agent);
   game.scene.add(f.mesh);
   setGunLook(f);
 }
 
+const _sph = new THREE.Sphere(), _sc = new THREE.Vector3();
 export function updateFighterMesh(f, dt, viewer) {
   const m = f.mesh, u = m.userData;
   if (!f.alive) { if (!u.ragdoll) startRagdoll(m, game.scene, f.vel, f.lastHitDir, f.lastHitHead); return; }
   m.position.copy(f.pos);
+  if (f.stepOff) m.position.y += f.stepOff;
   m.rotation.y = f.yaw;
   m.visible = !(f.isPlayer && !game.spectating);
   if (!m.visible) return;
+  // animation LOD: skip rigs that are off-screen, update far ones at half rate
+  const u0 = m.userData;
+  u0.animAcc += dt;
+  const cam = game.camera;
+  const dist = cam ? cam.position.distanceTo(f.pos) : 0;
+  if (game.frustum && dist > 3 && !game.frustum.intersectsSphere(_sph.set(_sc.set(f.pos.x, f.pos.y + 1, f.pos.z), 1.3))) return;
+  if (dist > 35 && (u0.animTick = (u0.animTick || 0) + 1) % 2) return;
+  const adt = Math.min(0.1, u0.animAcc);
+  u0.animAcc = 0;
   const w = f.weapon();
   animateCharacter(m, {
     yaw: f.yaw, pitch: f.pitch + f.recoil * 0.5, vel: f.vel, onGround: f.onGround,
     kick: f.kickT || 0, reload: f.reloadT > 0 ? 1 - f.reloadT / w.reload : -1, crouch: f.crouch,
-  }, dt);
+  }, adt);
   const t = now();
   u.ghost.visible = viewer && f.team !== viewer.team && t < f.revealedUntil;
   u.marker.visible = viewer && f.team === viewer.team && !f.isPlayer;
@@ -130,10 +144,30 @@ function overlaps(f, b, minY) {
     && minY < b.maxY && f.pos.y + f.height > b.minY;
 }
 
+/** Nothing solid in the fighter's body volume if it stood with its feet at y? */
+function clearAt(f, y, list) {
+  for (let i = 0; i < list.length; i++) {
+    const b = list[i];
+    if (f.pos.x + RADIUS > b.minX && f.pos.x - RADIUS < b.maxX && f.pos.z + RADIUS > b.minZ && f.pos.z - RADIUS < b.maxZ
+      && y + 0.02 < b.maxY && y + f.height > b.minY) return false;
+  }
+  return true;
+}
+
+const near = (f) => boxesNear(f.pos.x - RADIUS - 0.3, f.pos.z - RADIUS - 0.3, f.pos.x + RADIUS + 0.3, f.pos.z + RADIUS + 0.3);
+
 function resolveAxis(f, axis) {
-  const minY = f.pos.y + 0.05;
-  for (const b of boxes) {
-    if (!overlaps(f, b, minY)) continue;
+  const list = near(f);
+  for (let i = 0; i < list.length; i++) {
+    const b = list[i];
+    if (!overlaps(f, b, f.pos.y + 0.05)) continue;
+    // a low ledge (stair step, kerb): walk up onto it instead of stopping
+    const rise = b.maxY - f.pos.y;
+    if (rise > 0 && rise <= STEP_UP && (f.onGround || f.vel.y <= 0) && clearAt(f, b.maxY, list)) {
+      f.stepOff = (f.stepOff || 0) - rise;
+      f.pos.y = b.maxY; f.vel.y = Math.max(0, f.vel.y); f.onGround = true;
+      continue;
+    }
     if (axis === 'x') {
       f.pos.x = f.pos.x < (b.minX + b.maxX) / 2 ? b.minX - RADIUS - 1e-4 : b.maxX + RADIUS + 1e-4;
       f.vel.x = 0;
@@ -145,7 +179,7 @@ function resolveAxis(f, axis) {
 }
 
 function blockedAbove(f) {
-  for (const b of boxes) {
+  for (const b of near(f)) {
     if (f.pos.x + RADIUS > b.minX && f.pos.x - RADIUS < b.maxX && f.pos.z + RADIUS > b.minZ && f.pos.z - RADIUS < b.maxZ
       && b.minY > f.pos.y + f.height - 0.05 && b.minY < f.pos.y + HEIGHT) return true;
   }
@@ -177,18 +211,29 @@ export function moveFighter(f, wishX, wishZ, speed, jump, dt) {
     f.pos.z += f.vel.z * h; resolveAxis(f, 'z');
   }
 
-  const prevY = f.pos.y;
+  const prevY = f.pos.y, wasGround = f.onGround;
   f.vel.y -= MOVE.gravity * dt;
   f.pos.y += f.vel.y * dt;
   f.onGround = false;
   if (f.pos.y <= 0) { f.pos.y = 0; f.vel.y = 0; f.onGround = true; }
-  for (const b of boxes) {
+  const list = near(f);
+  for (const b of list) {
     if (!(f.pos.x + RADIUS > b.minX && f.pos.x - RADIUS < b.maxX && f.pos.z + RADIUS > b.minZ && f.pos.z - RADIUS < b.maxZ)) continue;
     if (f.pos.y < b.maxY && f.pos.y + f.height > b.minY) {
       if (f.vel.y <= 0 && prevY >= b.maxY - 0.06) { f.pos.y = b.maxY; f.vel.y = 0; f.onGround = true; }
       else if (f.vel.y > 0) { f.pos.y = b.minY - f.height; f.vel.y = 0; }
     } else if (f.vel.y <= 0 && Math.abs(f.pos.y - b.maxY) < 0.02) f.onGround = true;
   }
+  // walking down stairs: stick to the next step instead of hopping off each one
+  if (!f.onGround && wasGround && f.vel.y <= 0 && f.dashT <= 0) {
+    let top = 0;
+    for (const b of list) {
+      if (f.pos.x + RADIUS > b.minX && f.pos.x - RADIUS < b.maxX && f.pos.z + RADIUS > b.minZ && f.pos.z - RADIUS < b.maxZ && b.maxY <= prevY + 0.01 && b.maxY > top) top = b.maxY;
+    }
+    if (prevY - top <= STEP_UP + 0.05) { f.stepOff = (f.stepOff || 0) + (prevY - top) - (prevY - f.pos.y); f.pos.y = top; f.vel.y = 0; f.onGround = true; }
+  }
+  // smooth the visual/eye height over steps
+  if (f.stepOff) { f.stepOff *= Math.exp(-14 * dt); if (Math.abs(f.stepOff) < 0.002) f.stepOff = 0; }
 
   if (game.phase === 'buy') {
     if (sideSign(f.team) < 0) f.pos.x = Math.min(f.pos.x, -31);
@@ -233,7 +278,7 @@ function hitFighter(e, o, d) {
 /** Solid surfaces along a ray, sorted: [{ t0, t1, kind, box }] (floor has t1 = Infinity). */
 function wallsAlong(o, d, maxT) {
   const out = [];
-  for (const b of boxes) {
+  for (const b of boxesAlongRay(o, d, maxT)) {
     const r = rayBoxRange(o, d, b);
     if (r && r[0] < maxT) out.push({ t0: r[0], t1: r[1], kind: b.kind, box: b });
   }

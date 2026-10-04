@@ -482,6 +482,42 @@ function mergeStatic(g, keep) {
   }
 }
 
+/**
+ * Third-person guns: bake every part (at any depth) into one mesh per material, except the
+ * magazine (it animates on reload). Referenced parts are replaced by empty transforms so the
+ * userData pointers stay valid. ~23 draw calls per held gun → ~5.
+ */
+function mergeDeep(g, parts) {
+  g.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(g.matrixWorld).invert();
+  const keep = new Set();
+  parts.mag?.traverse((o) => keep.add(o));
+  const byMat = new Map(), remove = [], m4 = new THREE.Matrix4();
+  g.traverse((o) => {
+    if (!o.isMesh || keep.has(o) || o.material.transparent) return;
+    const geo = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    for (const k of Object.keys(geo.attributes)) if (!['position', 'normal', 'uv'].includes(k)) geo.deleteAttribute(k);
+    if (!geo.attributes.uv) geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(geo.attributes.position.count * 2), 2));
+    geo.applyMatrix4(m4.multiplyMatrices(inv, o.matrixWorld));
+    if (!byMat.has(o.material)) byMat.set(o.material, []);
+    byMat.get(o.material).push(geo);
+    remove.push(o);
+  });
+  for (const o of remove) {
+    const ph = new THREE.Object3D();
+    ph.position.copy(o.position); ph.quaternion.copy(o.quaternion); ph.scale.copy(o.scale);
+    for (const c of [...o.children]) ph.add(c);
+    const par = o.parent, i = par.children.indexOf(o);
+    par.children[i] = ph; ph.parent = par; o.parent = null;
+    for (const k of Object.keys(parts)) if (parts[k] === o) parts[k] = ph;
+  }
+  for (const [mat, geos] of byMat) {
+    const merged = mergeGeometries(geos, false);
+    for (const gg of geos) gg.dispose();
+    if (merged) g.add(new THREE.Mesh(merged, mat));
+  }
+}
+
 /** withHands=false builds the third-person version held by character rigs. */
 const proto = new Map();
 export function buildGun(key, teamColor, withHands = true) {
@@ -493,7 +529,8 @@ export function buildGun(key, teamColor, withHands = true) {
     NO_HANDS = !withHands;
     const parts = BUILD[key](g, w, teamColor);
     NO_HANDS = false;
-    mergeStatic(g, new Set([parts.mag, parts.bolt]));
+    if (withHands) mergeStatic(g, new Set([parts.mag, parts.bolt]));
+    else mergeDeep(g, parts);
     g.userData = parts;
     proto.set(k, g);
   }

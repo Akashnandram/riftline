@@ -313,3 +313,13 @@ button.x { padding: 4px 8px; }
 .toast { background: var(--panel); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 10px 12px; display: flex; gap: 8px; align-items: center; font-size: 15px; box-shadow: 0 6px 24px rgba(0,0,0,0.4); animation: kfIn 0.2s ease-out; }
 .toast span { margin-right: 6px; }
 @media (max-width: 900px) { .ol-grid, .lb-grid, .teams { grid-template-columns: 1fr; } }
+
+/* map loading card */
+#loading { z-index: 60; background: radial-gradient(circle at 50% 40%, rgba(15,25,35,0.92), rgba(5,8,12,0.98)); display: flex; align-items: center; justify-content: center; }
+#loading[hidden] { display: none; }
+.loadCard { text-align: center; color: #ece8e1; }
+.loadCard small { letter-spacing: 0.3em; color: #ff4655; font-weight: 700; }
+.loadCard h2 { font-size: 64px; margin: 8px 0 4px; letter-spacing: 0.08em; }
+.loadCard p { opacity: 0.7; margin: 0 0 18px; }
+.loadCard i { display: block; width: 180px; height: 3px; margin: 0 auto; background: linear-gradient(90deg, transparent, #ff4655, transparent); animation: loadbar 0.9s linear infinite; }
+@keyframes loadbar { from { transform: translateX(-60px); } to { transform: translateX(60px); } }

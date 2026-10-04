@@ -31,13 +31,24 @@ WASD move · Mouse aim/shoot · Shift walk (silent, accurate) · C crouch (hold)
   `raptor`, `longbow`, `step`, `impact`, `whizz`, `magout`, `magin`, `bolt`, …) replaces the synthesised version
   and still gets 3D positioning, wall muffling and reverb.
 
-## Map
+## Maps
 
-Point-symmetric (everything on the west half is mirrored through the centre), so both sides are fair.
-Five walk-in houses — one on each site, one in each attacker lobby, and a two-door shop in mid — with
-doors, shoot-through windows, interior walls, furniture and roofs. House walls are thin plaster (rifles,
-SMGs and pistols can wallbang them). Plus a truck in each main, cars, sandbag walls, wooden fences,
-barrels, trees, street lamps and a market stall. The layout lives in `WEST` / `CENTER_HOUSE` in `src/world.js`.
+Five maps, picked at random each match (or choose one on the menu / in the online lobby):
+
+- **Old Town** – village streets, walk-in houses, cars, a market square and lookout terraces in mid.
+- **Dunes** – desert town around a raised mesa; A site has a stone dais and a rooftop "heaven", B a walled terrace.
+- **Harbor** – container port at sunset; container rows split the lanes, a climbable warehouse roof in mid,
+  a container stack on A and a loading dock on B.
+- **Frostpeak** – snowbound outpost with falling snow; radar deck in mid, a bunker under a rocky ridge on A,
+  a helipad and fuel depot on B.
+- **Temple** – jungle ruins; a three-tier stepped pyramid in mid, an altar court on A, a ruined library and ledge on B.
+
+Every map is point-symmetric (both sides are fair) and shares the same arena frame (80 x 60 m, spawns behind
+x = ±30, A at +x/-z, B at +x/+z), so all modes, the range and the tutorial work everywhere. Raised areas are
+solid blocks reached by stairs (0.25 m steps you walk up); the nav grid stores a floor height per cell so bots
+climb and hold high ground too. Each map lives in `src/maps/<name>.js` and is built with the small builder API
+in `src/world.js` (`box`, `platform`, `stairs`, `house`, `container`, `rock`, `tree`, `decor`, … and `both()`
+for the mirrored half). Its `theme` sets sky, sun, fog, floor, wall materials, particles and distant backdrop.
 
 ## Modes
 
@@ -106,7 +117,8 @@ Callouts from your teammates appear under the minimap.
 ## Code map
 
 - `src/config.js` – all balance numbers: weapons, armor, economy, agents, bot difficulty
-- `src/world.js` – map layout (boxes), rendering, sky/lighting, raycasts, smoke line-of-sight, nav grid + A*
+- `src/world.js` – map loader + builder API, rendering, sky/lighting/backdrop, spatial grid, raycasts, smoke line-of-sight, height-aware nav grid + A*
+- `src/maps/*.js` – the five map layouts, sites, routes and themes
 - `src/textures.js` – procedural concrete/plaster/stone/wood/metal/roof/plank/paver/burlap textures, decals
 - `src/props.js` – visual detail for map props (house roofs/frames/lamps, vehicles, trees, sandbags, fences, stall, plaza, power lines), merged per material
 - `src/guns.js` – weapon models (first-person with hands, third-person for rigs)

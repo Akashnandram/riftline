@@ -1,12 +1,16 @@
 import * as THREE from 'three';
-import { boxes } from './world.js';
+import { boxesNear } from './world.js';
 import { buildGun } from './guns.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { applySkin } from './skins.js';
 
-// Articulated soldier rig built from primitives: a joint hierarchy (hips → spine → chest → neck →
-// head, shoulders → elbows → hands, thighs → knees → feet) animated procedurally, with two-bone
-// IK keeping both hands on the gun, and a verlet ragdoll on death.
+// Articulated soldier rig: a bone hierarchy (hips → spine → chest → neck → head, shoulders →
+// elbows → hands, thighs → knees → feet) animated procedurally, with two-bone IK keeping both hands
+// on the gun, and a verlet ragdoll on death.
+// The whole body is ONE skinned mesh (every part rigidly weighted to its bone) using one shared
+// material whose colour, roughness, metalness and glow come from vertex attributes — so a fully
+// detailed soldier costs a single draw call. Headgear is a second mesh so it can pop off.
 // Units are metres; feet at y=0, facing -Z. Head centre sits at ~1.62m to match the hitbox.
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -14,158 +18,297 @@ const DOWN = V(0, -1, 0), UP = V(0, 1, 0);
 const L_UP = 0.29, L_FORE = 0.27, L_THIGH = 0.44, L_SHIN = 0.43, HIP_Y = 0.95;
 
 // ---------------------------------------------------------------------------
-// Shared materials / geometry
+// Shared body material: per-vertex colour, roughness/metalness (rm) and emissive glow (emi)
 // ---------------------------------------------------------------------------
-const matCache = new Map();
-function mat(color, rough = 0.85, metal = 0, emissive = 0, ei = 0) {
-  const k = `${color}|${rough}|${metal}|${emissive}|${ei}`;
-  if (!matCache.has(k)) matCache.set(k, new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, emissive, emissiveIntensity: ei }));
-  return matCache.get(k);
+function bodyMaterial() {
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec2 rm;\nattribute vec3 emi;\nvarying vec2 vRM;\nvarying vec3 vEmi;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRM = rm; vEmi = emi;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vRM;\nvarying vec3 vEmi;')
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vRM.x;')
+      .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = vRM.y;')
+      .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance += vEmi;');
+  };
+  m.customProgramCacheKey = () => 'riftline-body';
+  return m;
 }
+const BODY_MAT = bodyMaterial();
+
+/** A "material" here is just the per-vertex values that get baked in. */
+const mat = (color, rough = 0.85, metal = 0, glow = 0) => ({ color: new THREE.Color(color), rough, metal, glow });
+
 const geoCache = new Map();
 function geo(key, make) { if (!geoCache.has(key)) geoCache.set(key, make()); return geoCache.get(key); }
-const capG = (r, l) => geo(`cap${r}|${l}`, () => new THREE.CapsuleGeometry(r, l, 4, 10));
+const capG = (r, l) => geo(`cap${r}|${l}`, () => new THREE.CapsuleGeometry(r, l, 3, 9));
 const boxG = (w, h, d) => geo(`box${w}|${h}|${d}`, () => new THREE.BoxGeometry(w, h, d));
+const rbG = (w, h, d, r = 0.02) => geo(`rb${w}|${h}|${d}|${r}`, () => new RoundedBoxGeometry(w, h, d, Math.max(w, h, d) > 0.25 ? 3 : 1, Math.min(r, Math.min(w, h, d) / 2.05)));
 const sphG = (r, ws = 16, hs = 12, ps = 0, pl = Math.PI * 2, ts = 0, tl = Math.PI) => geo(`sph${r}|${ws}|${hs}|${ps}|${pl}|${ts}|${tl}`, () => new THREE.SphereGeometry(r, ws, hs, ps, pl, ts, tl));
 const cylG = (rt, rb, h, s = 12) => geo(`cyl${rt}|${rb}|${h}|${s}`, () => new THREE.CylinderGeometry(rt, rb, h, s));
+const torG = (r, t) => geo(`tor${r}|${t}`, () => new THREE.TorusGeometry(r, t, 6, 16));
 
-function mesh(parent, g, m, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
-  const o = new THREE.Mesh(g, m);
-  o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.scale.set(sx, sy, sz);
-  o.castShadow = true; o.receiveShadow = true;
-  parent.add(o);
-  return o;
+// Parts are collected as plain records while building, then baked; no Mesh objects are created.
+let PARTS = null;
+function mesh(bone, g, m, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
+  PARTS.push({ bone, g, m, x, y, z, rx, ry, rz, sx, sy, sz });
 }
 function joint(parent, x, y, z, name) {
-  const j = new THREE.Group(); j.position.set(x, y, z); j.name = name; parent.add(j); return j;
+  const j = new THREE.Bone(); j.position.set(x, y, z); j.name = name; parent.add(j); return j;
 }
-/** Capsule limb hanging down from its joint. */
-function limb(j, r, len, m) { return mesh(j, capG(r, len), m, 0, -len / 2, 0); }
+/** Tapered limb hanging down from its joint: capsule core + a slightly narrower lower half. */
+function limb(j, r, len, m, taper = 0.85) {
+  mesh(j, capG(r, len * 0.55), m, 0, -len * 0.3, 0);
+  mesh(j, capG(r * taper, len * 0.5), m, 0, -len * 0.68, 0);
+}
 
 // team fatigues + agent flavour
 function palette(teamColor, agent) {
   const team = new THREE.Color(teamColor);
-  const cloth = team.clone().lerp(new THREE.Color(0x3a3d42), 0.9).getHex();
-  const cloth2 = new THREE.Color(cloth).multiplyScalar(0.8).getHex();
+  // muted fatigues (jacket a touch lighter than trousers); the team reads from vest, bands and stripes
+  const cloth = team.clone().lerp(new THREE.Color(0x4a4d50), 0.93).getHex();
+  const cloth2 = team.clone().lerp(new THREE.Color(0x34373a), 0.95).getHex();
+  const ac = new THREE.Color(agent.color).getHex();
   return {
     cloth: mat(cloth, 0.95), cloth2: mat(cloth2, 0.95),
-    vest: mat(team.clone().lerp(new THREE.Color(0x3b3f45), 0.72).getHex(), 0.8),
-    team: mat(teamColor, 0.7),
-    gear: mat(0x26282c, 0.75, 0.1),
+    vest: mat(team.clone().lerp(new THREE.Color(0x3b3f45), 0.62).getHex(), 0.8),
+    webbing: mat(team.clone().lerp(new THREE.Color(0x2a2c30), 0.8).getHex(), 0.9),
+    team: mat(teamColor, 0.6),
+    gear: mat(0x26282c, 0.7, 0.1),
     strap: mat(0x1a1b1e, 0.9),
-    boot: mat(0x1e1c1a, 0.8),
-    glove: mat(0x222428, 0.9),
-    skin: mat({ volt: 0xc68a62, haze: 0xe0b896, aegis: 0x8d5a3b, hawk: 0xd9a37f }[agent.key] ?? 0xd2a07c, 0.7),
-    accent: mat(new THREE.Color(agent.color).getHex(), 0.5, 0.1, new THREE.Color(agent.color).getHex(), 0.35),
-    glow: mat(new THREE.Color(agent.color).getHex(), 0.3, 0, new THREE.Color(agent.color).getHex(), 1.6),
-    metal: mat(0x4a4f57, 0.4, 0.8),
+    boot: mat(0x24201c, 0.65), sole: mat(0x111111, 0.9),
+    glove: mat(0x222428, 0.8),
+    skin: mat({ volt: 0xc68a62, haze: 0xe0b896, aegis: 0x8d5a3b, hawk: 0xd9a37f }[agent.key] ?? 0xd2a07c, 0.55),
+    lip: mat(new THREE.Color({ volt: 0xc68a62, haze: 0xe0b896, aegis: 0x8d5a3b, hawk: 0xd9a37f }[agent.key] ?? 0xd2a07c).multiplyScalar(0.78).getHex(), 0.5),
+    eye: mat(0x101012, 0.2), brow: mat(0x241a12, 0.9),
+    accent: mat(ac, 0.5, 0.1, 0.35),
+    glow: mat(ac, 0.3, 0, 1.6),
+    metal: mat(0x4a4f57, 0.35, 0.85),
+    plate: mat(team.clone().lerp(new THREE.Color(0x555a62), 0.6).getHex(), 0.45, 0.6),
   };
+}
+
+function face(head, P) {
+  mesh(head, sphG(0.108, 20, 16), P.skin, 0, 0.11, 0, 0, 0, 0, 0.9, 1.08, 1.0);         // cranium
+  mesh(head, rbG(0.15, 0.085, 0.12, 0.035), P.skin, 0, 0.045, -0.025);                  // jaw
+  mesh(head, rbG(0.03, 0.045, 0.035, 0.012), P.skin, 0, 0.1, -0.108);                   // nose
+  for (const s of [-1, 1]) {
+    mesh(head, sphG(0.028, 8, 6), P.skin, s * 0.098, 0.105, 0.005, 0, 0, 0, 0.45, 1, 0.8);  // ears
+    mesh(head, sphG(0.012, 8, 6), P.eye, s * 0.036, 0.128, -0.095);                    // eyes
+    mesh(head, boxG(0.034, 0.008, 0.012), P.brow, s * 0.037, 0.148, -0.097, 0, 0, s * -0.12);
+  }
+  mesh(head, boxG(0.045, 0.008, 0.01), P.lip, 0, 0.055, -0.1);
 }
 
 function headgear(head, agent, P) {
   const hg = new THREE.Group(); head.add(hg);
   const k = agent.key;
   if (k === 'aegis') {          // full ballistic helmet with glowing visor
-    mesh(hg, sphG(0.135, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.6), P.gear, 0, 0.12, 0.005);
-    mesh(hg, boxG(0.2, 0.05, 0.03), P.glow, 0, 0.11, -0.115);
-    mesh(hg, boxG(0.03, 0.06, 0.05), P.metal, 0.13, 0.1, -0.02);
-    mesh(hg, boxG(0.03, 0.06, 0.05), P.metal, -0.13, 0.1, -0.02);
+    mesh(hg, sphG(0.135, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.6), P.gear, 0, 0.12, 0.005);
+    mesh(hg, rbG(0.21, 0.055, 0.035, 0.015), P.glow, 0, 0.115, -0.115);
+    for (const s of [-1, 1]) mesh(hg, rbG(0.03, 0.07, 0.06, 0.01), P.metal, s * 0.132, 0.1, -0.02);
+    mesh(hg, rbG(0.06, 0.03, 0.04, 0.01), P.metal, 0, 0.255, -0.06);                   // NVG mount
     return { group: hg, pops: true };
   }
   if (k === 'haze') {           // hood + face mask
     mesh(hg, sphG(0.14, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.62), P.cloth2, 0, 0.115, 0.02, -0.15);
-    mesh(hg, boxG(0.17, 0.08, 0.05), P.strap, 0, 0.065, -0.095);
-    mesh(hg, boxG(0.14, 0.015, 0.02), P.glow, 0, 0.115, -0.106);
+    mesh(hg, rbG(0.17, 0.08, 0.05, 0.02), P.strap, 0, 0.065, -0.095);
+    mesh(hg, boxG(0.14, 0.015, 0.02), P.glow, 0, 0.12, -0.106);
     return { group: hg, pops: true };
   }
   if (k === 'hawk') {           // cap + headset
     mesh(hg, sphG(0.122, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), P.vest, 0, 0.13, 0);
-    mesh(hg, boxG(0.16, 0.012, 0.12), P.vest, 0, 0.13, -0.12, 0.12);
-    mesh(hg, cylG(0.035, 0.035, 0.03), P.gear, 0.118, 0.1, 0, 0, 0, Math.PI / 2);
-    mesh(hg, cylG(0.035, 0.035, 0.03), P.gear, -0.118, 0.1, 0, 0, 0, Math.PI / 2);
+    mesh(hg, rbG(0.16, 0.014, 0.12, 0.006), P.vest, 0, 0.13, -0.12, 0.12);
+    for (const s of [-1, 1]) mesh(hg, cylG(0.036, 0.036, 0.03), P.gear, s * 0.118, 0.1, 0, 0, 0, Math.PI / 2);
+    mesh(hg, torG(0.115, 0.008), P.gear, 0, 0.12, 0, 0, Math.PI / 2, 0, 1, 1.15, 1);
     mesh(hg, boxG(0.012, 0.012, 0.09), P.accent, 0.12, 0.07, -0.06);
     return { group: hg, pops: true };
   }
   // volt: spiked hair + goggles (hair doesn't pop off)
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2;
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2;
     mesh(hg, cylG(0, 0.04, 0.12, 6), P.accent, Math.cos(a) * 0.05, 0.22, Math.sin(a) * 0.05 + 0.02, Math.sin(a) * 0.5, 0, -Math.cos(a) * 0.5);
   }
   mesh(hg, sphG(0.118, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.45), mat(0x2a1d14, 0.9), 0, 0.12, 0.01);
-  mesh(hg, boxG(0.2, 0.035, 0.03), P.strap, 0, 0.17, -0.1, -0.3);
-  mesh(hg, boxG(0.07, 0.035, 0.02), P.glow, -0.04, 0.175, -0.112, -0.3);
-  mesh(hg, boxG(0.07, 0.035, 0.02), P.glow, 0.04, 0.175, -0.112, -0.3);
+  mesh(hg, rbG(0.21, 0.035, 0.03, 0.01), P.strap, 0, 0.17, -0.1, -0.3);
+  for (const s of [-1, 1]) mesh(hg, rbG(0.07, 0.04, 0.025, 0.01), P.glow, s * 0.04, 0.175, -0.112, -0.3);
   return { group: hg, pops: false };
+}
+
+function torso(hips, spine, chest, agent, P) {
+  // pelvis, belt, holster and dump pouch
+  mesh(hips, rbG(0.33, 0.18, 0.21, 0.05), P.cloth, 0, 0, 0);
+  mesh(hips, rbG(0.35, 0.05, 0.23, 0.015), P.strap, 0, 0.07, 0);
+  mesh(hips, rbG(0.05, 0.04, 0.02, 0.008), P.metal, 0, 0.07, -0.118);                 // buckle
+  mesh(hips, rbG(0.07, 0.14, 0.06, 0.015), P.gear, 0.19, -0.03, -0.02);                // holster
+  mesh(hips, rbG(0.035, 0.06, 0.035, 0.01), P.strap, 0.19, 0.06, -0.02);               // pistol grip
+  mesh(hips, rbG(0.11, 0.09, 0.07, 0.025), P.webbing, -0.12, -0.02, 0.1);              // dump pouch
+  // waist + chest
+  mesh(spine, rbG(0.29, 0.21, 0.19, 0.06), P.cloth, 0, 0.08, 0);
+  mesh(chest, rbG(0.36, 0.31, 0.21, 0.07), P.cloth, 0, 0.12, 0);
+  // plate carrier: front/back plates, cummerbund, webbing rows, pouches, radio
+  mesh(chest, rbG(0.32, 0.27, 0.05, 0.02), P.vest, 0, 0.1, -0.12);
+  mesh(chest, rbG(0.32, 0.29, 0.05, 0.02), P.vest, 0, 0.1, 0.115);
+  mesh(chest, rbG(0.39, 0.13, 0.22, 0.03), P.vest, 0, 0.02, 0);
+  for (let r = 0; r < 3; r++) mesh(chest, boxG(0.3, 0.008, 0.008), P.webbing, 0, 0.05 + r * 0.05, -0.147);
+  for (let i = -1; i <= 1; i++) mesh(chest, rbG(0.085, 0.1, 0.05, 0.015), P.gear, i * 0.098, 0.02, -0.165);
+  mesh(chest, rbG(0.12, 0.035, 0.012, 0.006), P.team, 0.06, 0.215, -0.15);            // name tape
+  mesh(chest, rbG(0.05, 0.08, 0.04, 0.012), P.gear, -0.13, 0.17, -0.15);              // radio
+  mesh(chest, cylG(0.005, 0.005, 0.22, 5), P.strap, -0.145, 0.32, -0.15);              // antenna
+  mesh(chest, rbG(0.3, 0.025, 0.27, 0.01), P.team, 0, 0.225, 0);                        // team stripe
+  // collar
+  mesh(chest, torG(0.075, 0.025), P.vest, 0, 0.285, 0, Math.PI / 2, 0, 0, 1.05, 0.9, 1);
+  // backpack + straps + hydration tube
+  mesh(chest, rbG(0.26, 0.3, 0.13, 0.04), P.gear, 0, 0.1, 0.2);
+  mesh(chest, rbG(0.2, 0.08, 0.06, 0.02), P.webbing, 0, 0.0, 0.28);
+  mesh(chest, boxG(0.04, 0.04, 0.12), P.accent, 0.1, 0.18, 0.2);
+  for (const s of [-1, 1]) mesh(chest, rbG(0.05, 0.3, 0.025, 0.008), P.strap, s * 0.12, 0.13, -0.142, 0, 0, s * 0.1);
+  mesh(chest, cylG(0.008, 0.008, 0.3, 5), P.strap, 0.08, 0.15, -0.155, 0.2, 0, 0.3);
+  if (agent.key === 'aegis') mesh(chest, rbG(0.3, 0.22, 0.03, 0.02), P.plate, 0, 0.12, -0.155);
 }
 
 const GHOST_MAT = new THREE.MeshBasicMaterial({ color: 0xff3355, transparent: true, opacity: 0.55, depthTest: false });
 const MARKER_MAT = new Map();
 
 // ---------------------------------------------------------------------------
+// Bake: parts → one geometry with skinIndex/skinWeight and per-vertex material values
+// ---------------------------------------------------------------------------
+const _pm = new THREE.Matrix4(), _q0 = new THREE.Quaternion(), _e0 = new THREE.Euler(), _p0 = V(), _s0 = V();
+function bake(parts, boneIndex, skinned) {
+  const geos = [];
+  for (const pt of parts) {
+    const g0 = pt.g.index ? pt.g.toNonIndexed() : pt.g.clone();
+    for (const k of Object.keys(g0.attributes)) if (k !== 'position' && k !== 'normal') g0.deleteAttribute(k);
+    _pm.compose(_p0.set(pt.x, pt.y, pt.z), _q0.setFromEuler(_e0.set(pt.rx, pt.ry, pt.rz)), _s0.set(pt.sx, pt.sy, pt.sz));
+    // into the bone's bind-pose space, then into rig (root) space
+    _pm.premultiply(pt.bone.matrixWorld);
+    g0.applyMatrix4(_pm);
+    const n = g0.attributes.position.count;
+    const col = new Float32Array(n * 3), rm = new Float32Array(n * 2), emi = new Float32Array(n * 3);
+    const c = pt.m.color, gl = pt.m.glow;
+    // baked shading: undersides and the lower part of each piece a little darker (cheap fake AO)
+    g0.computeBoundingBox();
+    const bb = g0.boundingBox, hy = Math.max(1e-4, bb.max.y - bb.min.y), pos = g0.attributes.position, nor = g0.attributes.normal;
+    for (let i = 0; i < n; i++) {
+      const ao = gl > 0.5 ? 1 : 1 - 0.28 * Math.max(0, -nor.getY(i)) - 0.1 * (1 - (pos.getY(i) - bb.min.y) / hy);
+      col[i * 3] = c.r * ao; col[i * 3 + 1] = c.g * ao; col[i * 3 + 2] = c.b * ao;
+      rm[i * 2] = pt.m.rough; rm[i * 2 + 1] = pt.m.metal;
+      emi[i * 3] = c.r * gl; emi[i * 3 + 1] = c.g * gl; emi[i * 3 + 2] = c.b * gl;
+    }
+    g0.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g0.setAttribute('rm', new THREE.BufferAttribute(rm, 2));
+    g0.setAttribute('emi', new THREE.BufferAttribute(emi, 3));
+    if (skinned) {
+      const si = new Uint16Array(n * 4), sw = new Float32Array(n * 4), b = boneIndex.get(pt.bone);
+      for (let i = 0; i < n; i++) { si[i * 4] = b; sw[i * 4] = 1; }
+      g0.setAttribute('skinIndex', new THREE.BufferAttribute(si, 4));
+      g0.setAttribute('skinWeight', new THREE.BufferAttribute(sw, 4));
+    }
+    geos.push(g0);
+  }
+  const merged = mergeGeometries(geos, false);
+  for (const g of geos) g.dispose();
+  return merged;
+}
+
+// ---------------------------------------------------------------------------
 // Build
 // ---------------------------------------------------------------------------
+const rigCache = new Map();   // teamColor|agent → { body, head } baked geometries
 export function buildCharacter(teamColor, agent) {
   const P = palette(teamColor, agent);
   const root = new THREE.Group();
+  const key = teamColor + '|' + agent.key;
+  const cached = rigCache.get(key);
+  PARTS = [];
 
   const hips = joint(root, 0, HIP_Y, 0, 'hips');
-  mesh(hips, boxG(0.32, 0.17, 0.2), P.cloth, 0, 0, 0);
-  mesh(hips, boxG(0.34, 0.05, 0.22), P.strap, 0, 0.07, 0);           // belt
-  mesh(hips, boxG(0.07, 0.1, 0.06), P.gear, 0.16, 0.0, -0.04);        // holster pouch
-
   const spine = joint(hips, 0, 0.05, 0, 'spine');
-  mesh(spine, boxG(0.29, 0.2, 0.19), P.cloth, 0, 0.08, 0);
   const chest = joint(spine, 0, 0.16, 0, 'chest');
-  mesh(chest, boxG(0.36, 0.3, 0.21), P.cloth, 0, 0.12, 0);
-  // plate carrier + pouches + backpack
-  mesh(chest, boxG(0.38, 0.27, 0.26), P.vest, 0, 0.1, 0);
-  for (let i = -1; i <= 1; i++) mesh(chest, boxG(0.085, 0.1, 0.05), P.gear, i * 0.1, 0.02, -0.15);
-  mesh(chest, boxG(0.3, 0.025, 0.27), P.team, 0, 0.215, 0);           // team stripe across shoulders
-  mesh(chest, boxG(0.26, 0.28, 0.12), P.gear, 0, 0.1, 0.18);          // backpack
-  mesh(chest, boxG(0.04, 0.04, 0.12), P.accent, 0.1, 0.18, 0.18);      // agent tag on pack
-  mesh(chest, boxG(0.05, 0.3, 0.03), P.strap, 0.12, 0.13, -0.14, 0, 0, 0.1);
-  mesh(chest, boxG(0.05, 0.3, 0.03), P.strap, -0.12, 0.13, -0.14, 0, 0, -0.1);
-
   const neck = joint(chest, 0, 0.27, 0, 'neck');
-  mesh(neck, cylG(0.055, 0.06, 0.12), P.skin, 0, 0.04, 0);
   const head = joint(neck, 0, 0.09, 0, 'head');
-  mesh(head, sphG(0.11, 18, 14), P.skin, 0, 0.11, 0, 0, 0, 0, 0.92, 1.08, 1);
-  mesh(head, boxG(0.06, 0.03, 0.03), P.skin, 0, 0.09, -0.105);        // nose/jaw hint
-  const hg = headgear(head, agent, P);
+  if (!cached) {
+    torso(hips, spine, chest, agent, P);
+    mesh(neck, cylG(0.052, 0.06, 0.12), P.skin, 0, 0.04, 0);
+    face(head, P);
+  }
 
   const sh = [], el = [], hand = [];
   for (const s of [-1, 1]) {
     const shoulder = joint(chest, s * 0.215, 0.22, 0, 'shoulder');
-    mesh(shoulder, sphG(0.07, 12, 10), agent.key === 'aegis' ? P.metal : P.vest, 0, -0.01, 0, 0, 0, 0, 1.15, 0.9, 1.1);
-    limb(shoulder, 0.056, L_UP, P.cloth);
-    mesh(shoulder, boxG(0.115, 0.04, 0.115), P.team, 0, -0.1, 0);       // armband
     const elbow = joint(shoulder, 0, -L_UP, 0, 'elbow');
-    limb(elbow, 0.05, L_FORE, P.cloth2);
     const h = joint(elbow, 0, -L_FORE, 0, 'hand');
-    mesh(h, boxG(0.07, 0.09, 0.05), P.glove, 0, -0.035, 0);
+    if (!cached) {
+      mesh(shoulder, sphG(0.066, 12, 10), agent.key === 'aegis' ? P.plate : P.cloth, 0, -0.01, 0, 0, 0, 0, 1.08, 0.9, 1.05);
+      limb(shoulder, 0.057, L_UP, P.cloth, 0.9);
+      mesh(shoulder, rbG(0.12, 0.045, 0.12, 0.015), P.team, 0, -0.1, 0);                 // armband
+      limb(elbow, 0.05, L_FORE, P.cloth2, 0.82);
+      mesh(elbow, rbG(0.085, 0.07, 0.09, 0.025), P.gear, 0, -0.01, 0.02);                // elbow pad
+      mesh(elbow, cylG(0.046, 0.042, 0.06), P.glove, 0, -L_FORE + 0.03, 0);               // glove cuff
+      // glove: palm, finger block, thumb
+      mesh(h, rbG(0.07, 0.075, 0.045, 0.015), P.glove, 0, -0.03, 0);
+      mesh(h, rbG(0.066, 0.05, 0.04, 0.014), P.glove, 0, -0.085, -0.008, 0.35);
+      mesh(h, rbG(0.022, 0.05, 0.022, 0.008), P.glove, s * -0.04, -0.035, -0.02, 0, 0, s * 0.5);
+    }
     sh.push(shoulder); el.push(elbow); hand.push(h);
   }
 
   const thigh = [], knee = [], foot = [];
   for (const s of [-1, 1]) {
     const t = joint(hips, s * 0.1, -0.03, 0, 'thigh');
-    limb(t, 0.078, L_THIGH, P.cloth);
-    mesh(t, boxG(0.06, 0.1, 0.05), P.gear, s * 0.08, -0.2, 0);          // thigh pocket
     const k = joint(t, 0, -L_THIGH, 0, 'knee');
-    limb(k, 0.062, L_SHIN, P.cloth2);
-    mesh(k, boxG(0.1, 0.1, 0.05), P.gear, 0, -0.02, -0.06);             // knee pad
     const f = joint(k, 0, -L_SHIN, 0, 'foot');
-    mesh(f, boxG(0.11, 0.09, 0.26), P.boot, 0, -0.035, -0.05);
+    if (!cached) {
+      limb(t, 0.08, L_THIGH, P.cloth, 0.82);
+      mesh(t, rbG(0.06, 0.11, 0.07, 0.02), P.cloth2, s * 0.075, -0.22, 0);                  // cargo pocket
+      mesh(t, rbG(0.05, 0.025, 0.08, 0.008), P.strap, s * 0.07, -0.08, 0);                  // leg strap
+      limb(k, 0.063, L_SHIN, P.cloth2, 0.85);
+      mesh(k, rbG(0.105, 0.11, 0.06, 0.028), P.gear, 0, -0.03, -0.06);                      // knee pad
+      // boot: shaft, foot, toe cap, sole
+      mesh(f, cylG(0.06, 0.065, 0.12), P.boot, 0, 0.0, 0.0);
+      mesh(f, rbG(0.11, 0.08, 0.24, 0.03), P.boot, 0, -0.04, -0.05);
+      mesh(f, rbG(0.105, 0.05, 0.07, 0.022), P.boot, 0, -0.05, -0.15);
+      mesh(f, rbG(0.12, 0.02, 0.27, 0.008), P.sole, 0, -0.082, -0.055);
+    }
     thigh.push(t); knee.push(k); foot.push(f);
   }
 
   const gunMount = joint(chest, 0.13, 0.15, -0.14, 'gunMount');
+  const bones = [hips, spine, chest, neck, head, ...sh, ...el, ...hand, ...thigh, ...knee, ...foot, gunMount];
+  root.updateMatrixWorld(true);
+
+  // headgear: its own little mesh under the head bone (so a headshot can knock it off)
+  const hgRec = cached ? null : (() => { const before = PARTS.length; const r = headgear(head, agent, P); return { r, parts: PARTS.splice(before) }; })();
+  let entry = cached;
+  if (!entry) {
+    const boneIndex = new Map(bones.map((b, i) => [b, i]));
+    const hgGroup = hgRec.r.group;
+    hgGroup.updateMatrixWorld(true);
+    // headgear parts are baked relative to the head-gear group (identity under the head bone)
+    const inv = new THREE.Matrix4().copy(hgGroup.matrixWorld).invert();
+    const hgParts = hgRec.parts.map((p) => ({ ...p, bone: { matrixWorld: new THREE.Matrix4().multiplyMatrices(inv, p.bone.matrixWorld) } }));
+    entry = { body: bake(PARTS, boneIndex, true), head: bake(hgParts, null, false), pops: hgRec.r.pops };
+    head.remove(hgGroup);
+    rigCache.set(key, entry);
+  }
+  PARTS = null;
+
+  const skeleton = new THREE.Skeleton(bones);
+  const body = new THREE.SkinnedMesh(entry.body, BODY_MAT);
+  body.castShadow = true; body.receiveShadow = true;
+  body.boundingSphere = new THREE.Sphere(V(0, 0.95, 0), 1.4);   // fixed bounds: no per-vertex skinning pass on the CPU
+  root.add(body);
+  body.bind(skeleton);
+
+  const hg = new THREE.Group(); head.add(hg);
+  const hgMesh = new THREE.Mesh(entry.head, BODY_MAT);
+  hgMesh.castShadow = true; hg.add(hgMesh);
 
   // through-wall reveal silhouette + ally marker
-  const ghostMat = GHOST_MAT;
   const ghost = new THREE.Group();
-  const gb = new THREE.Mesh(capG(0.25, 0.9), ghostMat); gb.position.y = 0.8;
-  const gh = new THREE.Mesh(sphG(0.14), ghostMat); gh.position.y = 1.62;
+  const gb = new THREE.Mesh(capG(0.25, 0.9), GHOST_MAT); gb.position.y = 0.8;
+  const gh = new THREE.Mesh(sphG(0.14), GHOST_MAT); gh.position.y = 1.62;
   ghost.add(gb, gh);
   ghost.renderOrder = gb.renderOrder = gh.renderOrder = 999;
   ghost.visible = false;
@@ -175,62 +318,17 @@ export function buildCharacter(teamColor, agent) {
   marker.position.y = 2.2; marker.renderOrder = 998; marker.visible = false;
   root.add(marker);
 
-  // fewer draw calls: merge each joint's own meshes by material (joints themselves stay separate
-  // so animation, IK and ragdolls still work)
-  for (const j of [hips, spine, chest, neck, head, hg.group, ...sh, ...el, ...hand, ...thigh, ...knee, ...foot]) mergeJoint(j);
-
   root.userData = {
-    hips, spine, chest, neck, head, sh, el, hand, thigh, knee, foot, gunMount,
-    headgear: hg, gun: null, gunKey: null, ghost, marker, phase: Math.random() * 6,
-    flinch: V(), lean: 0, teamColor, ragdoll: null,
+    hips, spine, chest, neck, head, sh, el, hand, thigh, knee, foot, gunMount, body, skeleton,
+    headgear: { group: hg, pops: entry.pops }, gun: null, gunKey: null, ghost, marker, phase: Math.random() * 6,
+    flinch: V(), lean: 0, teamColor, ragdoll: null, land: 0, wasGround: true, lastYaw: 0, turnPhase: 0, animAcc: 0,
   };
   return root;
 }
 
-const mergeCache = new Map();
-// one shared material for everything that isn't glowing: colours are baked per vertex
-const BODY_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.08 });
-const plain = (m) => m.isMeshStandardMaterial && !m.transparent && !m.map && (!m.emissive || m.emissive.getHex() === 0 || m.emissiveIntensity === 0);
-
-function bakedGeometry(list, withColor) {
-  const geos = list.map((o) => {
-    o.updateMatrix();
-    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
-    for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
-    if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
-    if (withColor) {
-      const c = o.material.color, n = g.attributes.position.count, arr = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
-      g.setAttribute('color', new THREE.Float32BufferAttribute(arr, 3));
-    }
-    return g.applyMatrix4(o.matrix);
-  });
-  const merged = mergeGeometries(geos, false);
-  for (const g of geos) g.dispose();
-  return merged;
-}
-
-/** Collapse a joint's meshes: all plain-coloured parts → one vertex-coloured mesh; glowing parts per material. */
-function mergeJoint(j) {
-  const meshes = j.children.filter((o) => o.isMesh);
-  if (meshes.length < 2) return;
-  const flat = meshes.filter((o) => plain(o.material));
-  const rest = meshes.filter((o) => !plain(o.material) && !o.material.transparent);
-  const groups = [];
-  if (flat.length) groups.push([BODY_MAT, flat, true]);
-  const byMat = new Map();
-  for (const o of rest) { if (!byMat.has(o.material)) byMat.set(o.material, []); byMat.get(o.material).push(o); }
-  for (const [m, list] of byMat) if (list.length > 1) groups.push([m, list, false]);
-  for (const [mat, list, color] of groups) {
-    if (list.length < 2 && !color) continue;
-    const key = (color ? 'vc' : mat.uuid) + list.map((o) => o.geometry.uuid + o.material.uuid + o.position.toArray().join() + o.rotation.toArray().join() + o.scale.toArray().join()).join('|');
-    let geo = mergeCache.get(key);
-    if (!geo) { geo = bakedGeometry(list, color); mergeCache.set(key, geo); }
-    for (const o of list) j.remove(o);
-    const m = new THREE.Mesh(geo, mat);
-    m.castShadow = true; m.receiveShadow = true;
-    j.add(m);
-  }
+/** Free a rig's per-instance GPU data (the bone texture). Geometry is shared and kept. */
+export function disposeCharacter(root) {
+  root?.userData?.skeleton?.dispose();
 }
 
 export function setCharacterGun(root, key, skin = 'default') {
@@ -281,19 +379,29 @@ export function animateCharacter(root, s, dt) {
   const u = root.userData;
   const fx = -Math.sin(s.yaw), fz = -Math.cos(s.yaw), rx = Math.cos(s.yaw), rz = -Math.sin(s.yaw);
   const vf = s.vel.x * fx + s.vel.z * fz, vs = s.vel.x * rx + s.vel.z * rz;
-  const speed = Math.hypot(vf, vs);
+  let speed = Math.hypot(vf, vs);
+  // turning on the spot: shuffle the feet a little instead of sliding
+  const yawRate = dt > 0 ? Math.abs(Math.atan2(Math.sin(s.yaw - u.lastYaw), Math.cos(s.yaw - u.lastYaw))) / dt : 0;
+  u.lastYaw = s.yaw;
+  if (speed < 0.6 && yawRate > 1.2 && s.onGround) speed = Math.min(2.2, yawRate * 0.5);
   const amp = Math.min(1, speed / 6.5);
   u.phase += speed * dt * 1.9;
-  const fK = speed > 0.1 ? vf / speed : 0, sK = speed > 0.1 ? vs / speed : 0;
+  const fK = speed > 0.1 ? vf / (Math.hypot(vf, vs) || 1) : 0, sK = speed > 0.1 ? vs / (Math.hypot(vf, vs) || 1) : 0;
   const back = fK < -0.2 ? -1 : 1;
   const c = s.crouch || 0;
+  // landing: knees soak up the impact for a moment
+  if (s.onGround && !u.wasGround) u.land = Math.min(1, u.land + 0.8);
+  u.wasGround = s.onGround;
+  u.land = Math.max(0, u.land - dt * 4);
+  const land = Math.sin(u.land * Math.PI * 0.5);
 
   for (let i = 0; i < 2; i++) {
     const ph = u.phase + i * Math.PI;
     const swing = Math.sin(ph) * 0.6 * amp;
     const t = u.thigh[i], k = u.knee[i], f = u.foot[i];
     if (!s.onGround) {
-      t.rotation.set(0.45 - i * 0.3, 0, 0); k.rotation.set(-0.9 + i * 0.3, 0, 0); f.rotation.set(0.2, 0, 0);
+      // airborne: tuck one leg, reach with the other
+      t.rotation.set(0.5 - i * 0.35, 0, i ? 0.04 : -0.04); k.rotation.set(-1.0 + i * 0.35, 0, 0); f.rotation.set(0.25, 0, 0);
       continue;
     }
     t.rotation.set(swing * (Math.abs(fK) + 0.25 * Math.abs(sK)) * back, 0, swing * sK * 0.55 + (i ? 0.03 : -0.03));
@@ -306,10 +414,15 @@ export function animateCharacter(root, s, dt) {
       k.rotation.x += (-2.0 + lift * 0.3 - k.rotation.x) * c;
       f.rotation.x += (0.85 - f.rotation.x) * c;
     }
+    if (land > 0) { t.rotation.x += land * 0.55; k.rotation.x -= land * 1.0; f.rotation.x += land * 0.45; }
   }
 
+  // pelvis: dips twice per stride, sways side to side over the planted foot
   const bobY = Math.abs(Math.sin(u.phase)) * 0.035 * amp;
-  u.hips.position.y = HIP_Y - bobY * (1 - c * 0.6) - amp * 0.03 - (s.onGround ? 0 : 0.05) - 0.42 * c;
+  const idle = 1 - Math.min(1, speed / 1.5);
+  const tNow = performance.now() / 1000;
+  u.hips.position.y = HIP_Y - bobY * (1 - c * 0.6) - amp * 0.03 - (s.onGround ? 0 : 0.05) - 0.42 * c - land * 0.12;
+  u.hips.position.x = Math.cos(u.phase) * 0.025 * amp + Math.sin(tNow * 0.6 + u.phase) * 0.008 * idle;   // weight shift at rest
   u.hips.rotation.y = Math.sin(u.phase) * 0.12 * amp;
   // strafing lean, running forward tilt
   u.lean += (sK * amp * 0.12 - u.lean) * Math.min(1, dt * 8);
@@ -320,17 +433,20 @@ export function animateCharacter(root, s, dt) {
   const breathe = Math.sin(performance.now() / 650) * 0.012;
   const pitch = THREE.MathUtils.clamp(s.pitch, -1.0, 1.0);
   u.spine.rotation.set(pitch * 0.35 + fK * amp * 0.12 + u.flinch.x - 0.22 * c, -u.hips.rotation.y * 0.8 + u.flinch.z, u.lean * 0.8 + u.flinch.y);
-  u.chest.rotation.set(pitch * 0.45 + breathe + 0.12 * c, -u.hips.rotation.y * 0.2, 0);
-  u.neck.rotation.set(pitch * 0.15, 0, -u.lean * 0.6);
-  u.head.rotation.set(pitch * 0.1 - u.flinch.x * 1.5, 0, 0);
+  u.chest.rotation.set(pitch * 0.45 + breathe + 0.12 * c + land * 0.12, -u.hips.rotation.y * 0.2, -u.hips.rotation.z * 0.5);
+  // head stays level and on target while the body bobs
+  u.neck.rotation.set(pitch * 0.15 - land * 0.1, -u.spine.rotation.y * 0.5, -u.lean * 0.6);
+  u.head.rotation.set(pitch * 0.1 - u.flinch.x * 1.5 - fK * amp * 0.08, 0, -u.hips.rotation.z * 0.6);
 
   // gun: recoil kick + reload tilt
   if (!u.gun) return;
   const g = u.gun, gd = g.userData;
   const rl = s.reload;
   const tilt = rl >= 0 ? Math.sin(Math.min(1, rl * 1.15) * Math.PI) : 0;
-  g.position.set(0, -tilt * 0.06, s.kick * 0.04);
-  g.rotation.set(s.kick * 0.08 - tilt * 0.35, 0, tilt * 0.6);
+  // the gun rides with the stride a little
+  const sway = Math.sin(u.phase * 2) * 0.012 * amp, swayX = Math.cos(u.phase) * 0.01 * amp;
+  g.position.set(swayX, -tilt * 0.06 + sway - land * 0.03, s.kick * 0.04);
+  g.rotation.set(s.kick * 0.08 - tilt * 0.35 + sway * 2, swayX * 2, tilt * 0.6);
   if (gd.mag) {
     const out = rl > 0.12 && rl < 0.7 ? Math.min(1, (rl - 0.12) / 0.15) * (rl < 0.5 ? 1 : 1 - (rl - 0.5) / 0.2) : 0;
     gd.mag.position.copy(gd.magBase); gd.mag.position.y -= out * 0.25;
@@ -383,7 +499,7 @@ function collidePoint(p, prev, r) {
     // ground friction
     prev.x += (p.x - prev.x) * 0.35; prev.z += (p.z - prev.z) * 0.35;
   }
-  for (const b of boxes) {
+  for (const b of boxesNear(p.x - r, p.z - r, p.x + r, p.z + r)) {
     if (p.x > b.minX - r && p.x < b.maxX + r && p.y > b.minY - r && p.y < b.maxY + r && p.z > b.minZ - r && p.z < b.maxZ + r) {
       const pen = [[p.x - (b.minX - r), 'x', b.minX - r], [(b.maxX + r) - p.x, 'x', b.maxX + r], [p.y - (b.minY - r), 'y', b.minY - r],
         [(b.maxY + r) - p.y, 'y', b.maxY + r], [p.z - (b.minZ - r), 'z', b.minZ - r], [(b.maxZ + r) - p.z, 'z', b.maxZ + r]];
@@ -433,6 +549,7 @@ export function startRagdoll(root, scene, vel, dir, head) {
     props.push(makeProp(h, push.clone().multiplyScalar(4).add(V(0, 3.5, 0)), 0.1));
   }
   root.visible = true;
+  if (u.body) u.body.frustumCulled = false;
   u.ghost.visible = false; u.marker.visible = false;
   u.ragdoll = { pts, prev, rest, holder, t: 0, sleep: false };
   ragdolls.push(u.ragdoll);

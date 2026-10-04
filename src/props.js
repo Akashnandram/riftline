@@ -25,7 +25,21 @@ const P = {
   fenceWood: std(0x8b6a47, 0.85),
   light: std(0xfff5d0, 0.3, 0, { emissive: 0xffe2a0, emissiveIntensity: 0.6 }),
   redLight: std(0x8a1010, 0.4, 0, { emissive: 0x6a0000, emissiveIntensity: 0.6 }),
+  palmLeaf: std(0x5f8a3a, 0.85, 0, { side: THREE.DoubleSide }),
+  palmBark: std(0x8a6a48, 0.95),
+  pine: [std(0x2f4f3a, 0.9), std(0x3a5d43, 0.9)],
+  jungle: [std(0x2d5a2a, 0.9), std(0x3d6e2e, 0.9), std(0x244a26, 0.9)],
+  cactus: std(0x4f7a45, 0.8),
+  rail: std(0x30343a, 0.45, 0.8),
+  steel: std(0x6c737c, 0.5, 0.7),
+  yellow: std(0xd9a21b, 0.55, 0.4),
+  white: std(0xe7e9ec, 0.6, 0.2),
+  dish: std(0xe7e9ec, 0.5, 0.3, { side: THREE.DoubleSide }),
+  flame: std(0xffb347, 0.4, 0, { emissive: 0xff8a20, emissiveIntensity: 2.2 }),
+  gold: std(0xc9a24a, 0.35, 0.8),
+  snow: std(0xf2f6fb, 0.7),
 };
+for (const m of Object.values(P)) (Array.isArray(m) ? m : [m]).forEach((x) => { x.userData.shared = true; });
 
 function mesh(parent, geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) {
   const m = new THREE.Mesh(geo, mat);
@@ -82,9 +96,10 @@ function openingFrame(g, h, o) {
   }
 }
 
-function buildHouse(scene, h, mats, quality, roofY) {
+function buildHouse(scene, h, mats, quality) {
   const g = new THREE.Group(); scene.add(g);
   const [x0, z0, x1, z1] = h.rect;
+  const roofY = h.height;
   // wooden floor inside
   const rep = (t) => { const c = t.clone(); c.repeat.set((x1 - x0) / 2, (z1 - z0) / 2); c.needsUpdate = true; return c; };
   const fl = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0 - 0.3, z1 - z0 - 0.3), new THREE.MeshStandardMaterial({
@@ -98,10 +113,16 @@ function buildHouse(scene, h, mats, quality, roofY) {
   // corner posts
   for (const [cx, cz] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) mesh(g, B(0.42, roofY, 0.42), P.frame, cx, roofY / 2, cz);
   for (const o of h.openings) openingFrame(g, h, o);
-  // gable roof on top of the flat (collision) roof slab, plus a chimney
-  const { rise, alongX } = gable(g, x0, z0, x1, z1, roofY + 0.22, mats.roof);
-  const cx = alongX ? x0 + (x1 - x0) * 0.25 : (x0 + x1) / 2 + (x1 - x0) * 0.2, cz = alongX ? (z0 + z1) / 2 + (z1 - z0) * 0.2 : z0 + (z1 - z0) * 0.25;
-  mesh(g, B(0.6, rise + 0.9, 0.6), P.chimney, cx, roofY + 0.22 + (rise + 0.9) / 2, cz);
+  if (!h.flat) {
+    // gable roof on top of the flat (collision) roof slab, plus a chimney
+    const { rise, alongX } = gable(g, x0, z0, x1, z1, roofY + 0.22, mats.roof);
+    const cx = alongX ? x0 + (x1 - x0) * 0.25 : (x0 + x1) / 2 + (x1 - x0) * 0.2, cz = alongX ? (z0 + z1) / 2 + (z1 - z0) * 0.2 : z0 + (z1 - z0) * 0.25;
+    mesh(g, B(0.6, rise + 0.9, 0.6), P.chimney, cx, roofY + 0.22 + (rise + 0.9) / 2, cz);
+  } else {
+    // flat roof: a low lip and a couple of rooftop units
+    for (const [cx, cz, w, d] of [[(x0 + x1) / 2, z0 - 0.27, x1 - x0 + 0.6, 0.06], [(x0 + x1) / 2, z1 + 0.27, x1 - x0 + 0.6, 0.06], [x0 - 0.27, (z0 + z1) / 2, 0.06, z1 - z0 + 0.6], [x1 + 0.27, (z0 + z1) / 2, 0.06, z1 - z0 + 0.6]]) mesh(g, B(w, 0.18, d), P.sill, cx, roofY + 0.31, cz);
+    if (h.roofUnit !== false) mesh(g, RB(1.2, 0.7, 0.9, 0.05), P.steel, x0 + (x1 - x0) * 0.7, roofY + 0.57, z0 + (z1 - z0) * 0.3);
+  }
   // ceiling lamp (real light on Medium/High)
   if (h.lamp) {
     const [lx, lz] = h.lamp;
@@ -171,9 +192,45 @@ function buildVehicle(scene, v) {
 // ---------------------------------------------------------------------------
 // Small props
 // ---------------------------------------------------------------------------
-function buildTree(scene, [x, z]) {
+function buildTree(scene, [x, z, type = 'oak']) {
   const g = new THREE.Group(); g.position.set(x, 0, z); scene.add(g);
   const s = 0.85 + ((Math.abs(x * 7 + z * 3) % 10) / 10) * 0.4;
+  if (type === 'pine') {
+    mesh(g, new THREE.CylinderGeometry(0.12, 0.2, 2.2, 7), P.bark, 0, 1.1, 0);
+    for (let i = 0; i < 4; i++) {
+      const r = (1.5 - i * 0.3) * s, h = 1.5 * s;
+      mesh(g, new THREE.ConeGeometry(r, h, 9), P.pine[i % 2], 0, (1.4 + i * 0.85) * s, 0, 0, i, 0);
+      if (MAPTHEME?.snowCaps) mesh(g, new THREE.ConeGeometry(r * 0.55, h * 0.4, 9), P.snow, 0, (1.4 + i * 0.85) * s + h * 0.3, 0, 0, i, 0);
+    }
+    return;
+  }
+  if (type === 'palm') {
+    // curved trunk from stacked segments, then a crown of drooping fronds
+    let px = 0, py = 0;
+    const lean = ((x * 13 + z * 7) % 6) / 6 - 0.5;
+    for (let i = 0; i < 7; i++) {
+      const r = 0.17 - i * 0.012;
+      mesh(g, new THREE.CylinderGeometry(r * 0.9, r, 0.75, 7), P.palmBark, px, py + 0.37, 0, 0, 0, -lean * 0.12 * i);
+      px += Math.sin(lean * 0.12 * i) * 0.75; py += 0.72;
+    }
+    const frond = new THREE.PlaneGeometry(0.7, 2.6, 1, 4);
+    const fp = frond.attributes.position;
+    for (let i = 0; i < fp.count; i++) { const y = fp.getY(i) + 1.3; fp.setZ(i, -(y * y) * 0.18); fp.setX(i, fp.getX(i) * (1 - y / 3)); fp.setY(i, y); }
+    frond.computeVertexNormals();
+    for (let i = 0; i < 8; i++) {
+      const f = mesh(g, frond, P.palmLeaf, px, py, 0, 0, (i / 8) * Math.PI * 2, 0);
+      f.rotation.order = 'YXZ'; f.rotation.x = -1.0;
+    }
+    mesh(g, new THREE.SphereGeometry(0.22, 8, 6), P.palmBark, px, py, 0);
+    return;
+  }
+  if (type === 'jungle') {
+    mesh(g, new THREE.CylinderGeometry(0.22, 0.38, 4.6, 8), P.bark, 0, 2.3, 0);
+    for (const [rx, rz] of [[0.35, 0], [-0.3, 0.2], [0, -0.35]]) mesh(g, new THREE.CylinderGeometry(0.05, 0.16, 1.2, 5), P.bark, rx, 0.45, rz, rz * 1.4, 0, -rx * 1.4);
+    const blobs = [[0, 5.2, 0, 2.1], [1.3, 4.6, 0.5, 1.4], [-1.2, 4.8, -0.6, 1.5], [0.4, 6.1, -0.4, 1.3], [-0.5, 4.3, 1.2, 1.2]];
+    blobs.forEach(([bx, by, bz, r], i) => mesh(g, new THREE.IcosahedronGeometry(r * s, 1), P.jungle[i % 3], bx * s, by * s, bz * s, i, i * 2, 0));
+    return;
+  }
   mesh(g, new THREE.CylinderGeometry(0.16, 0.24, 3.2, 8), P.bark, 0, 1.6, 0);
   const blobs = [[0, 3.6, 0, 1.5], [0.7, 3.2, 0.3, 1.0], [-0.6, 3.3, -0.4, 1.05], [0.1, 4.4, -0.2, 1.0], [-0.3, 3.0, 0.7, 0.85]];
   blobs.forEach(([bx, by, bz, r], i) => mesh(g, new THREE.IcosahedronGeometry(r * s, 1), P.leaf[i % 3], bx * s, by * s, bz * s, i, i * 2, 0));
@@ -188,16 +245,16 @@ function buildLamp(scene, [x, z]) {
   mesh(g, B(0.24, 0.03, 0.4), P.bulb, 0, 4.17, toward * 0.85).castShadow = false;
 }
 
-function buildBarrel(scene, [x, z], i) {
-  const g = new THREE.Group(); g.position.set(x, 0, z); scene.add(g);
+function buildBarrel(scene, [x, z, y0 = 0], i) {
+  const g = new THREE.Group(); g.position.set(x, y0, z); scene.add(g);
   const mat = P.barrel[Math.abs(Math.round(x * 3 + z)) % 3];
   mesh(g, new THREE.CylinderGeometry(0.33, 0.33, 0.98, 16), mat, 0, 0.49, 0);
   for (const y of [0.12, 0.49, 0.86]) mesh(g, new THREE.TorusGeometry(0.335, 0.02, 6, 20), mat, 0, y, 0, Math.PI / 2);
   mesh(g, new THREE.CylinderGeometry(0.3, 0.3, 0.02, 16), P.tyre, 0, 0.985, 0);
 }
 
-function buildSandbags(scene, [x, z, w, d], mats) {
-  const g = new THREE.Group(); g.position.set(x, 0, z); scene.add(g);
+function buildSandbags(scene, [x, z, w, d, y0 = 0], mats) {
+  const g = new THREE.Group(); g.position.set(x, y0, z); scene.add(g);
   const alongX = w >= d, len = alongX ? w : d, depth = alongX ? d : w;
   const bag = RB(0.58, 0.3, Math.min(0.4, depth / 2.1), 0.12);
   for (let row = 0; row < 3; row++) {
@@ -272,6 +329,126 @@ function plaza(scene, mats) {
   for (const [cx, cz, w, d] of [[0, -9, 18, 0.25], [0, 9, 18, 0.25], [-9, 0, 0.25, 18], [9, 0, 0.25, 18]]) mesh(scene, B(w, 0.08, d), P.sill, cx, 0.04, cz);
 }
 
+// ---------------------------------------------------------------------------
+// Raised-area details: stair rails, containers, decoration
+// ---------------------------------------------------------------------------
+function buildStairRails(scene, st) {
+  if (!st.rail) return;
+  const [x0, z0, x1, z1] = st.rect;
+  const alongX = st.dir[0] === 'x', up = st.dir[1] === '+';
+  const len = alongX ? x1 - x0 : z1 - z0;
+  const n = Math.max(2, Math.ceil(len / 1.4));
+  for (const side of [0, 1]) {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, a = (alongX ? x0 : z0) + t * len;
+      const k = up ? t : 1 - t, y = st.h0 + (st.h1 - st.h0) * k;
+      const sx = alongX ? a : side ? x1 - 0.05 : x0 + 0.05, sz = alongX ? (side ? z1 - 0.05 : z0 + 0.05) : a;
+      mesh(scene, new THREE.CylinderGeometry(0.025, 0.025, 0.95, 6), P.rail, sx, y + 0.47, sz);
+      pts.push(new THREE.Vector3(sx, y + 0.95, sz));
+    }
+    const curve = new THREE.CatmullRomCurve3(pts);
+    mesh(scene, new THREE.TubeGeometry(curve, n * 2, 0.03, 5), P.rail, 0, 0, 0);
+  }
+}
+
+const frameMats = new Map();
+function buildContainer(scene, c) {
+  const [x0, z0, x1, z1] = c.rect, y0 = c.y0, h = c.h;
+  const alongX = x1 - x0 >= z1 - z0;
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  // corner posts + top/bottom rails (dark steel frame)
+  const fk = new THREE.Color(c.color).multiplyScalar(0.55).getHex();
+  if (!frameMats.has(fk)) frameMats.set(fk, std(fk, 0.6, 0.5));
+  const frame = frameMats.get(fk);
+  for (const [px, pz] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) mesh(scene, B(0.14, h, 0.14), frame, px + (px < cx ? 0.06 : -0.06), y0 + h / 2, pz + (pz < cz ? 0.06 : -0.06));
+  // door end: two lock bars per door
+  const endA = alongX ? [x1 + 0.02, cz] : [cx, z1 + 0.02];
+  for (const o of [-0.55, -0.25, 0.25, 0.55]) {
+    const w = alongX ? z1 - z0 : x1 - x0;
+    if (alongX) mesh(scene, B(0.04, h * 0.85, 0.035), P.steel, endA[0], y0 + h / 2, cz + o * w * 0.8);
+    else mesh(scene, B(0.035, h * 0.85, 0.04), P.steel, cx + o * w * 0.8, y0 + h / 2, endA[1]);
+  }
+}
+
+let MAPTHEME = null;
+function buildDecor(scene, o) {
+  const g = new THREE.Group(); g.position.set(o.x, o.y || 0, o.z); g.rotation.y = o.rot || 0; scene.add(g);
+  switch (o.type) {
+    case 'crane': { // dockside gantry crane (outside the walls, purely scenery)
+      const H = o.h || 26;
+      for (const sx of [-4, 4]) for (const sz of [-3, 3]) mesh(g, B(0.6, H, 0.6), P.yellow, sx, H / 2, sz);
+      for (const sz of [-3, 3]) mesh(g, B(9, 0.8, 0.8), P.yellow, 0, H, sz);
+      mesh(g, B(1.2, 1.2, 30), P.yellow, 0, H + 1, 6);
+      mesh(g, B(3, 2.4, 3), P.white, 0, H + 2.6, -2);
+      mesh(g, B(0.08, 10, 0.08), P.rail, 0, H - 4, 14);
+      break;
+    }
+    case 'radar': {
+      mesh(g, new THREE.CylinderGeometry(0.25, 0.35, 5, 8), P.steel, 0, 2.5, 0);
+      mesh(g, new THREE.SphereGeometry(2.2, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.32), P.dish, 0, 6.2, 0, -1.0, 0, 0);
+      mesh(g, new THREE.CylinderGeometry(0.05, 0.05, 2, 5), P.rail, 0, 6.4, -0.8, -1.0);
+      break;
+    }
+    case 'tank': { // fuel tank on legs
+      const r = o.r || 2;
+      mesh(g, new THREE.CylinderGeometry(r, r, o.len || 6, 16), P.white, 0, r + 1, 0, 0, 0, Math.PI / 2);
+      for (const sx of [-1.8, 1.8]) mesh(g, B(0.3, r + 1, r * 1.4), P.steel, sx, (r + 1) / 2, 0);
+      break;
+    }
+    case 'mast': { // antenna mast with red lights
+      const H = o.h || 18;
+      mesh(g, new THREE.CylinderGeometry(0.12, 0.3, H, 6), P.steel, 0, H / 2, 0);
+      for (let i = 1; i < 4; i++) mesh(g, B(1.6 - i * 0.3, 0.06, 0.06), P.steel, 0, H * i / 4, 0);
+      mesh(g, new THREE.SphereGeometry(0.2, 8, 6), P.redLight, 0, H, 0).castShadow = false;
+      break;
+    }
+    case 'cactus': {
+      const s = o.s || 1;
+      mesh(g, new THREE.CapsuleGeometry(0.22 * s, 1.6 * s, 4, 8), P.cactus, 0, 1.0 * s, 0);
+      mesh(g, new THREE.CapsuleGeometry(0.14 * s, 0.6 * s, 4, 8), P.cactus, 0.38 * s, 1.2 * s, 0);
+      mesh(g, B(0.3 * s, 0.12 * s, 0.12 * s), P.cactus, 0.2 * s, 0.85 * s, 0);
+      mesh(g, new THREE.CapsuleGeometry(0.12 * s, 0.5 * s, 4, 8), P.cactus, -0.34 * s, 1.5 * s, 0);
+      mesh(g, B(0.26 * s, 0.1 * s, 0.1 * s), P.cactus, -0.2 * s, 1.25 * s, 0);
+      break;
+    }
+    case 'bush': {
+      const s = o.s || 1, mat = MAPTHEME?.snowCaps ? P.pine[1] : P.jungle[(Math.abs(Math.round(o.x + o.z))) % 3];
+      for (const [bx, by, bz, r] of [[0, 0.35, 0, 0.6], [0.5, 0.3, 0.2, 0.45], [-0.45, 0.28, -0.15, 0.42]]) mesh(g, new THREE.IcosahedronGeometry(r * s, 1), mat, bx * s, by * s, bz * s);
+      break;
+    }
+    case 'torch': { // stone brazier with a glowing flame (no real light: cheap)
+      mesh(g, new THREE.CylinderGeometry(0.22, 0.3, 1.0, 8), o.mat || P.chimney, 0, 0.5, 0);
+      mesh(g, new THREE.CylinderGeometry(0.36, 0.24, 0.25, 8), o.mat || P.chimney, 0, 1.1, 0);
+      mesh(g, new THREE.ConeGeometry(0.2, 0.45, 7), P.flame, 0, 1.42, 0).castShadow = false;
+      break;
+    }
+    case 'statue': { // weathered idol on a plinth
+      mesh(g, B(1.2, 0.8, 1.2), P.chimney, 0, 0.4, 0);
+      mesh(g, B(0.7, 1.4, 0.55), P.gold, 0, 1.5, 0);
+      mesh(g, B(0.55, 0.55, 0.5), P.gold, 0, 2.5, 0);
+      mesh(g, B(0.9, 0.12, 0.2), P.gold, 0, 1.9, 0);
+      break;
+    }
+    case 'lightpost': { // tall floodlight mast
+      mesh(g, new THREE.CylinderGeometry(0.1, 0.18, 9, 8), P.steel, 0, 4.5, 0);
+      mesh(g, B(1.6, 0.5, 0.3), P.steel, 0, 9, 0);
+      mesh(g, B(1.4, 0.35, 0.05), P.light, 0, 9, -0.17).castShadow = false;
+      break;
+    }
+    case 'bollard': {
+      mesh(g, new THREE.CylinderGeometry(0.16, 0.2, 0.6, 10), P.rail, 0, 0.3, 0);
+      mesh(g, new THREE.SphereGeometry(0.17, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), P.rail, 0, 0.6, 0);
+      break;
+    }
+    case 'vine': { // hanging greenery on a wall face
+      const n = o.n || 5;
+      for (let i = 0; i < n; i++) mesh(g, B(0.05, (o.h || 2) * (0.5 + ((i * 37) % 10) / 20), 0.18), P.jungle[i % 3], (i - n / 2) * 0.35, (o.h || 2) * 0.6, 0);
+      break;
+    }
+  }
+}
+
 /**
  * Bake every static prop mesh into one merged mesh per material (world-space geometry), so the
  * hundreds of small parts (slats, bags, wheels, frames) cost a handful of draw calls.
@@ -301,9 +478,13 @@ export function mergeByMaterial(root, scene) {
   for (const o of keep) { const p = new THREE.Vector3(); o.getWorldPosition(p); o.removeFromParent(); o.position.copy(p); scene.add(o); }
 }
 
-export function buildProps(target, MAPDEF, mats, quality, roofY) {
+export function buildProps(target, MAPDEF, mats, quality, map) {
   const scene = new THREE.Group();
-  for (const h of MAPDEF.houses) buildHouse(scene, h, mats, quality, roofY);
+  MAPTHEME = map.theme;
+  for (const h of MAPDEF.houses) buildHouse(scene, h, mats, quality);
+  for (const st of MAPDEF.stairs) buildStairRails(scene, st);
+  for (const c of MAPDEF.containers) buildContainer(scene, c);
+  for (const d of MAPDEF.decor) buildDecor(scene, d);
   for (const v of MAPDEF.vehicles) buildVehicle(scene, v);
   for (const t of MAPDEF.trees) buildTree(scene, t);
   for (const l of MAPDEF.lamps) buildLamp(scene, l);
@@ -311,7 +492,7 @@ export function buildProps(target, MAPDEF, mats, quality, roofY) {
   for (const s of MAPDEF.sandbags) buildSandbags(scene, s, mats);
   for (const f of MAPDEF.fences) buildFence(scene, f);
   for (const s of MAPDEF.stalls) buildStall(scene, s, mats);
-  powerLines(scene);
-  plaza(scene, mats);
+  if (map.powerLines) powerLines(scene);
+  if (map.plaza) plaza(scene, mats);
   mergeByMaterial(scene, target);
 }

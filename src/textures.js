@@ -214,11 +214,113 @@ function burlap(size) {
   }, 1.5);
 }
 
+// --- Desert sand: wind ripples + darker drifts (tile = 4m) ---
+function sandFloor(size) {
+  const n = fbm(121, 4), grit = fbm(122, 64, 2), warp = fbm(123, 2, 3);
+  return generate(size, (u, v) => {
+    const rip = Math.sin((v + warp(u, v) * 0.35) * Math.PI * 2 * 22) * 0.5 + 0.5;
+    const c = 0.86 + (n(u, v) - 0.5) * 0.16 + rip * 0.05 + (grit(u, v) - 0.5) * 0.08;
+    return [c * 214, c * 182, c * 132, rip * 0.35 + grit(u, v) * 0.3, 0.95];
+  }, 2.5);
+}
+
+// --- Packed snow with blue shadows and icy patches (tile = 4m) ---
+function snowFloor(size) {
+  const n = fbm(131, 4), fine = fbm(132, 64, 2), ice = fbm(133, 3, 4), trk = valueNoise(134, 24);
+  return generate(size, (u, v) => {
+    const i = clamp01((ice(u, v) - 0.62) * 4);
+    const track = trk(u * 24, v * 3) > 0.8 ? 0.06 : 0;
+    const c = 0.9 + (n(u, v) - 0.5) * 0.1 + (fine(u, v) - 0.5) * 0.05 - track;
+    return [c * 228 - i * 20, c * 234 - i * 8, c * 244, n(u, v) * 0.6 + fine(u, v) * 0.3 - track * 2, 0.75 - i * 0.45];
+  }, 2);
+}
+
+// --- Jungle ground: dark earth, grass tufts, leaf litter (tile = 4m) ---
+function jungleFloor(size) {
+  const n = fbm(141, 4), patch = fbm(142, 3, 4), fine = fbm(143, 64, 2), leaf = valueNoise(144, 48);
+  return generate(size, (u, v) => {
+    const g = clamp01((patch(u, v) - 0.45) * 3.5);
+    const l = leaf(u * 48, v * 48) > 0.82 ? 1 : 0;
+    const f = fine(u, v);
+    let r = mix(96, 74, g), gg = mix(78, 108, g), b = mix(56, 50, g);
+    const k = 0.78 + (n(u, v) - 0.5) * 0.25 + (f - 0.5) * 0.2;
+    if (l) { r = 120; gg = 86; b = 44; }
+    return [r * k, gg * k, b * k, f * 0.6 + g * 0.3 + l * 0.2, 0.95];
+  }, 3);
+}
+
+// --- Dock asphalt with cracks and oil stains (tile = 4m) ---
+function asphaltFloor(size) {
+  const n = fbm(151, 4), grit = fbm(152, 64, 2), stain = fbm(153, 2, 4), crack = valueNoise(154, 32);
+  return generate(size, (u, v) => {
+    const s = clamp01((stain(u, v) - 0.58) * 3) * 0.3;
+    const cr = Math.abs(crack(u * 32, v * 32) - 0.5) < 0.012 ? 0.5 : 0;
+    const c = 0.42 + (n(u, v) - 0.5) * 0.1 + (grit(u, v) - 0.5) * 0.16 - s - cr * 0.3;
+    return [c * 128, c * 128, c * 132, grit(u, v) * 0.6 - cr, 0.82 - s * 0.6];
+  }, 3);
+}
+
+// --- Corrugated container steel (tinted per container; tile = 2.4m) ---
+function corrugated(size) {
+  const n = fbm(161, 4), rust = fbm(162, 8, 4), scratch = valueNoise(163, 64);
+  return generate(size, (u, v) => {
+    const rib = Math.sin(u * Math.PI * 2 * 12) * 0.5 + 0.5;
+    const r = clamp01((rust(u, v) - 0.66) * 4);
+    const sc = scratch(u * 4, v * 64) > 0.95 ? 0.12 : 0;
+    const frame = v < 0.03 || v > 0.97;
+    const c = (0.82 + rib * 0.12 + (n(u, v) - 0.5) * 0.08 + sc) * (frame ? 0.7 : 1);
+    return [mix(c * 230, 120, r), mix(c * 230, 70, r), mix(c * 230, 40, r), rib * 0.8 - (frame ? 0.3 : 0), mix(0.5, 0.9, r)];
+  }, 3);
+}
+
+// --- Ancient mossy stone blocks (tile = 2m) ---
+function mossStone(size) {
+  const n = fbm(171, 8), moss = fbm(172, 4, 5), grit = fbm(173, 32, 3);
+  return generate(size, (u, v) => {
+    const rows = 3, row = Math.floor(v * rows), rv = v * rows - row;
+    const cols = 2, off = row % 2 ? 0.37 : 0, cu = (u * cols + off) % 1;
+    const joint = rv < 0.035 || rv > 0.965 || cu < 0.02 || cu > 0.98;
+    const m = clamp01((moss(u, v) - 0.5 + (1 - v) * 0.15) * 3);
+    const tone = 0.8 + ((row * 5 + Math.floor(u * cols + off) * 9) % 4) * 0.04 + (n(u, v) - 0.5) * 0.2;
+    if (joint) return [52, 56, 44, 0.05, 0.95];
+    return [mix(tone * 150, 78, m), mix(tone * 146, 104, m), mix(tone * 128, 52, m), 0.6 + grit(u, v) * 0.35 + m * 0.1, 0.9];
+  }, 4);
+}
+
+// --- Raw rock for boulders and cliffs (tile = 3m) ---
+function rock(size) {
+  const n = fbm(181, 4), crack = fbm(182, 16, 3), fine = fbm(183, 64, 2);
+  return generate(size, (u, v) => {
+    const cr = clamp01(1 - Math.abs(crack(u, v) - 0.5) * 18);
+    const c = 0.72 + (n(u, v) - 0.5) * 0.3 + (fine(u, v) - 0.5) * 0.12 - cr * 0.25;
+    return [c * 150, c * 146, c * 140, n(u, v) * 0.7 + fine(u, v) * 0.3 - cr * 0.4, 0.92];
+  }, 4);
+}
+
+export const FLOORS = { concrete: concreteFloor, sand: sandFloor, snow: snowFloor, jungle: jungleFloor, asphalt: asphaltFloor };
+const floorCache = new Map();
+/** Floor texture set by name (built on first use, so a map only pays for the floor it shows). */
+export function floorTextures(name, quality) {
+  const k = name + quality;
+  if (!floorCache.has(k)) floorCache.set(k, (FLOORS[name] || concreteFloor)(quality === 'low' ? 256 : 512));
+  return floorCache.get(k);
+}
+
+let matCache = null;
 export function buildMaterials(quality) {
+  if (matCache) return matCache;
   const size = quality === 'low' ? 256 : 512;
   const mk = (t, extra = {}) => new THREE.MeshStandardMaterial({ ...t, roughness: 1, metalness: 0, ...extra });
-  return {
-    floor: concreteFloor(size),
+  // rarely-used sets are generated lazily the first time a map asks for them
+  const lazy = (fn, extra) => { let m = null; return () => { if (!m) { m = mk(fn(size), extra); m.userData.shared = true; } return m; }; };
+  const extras = {
+    container: lazy(corrugated, { metalness: 0.45 }),
+    moss: lazy(mossStone),
+    rock: lazy(rock),
+  };
+  matCache = {
+    extra: (k) => extras[k]?.(),
+    floor: floorTextures('concrete', quality),
     wall: mk(plaster(size)),
     block: mk(stoneBlocks(size)),
     crate: mk(crate(size)),
@@ -233,11 +335,13 @@ export function buildMaterials(quality) {
     furniture: mk(planks(size), { color: 0xb9a183 }),
     trim: new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.45, metalness: 0.7 }),
     base: new THREE.MeshStandardMaterial({ color: 0x5b554d, roughness: 0.95 }),
+    snowcap: new THREE.MeshStandardMaterial({ color: 0xf2f6fb, roughness: 0.7 }),
   };
+  return matCache;
 }
 
 // World-space tile size (m) per material, so textures never stretch.
-export const TILE = { wall: 3, block: 2, pillar: 2, outer: 4, crate: 0, hwall: 2.5, iwall: 2.5, roof: 2, furniture: 1.2 };
+export const TILE = { wall: 3, block: 2, pillar: 2, outer: 4, crate: 0, hwall: 2.5, iwall: 2.5, roof: 2, furniture: 1.2, plat: 2, step: 2, container: 2.4, moss: 2, rock: 3 };
 
 // --- Bullet hole decal ---
 let holeTex = null;

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { game, now } from './state.js';
 import { MATCH } from './config.js';
-import { isWalkable } from './world.js';
+import { isWalkable, onMapLoad, snapWalkable } from './world.js';
 import { applyDamage, emitSound } from './entities.js';
 import { burstSphere, ring } from './fx.js';
 
@@ -9,15 +9,21 @@ import { burstSphere, ring } from './fx.js';
 // on site A or B (both on the defender half). Defenders win by defusing, eliminating attackers
 // before the plant, or running out the clock.
 
-export const SITES = {
-  A: { key: 'A', min: { x: 12, z: -29 }, max: { x: 28, z: -11 }, center: { x: 21, z: -21 },
-    plants: [{ x: 18, z: -19 }, { x: 14.5, z: -14 }, { x: 26.5, z: -25.5 }],
-    entries: [{ x: 6, z: -20 }, { x: 18, z: -8.5 }] },
-  B: { key: 'B', min: { x: 12, z: 11 }, max: { x: 28, z: 29 }, center: { x: 21, z: 21 },
-    plants: [{ x: 18, z: 19.5 }, { x: 15, z: 14 }, { x: 26.3, z: 25.5 }],
-    entries: [{ x: 6, z: 20 }, { x: 18, z: 8.5 }] },
-};
-for (const s of Object.values(SITES)) s.plants = s.plants.filter((p) => isWalkable(p.x, p.z));
+export const SITES = { A: null, B: null };
+// rebuilt from the map definition whenever a map loads (spots snapped onto the nav grid)
+onMapLoad((m) => {
+  for (const k of ['A', 'B']) {
+    const d = m.sites[k];
+    const s = { key: k, min: d.min, max: d.max, center: snapWalkable(d.center), entries: d.entries.map(snapWalkable),
+      plants: (d.plants || []).filter((p) => isWalkable(p.x, p.z)) };
+    // not enough hand-placed plant spots: pick spread-out walkable cells inside the site
+    for (let tries = 0; s.plants.length < 3 && tries < 200; tries++) {
+      const p = { x: d.min.x + 1 + Math.random() * (d.max.x - d.min.x - 2), z: d.min.z + 1 + Math.random() * (d.max.z - d.min.z - 2) };
+      if (isWalkable(p.x, p.z) && s.plants.every((q) => Math.hypot(q.x - p.x, q.z - p.z) > 4)) s.plants.push(p);
+    }
+    SITES[k] = s;
+  }
+});
 
 export function siteAt(p) {
   for (const s of Object.values(SITES)) if (p.x > s.min.x && p.x < s.max.x && p.z > s.min.z && p.z < s.max.z) return s;

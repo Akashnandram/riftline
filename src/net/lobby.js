@@ -1,5 +1,6 @@
 // Lobbies: the host owns the lobby state; clients find it through a realtime channel
 // ('lobby:CODE'), connect to the host over WebRTC and then talk to it directly.
+import { randomMap } from '../maps/index.js';
 import { channel, me } from './backend.js';
 import { Peer } from './peer.js';
 import { MAX_PLAYERS } from './config.js';
@@ -14,7 +15,7 @@ export class Lobby {
     this.isHost = isHost;
     this.peers = new Map();        // peerId -> Peer
     this.members = [];             // [{ id, name, team, agent, ready, host }]
-    this.settings = { mode: 'plant', teamSize: 5, difficulty: 'normal' };
+    this.settings = { mode: 'plant', teamSize: 5, difficulty: 'normal', map: 'random' };
     this.chat = [];
     this.fns = {};
     this.started = false;
@@ -112,7 +113,10 @@ export class Lobby {
         roster.push({ fid: fid++, name: names.pop(), team, agent: agentKeys[Math.floor(Math.random() * agentKeys.length)], owner: null });
       }
     }
-    const msg = { t: 'start', settings: { ...this.settings }, roster, host: me.id };
+    // 'random' is resolved here so every player loads the same map
+    const map = this.settings.map && this.settings.map !== 'random' ? this.settings.map : randomMap(this.lastMap);
+    this.lastMap = map;
+    const msg = { t: 'start', settings: { ...this.settings, map }, roster, host: me.id };
     for (const p of this.peers.values()) p.send(msg);
     return msg;
   }
