@@ -25,10 +25,14 @@ export function abilityReady(f, slot) {
 }
 
 /** target: optional world point (bots aim abilities at a spot). */
-export function useAbility(f, slot, target = null) {
+export function useAbility(f, slot, target = null, mirror = false) {
+  // mirror: an online client replaying an ability the host already approved (visuals only)
+  if (mirror) { IMPL[f.agent.key][slot](f, target); return true; }
+  if (game.net?.role === 'client') { if (f.alive && game.phase === 'live' && abilityReady(f, slot)) game.net.sendAbility?.(slot, target); return false; }
   if (!f.alive || game.phase !== 'live' || !abilityReady(f, slot)) return false;
   const ok = IMPL[f.agent.key][slot](f, target);
   if (!ok) return false;
+  game.onAbilityUsed?.(f, slot, target);
   if (slot === 'x') { f.ult = 0; emitSound(f, 'ult'); return true; }
   const a = f.abil[slot];
   a.charges--;
@@ -193,11 +197,12 @@ function explodeShock(p) {
   }
 }
 
-export function fireFury(f) {
-  if (f.furyShots <= 0 || f.fireCD > 0) return false;
-  f.furyShots--; f.fireCD = 0.9;
-  const o = f.eye(new THREE.Vector3());
-  const d = f.lookDir(new THREE.Vector3(), false);
+export function fireFury(f, given = null) {
+  if (!given && (f.furyShots <= 0 || f.fireCD > 0)) return false;
+  if (!given) { f.furyShots--; f.fireCD = 0.9; }
+  const o = given ? new THREE.Vector3(...given.o) : f.eye(new THREE.Vector3());
+  const d = given ? new THREE.Vector3(...given.d) : f.lookDir(new THREE.Vector3(), false);
+  if (!given) game.onFury?.(f, o, d);
   const { hits } = traceShot(f, o, d, 100, true);
   for (const h of hits) {
     applyDamage(h.target, 80, f, { ability: "Hunter's Fury" });

@@ -263,3 +263,53 @@ button.ghost { background: transparent; color: var(--ink); border: 1px solid rgb
 #tutorial.done { pointer-events: auto; border-color: #6effc4; }
 #tutorial.done button { margin: 8px 4px 0; }
 #fps { position: fixed; right: 8px; bottom: 4px; font-size: 12px; color: #6effc4; font-family: monospace; pointer-events: none; }
+
+/* ---------- online ---------- */
+.account { display: flex; align-items: center; gap: 8px; margin-right: auto; margin-left: 10px; }
+.account .who { font-weight: 700; }
+.account small { color: var(--dim); font-weight: 500; }
+button.sm { padding: 4px 10px; font-size: 13px; }
+button.big.online { background: #2a6fdb; margin-left: 8px; }
+.auth input, .online-wrap input, .lobby input { width: 100%; padding: 10px 12px; font: 600 16px 'Rajdhani', sans-serif; background: rgba(255,255,255,0.06); color: var(--ink); border: 1px solid rgba(255,255,255,0.18); border-radius: 3px; }
+.auth .google { background: #fff; color: #1f1f1f; border: 0; border-radius: 3px; padding: 11px; font-size: 16px; font-weight: 700; }
+.auth .google b { color: #4285f4; margin-right: 6px; }
+.auth .or { color: var(--dim); font-size: 13px; }
+.err { color: #ff7a85; font-size: 14px; min-height: 18px; }
+.notice { background: rgba(255,210,63,0.1); border: 1px solid rgba(255,210,63,0.4); color: #ffd23f; border-radius: 4px; padding: 8px 12px; text-align: left; font-size: 14px; }
+.notice code { color: #fff; }
+.online-wrap { width: min(1000px, 100%); text-align: left; }
+.ol-grid { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 14px; }
+.ol-grid section, .lb-grid section { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.ol-grid h3, .lb-grid h3 { margin: 0; font-size: 12px; letter-spacing: 3px; color: var(--dim); }
+.fr { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 15px; }
+.fr small { color: var(--dim); margin-right: auto; }
+.fr .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+.fr .dot.on { background: #6effc4; box-shadow: 0 0 6px #6effc4; }
+.fr.req { color: #ffd23f; }
+.fr-add { display: flex; gap: 6px; }
+button.x { padding: 4px 8px; }
+.lobby { width: min(1150px, 100%); text-align: left; }
+.lobby .code { color: #ffd23f; letter-spacing: 6px; }
+.lb-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+.teams { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start; }
+.team { background: rgba(255,255,255,0.03); border-radius: 6px; padding: 10px; border-top: 3px solid var(--blue); display: flex; flex-direction: column; gap: 6px; }
+.team.t1 { border-top-color: var(--red); }
+.team h3 { margin: 0 0 4px; font-size: 12px; letter-spacing: 3px; color: var(--dim); }
+.slot { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.05); padding: 6px 8px; border-radius: 4px; font-size: 15px; }
+.slot.me { outline: 1px solid #ffd23f; }
+.slot.bot { opacity: 0.45; }
+.slot small { margin-left: auto; color: #ffd23f; font-size: 11px; letter-spacing: 2px; }
+.slot small.ok { color: #6effc4; }
+.slot .ag { width: 24px; height: 24px; border-radius: 3px; display: grid; place-items: center; font-weight: 700; color: #0f1923; background: rgba(255,255,255,0.2); }
+.agents { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.agents button { background: rgba(255,255,255,0.05); border: 2px solid rgba(255,255,255,0.12); color: var(--acc); font-weight: 700; padding: 8px 0; border-radius: 4px; letter-spacing: 1px; }
+.agents button.on { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 15%, transparent); }
+.lb-grid .seg { flex-wrap: wrap; }
+.lb-grid .seg button:disabled { cursor: default; opacity: 0.7; }
+.lb-grid .seg button.on:disabled { opacity: 1; }
+.chat .log { height: 130px; overflow-y: auto; font-size: 14px; display: flex; flex-direction: column; gap: 2px; }
+.chat .sys { color: var(--dim); font-style: italic; }
+#toasts { position: fixed; right: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }
+.toast { background: var(--panel); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 10px 12px; display: flex; gap: 8px; align-items: center; font-size: 15px; box-shadow: 0 6px 24px rgba(0,0,0,0.4); animation: kfIn 0.2s ease-out; }
+.toast span { margin-right: 6px; }
+@media (max-width: 900px) { .ol-grid, .lb-grid, .teams { grid-template-columns: 1fr; } }

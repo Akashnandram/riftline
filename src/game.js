@@ -8,21 +8,24 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { game, now, sideSign } from './state.js';
 import { WEAPONS, ARMOR, AGENTS, ECON, MATCH, MOVE, BOT_NAMES } from './config.js';
 import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx, setSpawnColors, SITE_RECTS, isWalkable } from './world.js';
-import { resetCharge, hideCharge, updateCharge, tickAction, canPlant, canDefuse, siteAt } from './objective.js';
+import { resetCharge, hideCharge, updateCharge, tickAction, canPlant, canDefuse, siteAt, applyChargeSnapshot } from './objective.js';
 import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
 import {
   Fighter, TEAM_COLORS, EYE, updateFighterMesh, moveFighter, separateFighters, tryFire, startReload,
-  updateWeapon, switchWeapon, setGunLook, emitSound, resetFighterMesh,
+  updateWeapon, switchWeapon, setGunLook, emitSound, resetFighterMesh, remoteFire, playShotFx,
 } from './entities.js';
 import { updateRagdolls, clearRagdolls } from './characters.js';
 import { BotBrain } from './bot.js';
 import { useAbility, abilityReady, updateAbilities, updateAbilityState, clearAbilities, fireFury } from './abilities.js';
 import { buy, botBuy } from './shop.js';
-import { updateFx, clearFx, smokePuff } from './fx.js';
+import { updateFx, clearFx, smokePuff, tracer } from './fx.js';
 import { initAudio, sfx, setMuted, isMuted, updateListener, setVolume } from './audio.js';
 import { S, save as saveSettings, held, isAction, drawCrosshair, openSettings, onSettingsChange } from './settings.js';
 import { profile, levelInfo, unlockedSkins, skinFor, equip, startTracking, trackKill, trackRound, trackObjective, finishMatch, completeTutorial, categoryOf } from './progress.js';
 import { SKINS, SKIN_BY_KEY, applySkin } from './skins.js';
+import { net, setupNet, resetNet, hostTick, applyRemoteInput, sendSpawn, hostEvent, hostEventTo, clientTick, clientSnapshot, interpolate, unpackFighter, unpackCharge, rewindPos } from './net/netgame.js';
+import { me, setPresence } from './net/backend.js';
+import { initOnlineUI, onlineMatchOver, leaveOnline } from './net/ui.js';
 import { buildGun, casingGeo, casingMat } from './guns.js';
 import { flashTexture } from './textures.js';
 
@@ -226,9 +229,9 @@ addEventListener('keydown', (e) => {
   }
   const act = Object.keys(S.binds).find((a) => S.binds[a] === e.code);
   switch (act) {
-    case 'reload': startReload(p); break;
-    case 'primary': switchWeapon(p, 'primary'); break;
-    case 'secondary': switchWeapon(p, 'secondary'); break;
+    case 'reload': startReload(p); if (net.role === 'client') net.lobby.toHost({ t: 'reload' }); break;
+    case 'primary': switchWeapon(p, 'primary'); if (net.role === 'client') net.lobby.toHost({ t: 'switch', slot: 'primary' }); break;
+    case 'secondary': switchWeapon(p, 'secondary'); if (net.role === 'client') net.lobby.toHost({ t: 'switch', slot: 'secondary' }); break;
     case 'ability1': playerAbility('q'); break;
     case 'ability2': playerAbility('e'); break;
     case 'ultimate': playerAbility('x'); break;
@@ -250,7 +253,7 @@ function playerAbility(slot) {
   if (useAbility(p, slot)) {
     tutFlags.ability = true;
     if (slot === 'x') flashMsg(p.agent[slot].name.toUpperCase(), 'Ultimate activated', 1.4);
-  } else if (game.phase === 'live' && !abilityReady(p, slot)) sfx('empty');
+  } else if (game.phase === 'live' && !abilityReady(p, slot) && net.role !== 'client') sfx('empty');
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +310,24 @@ $('btnSettings').onclick = () => showSettings();
 $('pauseSettings').onclick = () => showSettings();
 $('btnLoadout').onclick = () => openLoadout();
 renderMenu();
+
+/** Leave a finished online match but stay in the lobby. */
+function exitToLobby() {
+  teardown();
+  resetNet();
+  game.phase = 'menu';
+  for (const id of ['hud', 'over', 'buyMenu', 'scoreboard', 'rangeStats', 'tutorial', 'pause']) $(id).hidden = true;
+  $('menu').hidden = false;
+  if (locked()) document.exitPointerLock();
+  setPresence({ status: 'lobby' });
+}
+initOnlineUI({
+  choice: () => choice,
+  setAgent: (a) => { choice.agent = a; store.set('agent', a); },
+  startOnline: (lobby, msg) => startOnlineMatch(lobby, msg),
+  exitToLobby,
+  toMenu,
+});
 
 function showSettings() {
   openSettings($('settings'), {
@@ -369,7 +390,9 @@ function renderLoadout() {
 $('loadoutDone').onclick = () => { $('loadout').hidden = true; renderMenu(); };
 
 function toMenu() {
+  leaveOnline();
   teardown();
+  resetNet();
   game.phase = 'menu';
   for (const id of ['hud', 'pause', 'over', 'buyMenu', 'scoreboard', 'rangeStats', 'tutorial']) $(id).hidden = true;
   $('menu').hidden = false;
@@ -396,7 +419,7 @@ function teardown() {
   game.fighters = []; game.player = null;
 }
 
-function startMatch(cfg) {
+function startMatch(cfg, roster = null) {
   teardown();
   setPaused(false);
   game.config = cfg;
@@ -407,7 +430,8 @@ function startMatch(cfg) {
   const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
   const agentKeys = Object.keys(AGENTS);
   let id = 0;
-  for (let team = 0; team < 2; team++) {
+  if (roster) buildRosterFighters(cfg, roster, false);
+  else for (let team = 0; team < 2; team++) {
     const used = team === 0 ? [cfg.agent] : [];
     for (let i = 0; i < cfg.teamSize; i++) {
       const isPlayer = team === 0 && i === 0;
@@ -503,6 +527,10 @@ function startRound() {
     setGunLook(f);
     if (f.brain) { f.brain.planRound(); botBuy(f); setGunLook(f); }
   }
+  if (net.role === 'host') {
+    hostEvent({ t: 'round', round: game.round, attackers: game.attackers, halftime });
+    for (const f of game.fighters) if (f.netOwner) sendSpawn(f);
+  }
   // west spawn zone shows the colour of whoever spawns there
   setSpawnColors(TEAM_COLORS[sideSign(0) < 0 ? 0 : 1], TEAM_COLORS[sideSign(0) < 0 ? 1 : 0]);
   if (game.config.mode === 'tdm') {
@@ -537,6 +565,7 @@ function endRound(winner, reason) {
   }
   game.lossStreak[loser]++; game.lossStreak[winner] = 0;
   const won = winner === game.player.team;
+  if (net.role === 'host') hostEvent({ t: 'roundEnd', w: winner, reason });
   if (won) trackRound();
   flashMsg(won ? 'ROUND WON' : 'ROUND LOST', reason, MATCH.endTime, won ? 'win' : 'lose');
   sfx(won ? 'round' : 'lose');
@@ -544,6 +573,7 @@ function endRound(winner, reason) {
 }
 
 function matchOver() {
+  if (net.role === 'host') hostEvent({ t: 'over', score: game.score });
   game.phase = 'over';
   const me = game.player.team, them = 1 - me;
   const draw = game.config.mode === 'tdm' && game.score[me] === game.score[them];
@@ -553,6 +583,11 @@ function matchOver() {
   renderXpSummary(finishMatch({ won, assists: game.player.assists }));
   $('overScore').textContent = `${game.score[0]} – ${game.score[1]}`;
   $('overBoard').innerHTML = scoreboardHTML(true);
+  // results buttons: offline defaults, or lobby controls for online matches
+  $('again').textContent = 'PLAY AGAIN'; $('toMenu').textContent = 'Main menu';
+  $('again').onclick = () => { if (game.config.mode === 'range') startRange(game.config.tutorial); else startMatch(game.config); lock(); };
+  $('toMenu').onclick = () => toMenu();
+  if (online()) onlineMatchOver();
   $('over').hidden = false; $('hud').hidden = true;
   $('scoreboard').hidden = true;
   if (locked()) document.exitPointerLock();
@@ -633,6 +668,7 @@ function respawnFighter(f) {
     giveLoadout(f);
   }
   if (f.brain) f.brain.planRound();
+  if (f.netOwner) sendSpawn(f);
   if (f === game.player) { game.spectating = false; setViewModel(f); }
   setGunLook(f);
 }
@@ -770,10 +806,255 @@ function renderXpSummary(sum) {
 }
 
 // ---------------------------------------------------------------------------
+// Online matches (see src/net/*). Host runs the simulation; clients mirror it.
+// ---------------------------------------------------------------------------
+const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
+const A3 = (v) => [Math.round(v.x * 1000) / 1000, Math.round(v.y * 1000) / 1000, Math.round(v.z * 1000) / 1000];
+const online = () => !!game.net;
+
+/** Called by the lobby UI on 'start' for both host and clients. */
+function startOnlineMatch(lobby, msg) {
+  setupNet(lobby.isHost ? 'host' : 'client', lobby);
+  const cfg = { ...msg.settings, agent: msg.roster.find((r) => r.owner === me.id)?.agent || choice.agent };
+  if (lobby.isHost) {
+    installHostHooks(lobby);
+    startMatch(cfg, msg.roster);
+  } else {
+    installClientHooks(lobby);
+    startClientMatch(cfg, msg.roster);
+  }
+  setPresence({ status: 'in match', lobby: lobby.code });
+  lock();
+}
+
+function buildRosterFighters(cfg, roster, client) {
+  for (const r of roster) {
+    const isPlayer = r.owner === me.id;
+    const f = new Fighter({ id: r.fid, name: isPlayer ? `${r.name} (you)` : r.name, team: r.team, agent: r.agent, isPlayer });
+    if (r.owner && !isPlayer) f.netOwner = r.owner;          // a remote human
+    if (!client && !r.owner) new BotBrain(f, cfg.difficulty);
+    f.human = !!r.owner;
+    scene.add(f.mesh);
+    game.fighters.push(f);
+    net.byFid.set(f.id, f);
+    if (isPlayer) { game.player = f; net.myFid = f.id; }
+  }
+}
+
+// ---- client ---------------------------------------------------------------
+function startClientMatch(cfg, roster) {
+  teardown();
+  setPaused(false);
+  game.config = cfg;
+  game.time = 0; game.round = 0; game.score = [0, 0]; game.lossStreak = [0, 0]; game.noises = [];
+  buildRosterFighters(cfg, roster, true);
+  if (cfg.mode === 'tdm') game.tdmTarget = cfg.teamSize * 8;
+  startTracking(cfg.mode);
+  showMatchHud();
+  game.phase = 'buy';
+}
+
+function installClientHooks(lobby) {
+  net.sendFire = (o, dirs, w) => lobby.toHost({ t: 'fire', o: A3(o), d: dirs.map(A3), w });
+  net.sendAbility = (slot, target) => {
+    const p = game.player;
+    lobby.toHost({ t: 'abil', slot, target: target ? A3(target) : null, yaw: p.yaw, pitch: p.pitch, p: A3(p.pos) });
+  };
+  game.onFury = (f, o, d) => { if (f === game.player) lobby.toHost({ t: 'fury', o: A3(o), d: A3(d) }); };
+  lobby.off('game');
+  lobby.on('game', (m) => clientMsg(m));
+}
+
+let lastPhase = null;
+function clientMsg(m) {
+  const byFid = (id) => net.byFid.get(id);
+  switch (m.t) {
+    case 's': clientSnapshot(m); break;
+    case 'shot': { const f = byFid(m.fid); if (f && f !== game.player) playShotFx(f, m.w, m.r); break; }
+    case 'fury': { const f = byFid(m.fid); if (f && f !== game.player) tracer(f.muzzle(new THREE.Vector3()), V3(m.o).addScaledVector(V3(m.d), 100), 0x7dff6b, 0.12, 0.35); break; }
+    case 'abil': {
+      const f = byFid(m.fid);
+      if (!f) break;
+      const keep = [f.pos.clone(), f.yaw, f.pitch];
+      f.pos.set(...m.p); f.yaw = m.yaw; f.pitch = m.pitch;
+      useAbility(f, m.slot, m.target ? V3(m.target) : null, true);
+      if (f === game.player) { f.pos.copy(keep[0]); f.yaw = keep[1]; f.pitch = keep[2]; tutFlags.ability = true; if (m.slot === 'x') flashMsg(f.agent.x.name.toUpperCase(), 'Ultimate activated', 1.4); }
+      break;
+    }
+    case 'kill': {
+      const a = byFid(m.a), v = byFid(m.v);
+      if (!v) break;
+      v.alive = false; v.hp = 0;
+      v.lastHitDir = m.dir ? V3(m.dir) : null; v.lastHitHead = !!m.o.head;
+      if (a) a.kills = m.ak;
+      game.onKill(a, v, m.o);
+      break;
+    }
+    case 'hit': { const t = byFid(m.v); if (t) game.onPlayerHit(t, m.d, m.h, m.k); break; }
+    case 'hurt': { hurtT = 0.35; const a = byFid(m.a); if (a) game.onPlayerDamaged(a, m.d); sfx('hurt', { vol: 0.6 }); break; }
+    case 'spawn': {
+      const p = game.player;
+      net.spawnSeq = m.seq;
+      if (!p.alive) { p.alive = true; resetFighterMesh(p); }
+      p.pos.set(...m.p); p.vel.set(0, 0, 0); p.yaw = m.yaw; p.pitch = 0;
+      p.reloadT = 0; p.crouch = 0;
+      for (const k of [p.primary, p.secondary]) if (k) p.ammo[k] = WEAPONS[k].mag;
+      game.spectating = false;
+      setViewModel(p);
+      break;
+    }
+    case 'round': clientRound(m); break;
+    case 'roundEnd': {
+      const won = m.w === game.player.team;
+      if (won) trackRound();
+      flashMsg(won ? 'ROUND WON' : 'ROUND LOST', m.reason, MATCH.endTime, won ? 'win' : 'lose');
+      sfx(won ? 'round' : 'lose');
+      if (buyOpen) toggleBuy(false);
+      break;
+    }
+    case 'charge': { const f = byFid(m.by); game.onChargeEvent(m.kind, f); break; }
+    case 'callout': { const f = byFid(m.fid); if (f && f.team === game.player.team) comms(m.text, f.name); break; }
+    case 'over': game.score = m.score; matchOver(); break;
+    case 'drop': {  // a remote human left; the host replaced them with a bot
+      const f = byFid(m.fid); if (f) { f.human = false; f.name = m.name; buildPips(); }
+      break;
+    }
+  }
+}
+
+function clientRound(m) {
+  game.round = m.round; game.attackers = m.attackers;
+  game.spectating = false;
+  clearAbilities(); clearFx(); clearRagdolls(scene);
+  for (const f of game.fighters) { if (!f.alive || f.mesh.userData.ragdoll) { f.alive = true; resetFighterMesh(f); } f.deathT = 0; f.resetAbilities(); }
+  setSpawnColors(TEAM_COLORS[sideSign(0) < 0 ? 0 : 1], TEAM_COLORS[sideSign(0) < 0 ? 1 : 0]);
+  const p = game.player;
+  p.blindUntil = p.nearsightUntil = 0;
+  if (game.config.mode === 'tdm') flashMsg('TEAM DEATHMATCH', `First to ${game.tdmTarget} kills · press B to change loadout (free)`, 4);
+  else if (game.config.mode === 'plant') {
+    const attacking = p.team === game.attackers;
+    flashMsg(m.halftime ? 'SWITCHING SIDES' : `ROUND ${game.round}`, `${attacking ? 'ATTACK — plant the Rift Charge on A or B' : 'DEFEND — stop the plant or defuse it'} · press B to buy`, 3.5);
+  } else flashMsg(`ROUND ${game.round}`, 'BUY PHASE — press B to open the armory', 3);
+  sfx('round');
+}
+
+/** Apply the latest host snapshot to the scene (called every client frame). */
+function clientApply() {
+  const s = net.lastSnap;
+  if (!s) return;
+  if (lastPhase !== s.phase) {
+    if (s.phase === 'live' && lastPhase === 'buy') { flashMsg('FIGHT', '', 1.2); sfx('round'); if (buyOpen) toggleBuy(false); }
+    lastPhase = s.phase;
+  }
+  game.phase = s.phase === 'over' ? game.phase : s.phase;
+  game.phaseT = s.phaseT; game.score = s.score; game.attackers = s.attackers;
+  if (game.config.mode === 'plant') applyChargeSnapshot(unpackCharge(s.ch), (id) => net.byFid.get(id));
+  const interp = interpolate();
+  const byFid = interp ? new Map(interp.map((x) => [x.fid, x])) : new Map();
+  for (const raw of s.f) {
+    const f = net.byFid.get(raw[0]);
+    if (!f) continue;
+    const u = unpackFighter(raw);
+    f.hp = u.hp; f.armor = u.armor; f.ult = u.ult; f.credits = u.credits; f.furyShots = f === game.player && f.furyShots < u.fury ? f.furyShots : u.fury;
+    f.kills = u.kills; f.deaths = u.deaths; f.assists = u.assists; f.damage = u.damage;
+    f.overchargeUntil = u.overcharge; f.revealedUntil = Math.max(f.revealedUntil, u.revealed);
+    f.abil.q.charges = u.q; f.abil.e.charges = u.e; f.abil.q.cd = u.qcd; f.abil.e.cd = u.ecd;
+    // inventory (buys, round resets, deaths) — keep local ammo unless the gun changed
+    if (f.primary !== u.primary) { if (u.primary) f.give(u.primary); else { f.primary = null; f.cur = 'secondary'; setGunLook(f); } if (f === game.player && buyOpen) renderBuy(); }
+    if (f.secondary !== u.secondary && u.secondary) { const cur = f.cur; f.give(u.secondary); if (f.primary && cur === 'primary') f.cur = 'primary'; setGunLook(f); }
+    if (f === game.player) {
+      if (u.alive && !f.alive) { f.alive = true; resetFighterMesh(f); }
+      if (!u.alive && f.alive) { f.alive = false; f.hp = 0; }
+      continue;
+    }
+    // other fighters: interpolated pose
+    const ip = byFid.get(f.id);
+    if (u.alive && !f.alive) { f.alive = true; resetFighterMesh(f); }
+    if (!u.alive) { f.alive = false; continue; }
+    if (ip) {
+      f.pos.set(...ip.pos); f.vel.set(...ip.vel); f.yaw = ip.yaw; f.pitch = ip.pitch; f.crouch = ip.crouch;
+    }
+    f.onGround = u.onGround;
+    const want = u.curPrimary && f.primary ? 'primary' : 'secondary';
+    if (f.cur !== want) { f.cur = want; setGunLook(f); }
+    f.reloadT = u.reload >= 0 ? (1 - u.reload) * f.weapon().reload : 0;
+  }
+}
+
+// ---- host -----------------------------------------------------------------
+function installHostHooks(lobby) {
+  const fid = (f) => (f ? f.id : -1);
+  game.onShotFx = (f, w, fx) => {
+    const r = fx.map((x) => ({ e: A3(x.end), h: x.hit, n: x.n ? A3(x.n) : null, p: x.pens.map(([pt, n, s]) => [A3(pt), A3(n), s]) }));
+    hostEvent({ t: 'shot', fid: f.id, w: w.key, r }, f.netOwner || null);
+  };
+  game.onAbilityUsed = (f, slot, target) => hostEvent({ t: 'abil', fid: f.id, slot, target: target ? A3(target) : null, yaw: f.yaw, pitch: f.pitch, p: A3(f.pos) });
+  game.onFury = (f, o, d) => hostEvent({ t: 'fury', fid: f.id, o: A3(o), d: A3(d) }, f.netOwner || null);
+  game.onDamage = (target, attacker, dealt, head, killed) => {
+    if (attacker?.netOwner) hostEventTo(attacker.id, { t: 'hit', v: target.id, d: Math.round(dealt), h: head, k: killed });
+    if (target.netOwner) hostEventTo(target.id, { t: 'hurt', a: fid(attacker), d: Math.round(dealt) });
+  };
+  lobby.off('game'); lobby.off('left');
+  lobby.on('game', (m, peerId) => hostMsg(m, peerId));
+  lobby.on('left', (mem) => {
+    // a player disconnected mid-match: a bot takes over their fighter
+    const f = game.fighters.find((x) => x.netOwner === mem.id);
+    if (!f) return;
+    f.netOwner = null; f.human = false; f.name = `${mem.name} (bot)`;
+    new BotBrain(f, game.config.difficulty);
+    if (game.phase !== 'buy') f.brain.planRound();
+    hostEvent({ t: 'drop', fid: f.id, name: f.name });
+    comms(`${mem.name} disconnected — a bot took over`, null, true);
+    buildPips();
+  });
+}
+
+function hostMsg(m, peerId) {
+  const f = game.fighters.find((x) => x.netOwner === peerId);
+  if (!f) return;
+  const rewind = Math.min(0.35, net.lobby.rttOf(peerId) / 2 + net.interpDelay);
+  switch (m.t) {
+    case 'i': f.netInput = m; f.netUse = !!m.use; break;
+    case 'fire': remoteFire(f, V3(m.o), m.d.map(V3), m.w, rewind); break;
+    case 'fury': if (f.furyShots > 0) { f.furyShots--; fireFury(f, m); hostEvent({ t: 'fury', fid: f.id, o: m.o, d: m.d }, peerId); } break;
+    case 'abil': {
+      f.yaw = m.yaw; f.pitch = m.pitch;
+      useAbility(f, m.slot, m.target ? V3(m.target) : null);
+      break;
+    }
+    case 'buy': hostBuyFor(f, m.item); break;
+    case 'switch': switchWeapon(f, m.slot); break;
+    case 'reload': startReload(f); break;
+  }
+}
+
+function hostBuyFor(f, item) {
+  if (freeLoadout()) {
+    if (ARMOR[item] || !WEAPONS[item]) return;
+    f.loadout ??= {};
+    f.loadout[WEAPONS[item].slot] = item;
+    if (f.alive && (game.phase === 'buy' || sideSign(f.team) * f.pos.x > 30)) { f.give(item); setGunLook(f); }
+    return;
+  }
+  buy(f, item);
+}
+
+/** Host per-frame: apply remote poses, plant/defuse for remote players, snapshots. */
+function hostStep(dt) {
+  for (const f of game.fighters) {
+    if (!f.netOwner || !f.alive) continue;
+    applyRemoteInput(f, dt);
+    if (f.netUse && game.config.mode === 'plant') tickAction(f, dt);
+  }
+  hostTick(dt);
+}
+
+// ---------------------------------------------------------------------------
 // Kill / hit feedback
 // ---------------------------------------------------------------------------
 game.onKill = (attacker, target, opts) => {
   const mode = game.config.mode;
+  if (net.role === 'host') hostEvent({ t: 'kill', a: attacker ? attacker.id : -1, v: target.id, ak: attacker?.kills || 0, o: { weapon: opts.weapon, head: !!opts.head, ability: opts.ability || null }, dir: target.lastHitDir ? A3(target.lastHitDir) : null });
   if (attacker === game.player && target.team !== attacker.team) {
     trackKill(opts.weapon, opts.head);
     if (mode === 'range') { rs2.kills++; if (target.firstHitT != null) { rs2.ttk += now() - target.firstHitT; rs2.ttkN++; } if (opts.head) tutFlags.headKill = true; }
@@ -811,8 +1092,12 @@ function comms(text, who = null, sys = false) {
   setTimeout(() => el.remove(), 5000);
   while ($('comms').children.length > 5) $('comms').firstChild.remove();
 }
-game.onCallout = (bot, text) => comms(text, bot.name);
+game.onCallout = (f, text) => {
+  if (net.role === 'host') hostEvent({ t: 'callout', fid: f.id, text });
+  comms(text, f.name);
+};
 game.onChargeEvent = (kind, f) => {
+  if (net.role === 'host') hostEvent({ t: 'charge', kind, by: f ? f.id : -1 });
   onChargeEvent(kind);
   if ((kind === 'planted' || kind === 'defused') && f === game.player) trackObjective();
   const mine = game.player.team === game.attackers;
@@ -948,6 +1233,7 @@ function toggleBuy(force) {
 
 function doBuy(key) {
   const p = game.player;
+  if (net.role === 'client') { net.lobby.toHost({ t: 'buy', item: key }); sfx('buy'); return; }
   if (freeLoadout()) {
     if (ARMOR[key]) { if (game.config.mode === 'range') p.armor = ARMOR[key].value; }
     else {
@@ -1230,7 +1516,8 @@ function updatePlayer(dt) {
   }
 
   // hold F to plant / defuse (must stand still)
-  actionProgress = held(keys, 'use') && !buyOpen && game.config.mode === 'plant' ? tickAction(p, dt) : -1;
+  p.netUse = held(keys, 'use') && !buyOpen;
+  actionProgress = p.netUse && game.config.mode === 'plant' ? tickAction(p, dt) : -1;
 
   if (!buyOpen && locked() && actionProgress < 0) {
     const w = p.weapon();
@@ -1413,30 +1700,36 @@ function frame(ts) {
   last = ts;
   if (S.showFps) { fpsAcc += raw; if (++fpsN >= 20) { $('fps').textContent = `${Math.round(fpsN / fpsAcc)} FPS`; fpsAcc = 0; fpsN = 0; } }
   if (game.phase === 'menu') { idleCamera(ts); render(); return; }
-  if (!game.paused && game.phase !== 'over') step(dt);
+  if ((!game.paused || online()) && game.phase !== 'over') step(dt);
   render();
 }
 
 function step(dt) {
+  const client = net.role === 'client';
   game.time += dt;
+  if (client) clientTick(dt, game.player);
   const t = game.time;
   game.noises = game.noises.filter((n) => t - n.t < 1);
-  updatePhase(dt);
+  if (!client) updatePhase(dt);
   if (game.phase === 'over') return;
+  if (client) clientApply();
+  if (net.role === 'host') hostStep(dt);
   updatePlayer(dt);
   for (const f of game.fighters) {
-    if (!f.alive) { if (f.respawnAt && game.time >= f.respawnAt && game.phase === 'live') respawnFighter(f); continue; }
+    if (client && !f.isPlayer) { updateAbilityState(f, dt); continue; }
+    if (f.netOwner) { updateWeapon(f, dt); updateAbilityState(f, dt); continue; }
+    if (!f.alive) { if (!client && f.respawnAt && game.time >= f.respawnAt && game.phase === 'live') respawnFighter(f); continue; }
     if (f.brain) f.brain.think(dt);
     else if (f.dummy) updateDummy(f, dt);
     updateWeapon(f, dt);
     updateAbilityState(f, dt);
   }
   for (const f of game.fighters) if (!f.alive) updateAbilityState(f, dt);
-  separateFighters();
+  if (!client) separateFighters();
   playerVision();
   noiseFootsteps(dt);
   updateAbilities(dt);
-  if (game.config.mode === 'plant') { updateCharge(dt); updateTactics(); }
+  if (game.config.mode === 'plant') { updateCharge(dt); if (!client) updateTactics(); }
   updateFx(dt);
   updateRagdolls(dt);
   updateWorldFx(t);
@@ -1477,5 +1770,5 @@ requestAnimationFrame(frame);
 window.__riftline = {
   game, startMatch, vmScene, cam(pos, look) { debugCam = pos ? { pos: new THREE.Vector3(...pos), look: new THREE.Vector3(...look) } : null; }, renderer, composer, noPost(v) { debugNoPost = v; }, aim(v) { forceAim = v; },
   spray(n) { const p = game.player, out = []; for (let i = 0; i < n * 8; i++) { if (i % 8 === 0) { tryFire(p); out.push([+(p.recoil * 1000).toFixed(0), +(p.recoilYaw * 1000).toFixed(0)]); } step(1 / 120); } return out; },
-  tick(n = 1, dt = 1 / 60) { for (let i = 0; i < n; i++) if (!game.paused && game.phase !== 'over' && game.phase !== 'menu') step(dt); render(); },
+  tick(n = 1, dt = 1 / 60) { for (let i = 0; i < n; i++) if ((!game.paused || game.net) && game.phase !== 'over' && game.phase !== 'menu') step(dt); render(); },
 };

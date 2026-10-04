@@ -342,58 +342,127 @@ function fireRound(f, w) {
   f.lookDir(_aim);
   const spread = currentSpread(f);
   const pellets = w.pellets || 1;
-  const hits = new Map(); // target -> { dmg, head, zone, wallbang }
-  let firstEnd = null, impactsSounded = 0;
+  const dirs = [];
   for (let i = 0; i < pellets; i++) {
     spreadDir(_pd, _aim, spread);
     if (pellets > 1) spreadDir(_pd, _pd, w.pelletSpread);
-    const { target, zone, head, t, wall, mul, pens } = traceShot(f, _o, _pd, 150, false, w.pen || 0);
-    _end.copy(_o).addScaledVector(_pd, t);
-    if (!firstEnd) { firstEnd = _end.clone(); _d.copy(_pd); }
+    dirs.push(_pd.clone());
+  }
+  // online client: draw everything locally right away, let the host decide the damage
+  const client = game.net?.role === 'client';
+  const fx = resolveRound(f, w, _o, dirs, { damage: !client });
+  f.bloom = Math.min(w.maxBloom, f.bloom + w.bloom);
+  applyRecoil(f, w);
+  afterShot(f, w, fx);
+  if (client) game.net.sendFire?.(_o, dirs, w.key);
+  if (w.key === 'longbow' && f.isPlayer) f.scoped = false;
+}
+
+/** Muzzle flash, sound, noise for bots, whizz past the listener. */
+function afterShot(f, w, fx) {
+  const muz = f.muzzle(_m);
+  if (!f.isPlayer || game.spectating) muzzleSprite(muz, (w.slot === 'primary' ? 0.5 : 0.35) * (w.suppressed ? 0.35 : 1));
+  if (fx.length) { _d.copy(fx[0].dir); bulletPassBy(f, fx[0].o, _d, fx[0].o.distanceTo(fx[0].end)); }
+  f.lastShotT = now();
+  f.kickT = 1;
+  if (f.isPlayer) game.onPlayerShot?.(f, w);
+  game.onAnyShot?.(f, muz);
+  emitSound(f, w.key);
+  game.noises.push({ pos: f.pos.clone(), team: f.team, t: now(), shooter: f, quiet: !!w.suppressed });
+}
+
+/**
+ * Trace one trigger pull (1 bullet or N pellets) from o along dirs: effects, optional damage.
+ * opts.rewind: seconds to rewind enemy positions (host resolving a laggy client's shot).
+ * Returns fx records [{ o, dir, end, hit: 'flesh'|surface|null, n }] so the host can replay them on clients.
+ */
+export function resolveRound(f, w, o, dirs, opts = {}) {
+  const rewound = [];
+  if (opts.rewind && game.net?.rewindPos) {
+    for (const e of game.fighters) {
+      if (!e.alive || e.team === f.team) continue;
+      const r = game.net.rewindPos(e, opts.rewind);
+      if (r) { rewound.push([e, e.pos.clone(), e.crouch]); e.pos.set(r[0], r[1], r[2]); e.crouch = r[3]; }
+    }
+  }
+  const hits = new Map(); // target -> { dmg, head, zone, wallbang }
+  const fx = [];
+  let impactsSounded = 0;
+  dirs.forEach((dir, i) => {
+    const { target, zone, head, t, wall, mul, pens } = traceShot(f, o, dir, 150, false, w.pen || 0);
+    const end = o.clone().addScaledVector(dir, t);
+    const rec = { o: o.clone(), dir: dir.clone(), end, hit: null, n: null, pens: [] };
     // entry + exit holes on every wall the round punched through
     for (const p of pens) {
       const surf = surfaceOf(p.kind);
       for (const [tt, sign] of [[p.t0, 1], [p.t1, -1]]) {
-        const pt = _o.clone().addScaledVector(_pd, tt);
+        const pt = o.clone().addScaledVector(dir, tt);
         const n = boxNormalAt(p.box, pt);
         impact(pt, n, surf);
         bulletHole(pt, n, surf);
+        rec.pens.push([pt, n, surf]);
         if (sign > 0 && impactsSounded++ < 2 && Math.random() < 0.6) sfx('impact', { pos: pt, surface: surf, vol: 0.6 });
       }
     }
     if (target) {
       const dmg = (head ? w.head : w.dmg * HIT_ZONES[zone]) * falloffMul(w, t) * mul;
-      const h = hits.get(target) || { dmg: 0, head: false, zone, wallbang: false, dir: _pd.clone() };
+      const h = hits.get(target) || { dmg: 0, head: false, zone, wallbang: false, dir: dir.clone() };
       h.dmg += dmg; h.head ||= head; h.wallbang ||= pens.length > 0;
       if (head) h.zone = 'head';
       hits.set(target, h);
-      blood(_end, _pd);
+      blood(end, dir);
+      rec.hit = 'flesh';
     } else if (wall && wall.t < 150) {
       const surf = wall.kind === 'floor' ? 'floor' : surfaceOf(wall.kind);
-      impact(_end, wall.n, surf);
-      bulletHole(_end, wall.n, surf);
-      if (impactsSounded++ < 2 && Math.random() < 0.6) sfx('impact', { pos: _end, surface: surf, vol: 0.6 });
+      impact(end, wall.n, surf);
+      bulletHole(end, wall.n, surf);
+      rec.hit = surf; rec.n = wall.n.clone();
+      if (impactsSounded++ < 2 && Math.random() < 0.6) sfx('impact', { pos: end, surface: surf, vol: 0.6 });
     }
     const muz = f.muzzle(_m);
     // suppressed guns leave no tracers; shotguns show a couple of pellet streaks
-    if (!w.suppressed && (pellets > 1 ? i < 3 : Math.random() < (w.auto ? 0.5 : 1) || !f.isPlayer)) tracer(muz, _end, 0xffe6b0);
-  }
+    if (!w.suppressed && (dirs.length > 1 ? i < 3 : Math.random() < (w.auto ? 0.5 : 1) || !f.isPlayer)) tracer(muz, end, 0xffe6b0);
+    fx.push(rec);
+  });
+  for (const [e, pos, c] of rewound) { e.pos.copy(pos); e.crouch = c; }
   // pellets that hit the same target land as one hit (one hit marker / damage number)
-  for (const [target, h] of hits) {
-    applyDamage(target, Math.round(h.dmg), f, { head: h.head, zone: h.zone, weapon: w.key, dir: h.dir, wallbang: h.wallbang });
+  if (opts.damage !== false) {
+    for (const [target, h] of hits) {
+      applyDamage(target, Math.round(h.dmg), f, { head: h.head, zone: h.zone, weapon: w.key, dir: h.dir, wallbang: h.wallbang });
+    }
   }
-  f.bloom = Math.min(w.maxBloom, f.bloom + w.bloom);
-  applyRecoil(f, w);
-  const muz = f.muzzle(_m);
-  if (!f.isPlayer || game.spectating) muzzleSprite(muz, (w.slot === 'primary' ? 0.5 : 0.35) * (w.suppressed ? 0.35 : 1));
-  bulletPassBy(f, _o, _d, _o.distanceTo(firstEnd));
-  f.lastShotT = now();
-  if (f.isPlayer) game.onPlayerShot?.(f, w);
-  game.onAnyShot?.(f, muz);
+  game.onShotFx?.(f, w, fx);
+  return fx;
+}
 
-  emitSound(f, w.key);
-  game.noises.push({ pos: f.pos.clone(), team: f.team, t: now(), shooter: f, quiet: !!w.suppressed });
-  if (w.key === 'longbow' && f.isPlayer) f.scoped = false;
+/** Host: resolve a shot fired by a remote player (origin + directions sent by their client). */
+export function remoteFire(f, o, dirs, wkey, rewind) {
+  const w = WEAPONS[wkey];
+  if (!w || !f.alive || (f.primary !== wkey && f.secondary !== wkey)) return;
+  if (game.phase === 'buy' || game.phase === 'end') return;
+  if (f.weaponKey() !== wkey) { f.cur = w.slot; setGunLook(f); }
+  f.ammo[wkey] = Math.max(0, (f.ammo[wkey] ?? w.mag) - 1);
+  const fx = resolveRound(f, w, o, dirs, { damage: true, rewind });
+  afterShot(f, w, fx);
+}
+
+/** Client: replay a shot that happened on the host (tracers, impacts, sound) without tracing. */
+export function playShotFx(f, wkey, recs) {
+  const w = WEAPONS[wkey];
+  if (!w || !f) return;
+  const muz = f.muzzle(_m);
+  recs.forEach((r, i) => {
+    const end = new THREE.Vector3(...r.e);
+    for (const [p, n, surf] of r.p || []) { const pt = new THREE.Vector3(...p), nn = new THREE.Vector3(...n); impact(pt, nn, surf); bulletHole(pt, nn, surf); }
+    if (r.h === 'flesh') blood(end, new THREE.Vector3().subVectors(end, muz).normalize());
+    else if (r.h) { const n = new THREE.Vector3(...r.n); impact(end, n, r.h); bulletHole(end, n, r.h); }
+    if (!w.suppressed && (recs.length > 1 ? i < 3 : true)) tracer(muz, end, 0xffe6b0);
+  });
+  muzzleSprite(muz, (w.slot === 'primary' ? 0.5 : 0.35) * (w.suppressed ? 0.35 : 1));
+  if (recs[0]) bulletPassBy(f, muz, new THREE.Vector3().subVectors(new THREE.Vector3(...recs[0].e), muz).normalize(), muz.distanceTo(new THREE.Vector3(...recs[0].e)));
+  f.kickT = 1; f.lastShotT = now();
+  game.onAnyShot?.(f, muz);
+  emitSound(f, wkey);
 }
 
 /** Recoil pattern: climb for `climb` shots, then plateau with a left/right sway. */
@@ -470,6 +539,7 @@ export function switchWeapon(f, slot) {
 // Damage
 // ---------------------------------------------------------------------------
 export function applyDamage(target, amount, attacker, opts = {}) {
+  if (game.net?.role === 'client') return;   // the host decides damage online
   if (!target.alive || game.phase === 'end' || game.phase === 'over') return;
   if (now() < (target.protectUntil || 0)) return;   // respawn protection
   const before = target.hp + target.armor;
@@ -491,6 +561,7 @@ export function applyDamage(target, amount, attacker, opts = {}) {
   target.brain?.onDamaged(attacker);
   if (attacker === game.player) game.onPlayerHit?.(target, dealt, opts.head, target.hp <= 0);
   if (target === game.player) game.onPlayerDamaged?.(attacker, dealt);
+  game.onDamage?.(target, attacker, dealt, !!opts.head, target.hp <= 0);
   if (target.hp <= 0) kill(target, attacker, opts);
 }
 

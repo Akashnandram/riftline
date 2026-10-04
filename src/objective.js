@@ -73,10 +73,41 @@ export function resetCharge() {
 export function hideCharge() { if (mesh) mesh.visible = false; game.charge = null; }
 
 const _back = new THREE.Vector3();
+/** Online client: the charge's state comes from host snapshots; we only draw it. */
+export function applyChargeSnapshot(cs, byFid) {
+  if (!cs) { hideCharge(); return; }
+  const m = chargeMesh();
+  if (!m.parent) game.scene.add(m);
+  game.charge ??= { state: cs.state, pos: new THREE.Vector3(), carrier: null, timer: 0, progress: 0, actor: null, site: null, half: false, beepT: 0 };
+  const c = game.charge;
+  c.state = cs.state; c.pos.set(...cs.pos); c.carrier = byFid(cs.carrier) || null; c.timer = cs.timer;
+  c.progress = cs.progress; c.actor = byFid(cs.actor) || null; c.site = cs.site; c.half = cs.half;
+  c.client = true;
+  if (c.state === 'defused') { light.intensity = 0; m.userData.core.material.emissiveIntensity = 0.05; }
+  if (c.state === 'exploded') m.visible = false;
+}
+
 export function updateCharge(dt) {
   const c = game.charge;
   if (!c || !mesh) return;
   const t = now();
+  if (c.client) {
+    // visuals only: follow the carrier, spin when dropped, beep + blink when planted
+    if (c.state === 'carried' && c.carrier) {
+      const f = c.carrier;
+      _back.set(Math.sin(f.yaw) * 0.25, 1.05 - f.drop, Math.cos(f.yaw) * 0.25);
+      mesh.position.copy(f.pos).add(_back); mesh.rotation.set(Math.PI / 2, f.yaw, 0);
+      mesh.visible = f.alive && !(f.isPlayer && !game.spectating);
+    } else if (c.state === 'dropped') { mesh.position.copy(c.pos); mesh.rotation.set(0, t, 0); mesh.visible = true; }
+    else if (c.state === 'planted') {
+      mesh.position.copy(c.pos); mesh.visible = true;
+      const interval = c.timer > 20 ? 1 : c.timer > 10 ? 0.5 : c.timer > 5 ? 0.25 : 0.12;
+      if ((c.beepT -= dt) <= 0) { c.beepT = interval; emitSound({ pos: c.pos }, 'beep', 1); light.intensity = 5; }
+      light.intensity *= Math.exp(-dt * 10);
+      mesh.userData.core.material.emissiveIntensity = 0.6 + light.intensity * 0.4;
+    }
+    return;
+  }
   if (c.state === 'carried') {
     const f = c.carrier;
     if (!f.alive) { drop(f); }
@@ -139,6 +170,11 @@ export function canDefuse(f) {
 /** Call every frame while f is holding the plant/defuse action. Returns progress 0..1 or -1 if not allowed. */
 export function tickAction(f, dt) {
   const c = game.charge;
+  if (c?.client) {
+    // online client: just report progress from the host's snapshot
+    if (!(canPlant(f) || canDefuse(f))) return -1;
+    return c.actor === f ? c.progress / (c.state === 'planted' ? MATCH.defuseTime : MATCH.plantTime) : -1;
+  }
   const planting = canPlant(f), defusing = !planting && canDefuse(f);
   if (!planting && !defusing) return -1;
   if (Math.hypot(f.vel.x, f.vel.z) > 0.6) { if (c.actor === f) { c.actor = null; c.progress = defusing && c.half ? MATCH.defuseTime / 2 : 0; } return -1; }
