@@ -428,20 +428,20 @@ body.touch .abil { width: 130px; padding: 9px 10px; }
 #tReload { right: 158px; bottom: 186px; width: 46px; height: 46px; }
 #tLoadout { left: 50%; top: 8px; transform: translateX(-120%); }
 #tPause { left: 50%; top: 8px; transform: translateX(60%); }
-body.touch #minimap { width: 150px; height: auto; }
+body.touch #minimap { width: 108px; height: auto; opacity: 0.85; }
 body.touch #rightCol { gap: 4px; }
 body.touch .kf { font-size: 11px; padding: 2px 8px; }
-body.touch #abilities { position: fixed; right: 10px; top: 150px; }
-body.touch #streakBox { right: 10px; bottom: auto; top: 238px; font-size: 10px; padding: 2px 8px; }
+body.touch #abilities { position: fixed; right: 10px; top: 112px; }
+body.touch #streakBox { right: 10px; bottom: auto; top: 196px; font-size: 10px; padding: 2px 8px; }
 body.touch #streakBox b { font-size: 12px; }
 body.touch #medals { top: calc(50% + 30px); }
 body.touch .medal { font-size: 12px; padding: 2px 10px; }
 body.touch #msgMain { font-size: 30px; letter-spacing: 2px; }
 body.touch #msgSub { font-size: 13px; }
 body.touch #centerMsg { top: 16%; }
-body.touch #comms { top: 120px; }
+body.touch #comms { top: 92px; }
 body.touch #comms > * { font-size: 11px; }
-body.touch #matchPanel { transform: scale(0.85); transform-origin: top left; }
+body.touch #matchPanel { transform: scale(0.68); transform-origin: top left; opacity: 0.92; }
 body.touch #vitals { left: 16px; transform: none; bottom: 10px; }
 body.touch #bottomRight { bottom: 10px; right: 10px; }
 body.touch #hintBar { bottom: auto; top: 98px; white-space: normal; max-width: 70vw; text-align: center; }
@@ -475,3 +475,27 @@ body.touch .mLeft { padding-bottom: 70px; }
 .of-opts button.locked { opacity: 0.4; }
 .of-opts i { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.3); }
 .of-opts small { color: var(--dim); font-weight: 500; font-size: 11px; }
+
+#tSwap { right: 14px; top: 236px; }
+body.touch #killfeed .kf:nth-child(n+4) { display: none; }
+body.touch .wcard { padding: 4px 10px 4px 16px; }
+body.touch #ammo span { font-size: 30px; }
+body.touch #vitals .vbars { width: 150px; }
+body.touch .vnum span { font-size: 22px; }
+/* touch-control editor */
+#touchEdit { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.25); touch-action: none; }
+body.touch-editing #hud { display: block !important; }
+body.touch-editing .tbtn, body.touch-editing #abilities { outline: 2px dashed rgba(255,255,255,0.5); outline-offset: 2px; }
+.te-sel { outline: 3px solid #ffd23f !important; }
+.te-panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(260px, 36vw); padding: 8px 10px; background: rgba(14,17,22,0.92);
+  border-top: 3px solid var(--red); display: flex; flex-direction: column; gap: 4px; font-size: 12px; transition: opacity 0.15s; }
+.te-panel.left { left: 3%; transform: translateY(-50%); }
+.te-panel.right { left: auto; right: 3%; transform: translateY(-50%); }
+#touchEdit.dragging .te-panel { opacity: 0.15; pointer-events: none; }
+.te-panel b { font-size: 13px; }
+.te-panel small { color: var(--dim); }
+.te-panel label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.te-panel input[type=range] { width: 60%; }
+.te-row { display: flex; gap: 8px; justify-content: flex-end; }
+.te-row .big { padding: 6px 16px; font-size: 13px; }
+.te-row .ghost { padding: 5px 12px; font-size: 13px; }

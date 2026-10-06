@@ -34,7 +34,7 @@ import { me, setPresence } from './net/backend.js';
 import { initOnlineUI, onlineMatchOver, leaveOnline } from './net/ui.js';
 import { buildGun, casingGeo, casingMat } from './guns.js';
 import { flashTexture } from './textures.js';
-import { IS_TOUCH, touch, initTouch, takeLook, enterFullscreen } from './touch.js';
+import { IS_TOUCH, touch, initTouch, takeLook, enterFullscreen, openTouchEditor } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -378,6 +378,9 @@ function quickPlay() {
 }
 $('quickPlay').onclick = quickPlay;
 $('buyClose').onclick = () => toggleBuy(false);
+// phones: rearrange / resize the touch buttons from the pause menu
+$('pauseControls').hidden = !IS_TOUCH;
+$('pauseControls').onclick = () => { $('pause').hidden = true; openTouchEditor(() => { $('pause').hidden = !game.paused; }); };
 initTouch({
   active: () => locked(),
   fire: (down) => { mouse.left = down; if (down) mouse.leftPressed = true; },

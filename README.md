@@ -70,7 +70,9 @@ Squads are 2v2, 4v4 or 6v6; empty slots are filled with bots.
 
 **Phones & tablets**: touch controls switch on automatically — a floating move stick on the left (push it all the
 way up to sprint), swipe the right side to look, FIRE (drag on it to steer), AIM, JUMP, CROUCH (slide while
-sprinting), R, LOADOUT and pause buttons; tap the gadget cards and the weapon card. A light aim assist slows and
+sprinting), R, ⇄ (swap weapon), LOADOUT and pause buttons; tap the gadget cards. **Pause → Customize touch controls** lets
+players drag every button and set its size and opacity (saved on the device). The minimap and score panel are
+compact on phones. A light aim assist slows and
 nudges the view onto targets near the crosshair. Phones use the Low graphics preset and go fullscreen landscape.
 
 **Outfits** (Loadout & Skins → Outfits): per operative jacket colour, trousers, shoes, hairstyle, hair colour
