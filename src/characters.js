@@ -388,7 +388,8 @@ export function animateCharacter(root, s, dt) {
   u.phase += speed * dt * 1.9;
   const fK = speed > 0.1 ? vf / (Math.hypot(vf, vs) || 1) : 0, sK = speed > 0.1 ? vs / (Math.hypot(vf, vs) || 1) : 0;
   const back = fK < -0.2 ? -1 : 1;
-  const c = s.crouch || 0;
+  const c = s.slide ? 0 : (s.crouch || 0);
+  const sp = s.sprint ? 1 : 0;
   // landing: knees soak up the impact for a moment
   if (s.onGround && !u.wasGround) u.land = Math.min(1, u.land + 0.8);
   u.wasGround = s.onGround;
@@ -415,13 +416,17 @@ export function animateCharacter(root, s, dt) {
       f.rotation.x += (0.85 - f.rotation.x) * c;
     }
     if (land > 0) { t.rotation.x += land * 0.55; k.rotation.x -= land * 1.0; f.rotation.x += land * 0.45; }
+    if (s.slide) {
+      // feet-first slide: lead leg out straight, the other tucked under
+      t.rotation.set(i ? 1.45 : 1.1, 0, i ? 0.05 : -0.12); k.rotation.set(i ? -0.15 : -1.7, 0, 0); f.rotation.set(i ? -0.2 : 0.6, 0, 0);
+    }
   }
 
   // pelvis: dips twice per stride, sways side to side over the planted foot
   const bobY = Math.abs(Math.sin(u.phase)) * 0.035 * amp;
   const idle = 1 - Math.min(1, speed / 1.5);
   const tNow = performance.now() / 1000;
-  u.hips.position.y = HIP_Y - bobY * (1 - c * 0.6) - amp * 0.03 - (s.onGround ? 0 : 0.05) - 0.42 * c - land * 0.12;
+  u.hips.position.y = HIP_Y - bobY * (1 - c * 0.6) - amp * 0.03 - (s.onGround ? 0 : 0.05) - 0.42 * c - land * 0.12 - (s.slide ? 0.55 : 0);
   u.hips.position.x = Math.cos(u.phase) * 0.025 * amp + Math.sin(tNow * 0.6 + u.phase) * 0.008 * idle;   // weight shift at rest
   u.hips.rotation.y = Math.sin(u.phase) * 0.12 * amp;
   // strafing lean, running forward tilt
@@ -432,7 +437,7 @@ export function animateCharacter(root, s, dt) {
   u.flinch.multiplyScalar(Math.exp(-9 * dt));
   const breathe = Math.sin(performance.now() / 650) * 0.012;
   const pitch = THREE.MathUtils.clamp(s.pitch, -1.0, 1.0);
-  u.spine.rotation.set(pitch * 0.35 + fK * amp * 0.12 + u.flinch.x - 0.22 * c, -u.hips.rotation.y * 0.8 + u.flinch.z, u.lean * 0.8 + u.flinch.y);
+  u.spine.rotation.set(pitch * 0.35 + fK * amp * 0.12 + u.flinch.x - 0.22 * c + sp * 0.22 - (s.slide ? 0.55 : 0), -u.hips.rotation.y * 0.8 + u.flinch.z, u.lean * 0.8 + u.flinch.y);
   u.chest.rotation.set(pitch * 0.45 + breathe + 0.12 * c + land * 0.12, -u.hips.rotation.y * 0.2, -u.hips.rotation.z * 0.5);
   // head stays level and on target while the body bobs
   u.neck.rotation.set(pitch * 0.15 - land * 0.1, -u.spine.rotation.y * 0.5, -u.lean * 0.6);
@@ -446,7 +451,7 @@ export function animateCharacter(root, s, dt) {
   // the gun rides with the stride a little
   const sway = Math.sin(u.phase * 2) * 0.012 * amp, swayX = Math.cos(u.phase) * 0.01 * amp;
   g.position.set(swayX, -tilt * 0.06 + sway - land * 0.03, s.kick * 0.04);
-  g.rotation.set(s.kick * 0.08 - tilt * 0.35 + sway * 2, swayX * 2, tilt * 0.6);
+  g.rotation.set(s.kick * 0.08 - tilt * 0.35 + sway * 2 - sp * 0.7, swayX * 2 + sp * 0.5, tilt * 0.6);
   if (gd.mag) {
     const out = rl > 0.12 && rl < 0.7 ? Math.min(1, (rl - 0.12) / 0.15) * (rl < 0.5 ? 1 : 1 - (rl - 0.5) / 0.2) : 0;
     gd.mag.position.copy(gd.magBase); gd.mag.position.y -= out * 0.25;

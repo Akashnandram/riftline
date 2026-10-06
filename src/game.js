@@ -6,19 +6,20 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { game, now, sideSign } from './state.js';
-import { WEAPONS, ARMOR, AGENTS, ECON, MATCH, MOVE, BOT_NAMES } from './config.js';
+import { WEAPONS, ARMOR, AGENTS, ECON, MATCH, MOVE, BOT_NAMES, GADGETS } from './config.js';
 import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx, setSpawnColors, SITE_RECTS, isWalkable, loadMap, MAP } from './world.js';
 import { MAP_LIST, MAPS, randomMap } from './maps/index.js';
 import { resetCharge, hideCharge, updateCharge, tickAction, canPlant, canDefuse, siteAt, applyChargeSnapshot } from './objective.js';
 import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
+import { resetNode, hideNode, updateNode, applyNodeSnapshot, UPLINK } from './uplink.js';
 import {
   Fighter, TEAM_COLORS, EYE, updateFighterMesh, moveFighter, separateFighters, tryFire, startReload,
   updateWeapon, switchWeapon, setGunLook, emitSound, resetFighterMesh, remoteFire, playShotFx,
 } from './entities.js';
 import { updateRagdolls, clearRagdolls, disposeCharacter } from './characters.js';
 import { BotBrain } from './bot.js';
-import { useAbility, abilityReady, updateAbilities, updateAbilityState, clearAbilities, fireFury } from './abilities.js';
-import { buy, botBuy } from './shop.js';
+import { useAbility, abilityReady, updateAbilities, updateAbilityState, clearAbilities, giveGadget } from './abilities.js';
+import { buy, botBuy, gadgetCost } from './shop.js';
 import { updateFx, clearFx, smokePuff, tracer, impact, blood, muzzleSprite, ring, burstSphere, spark, bulletHole } from './fx.js';
 import { initAudio, sfx, setMuted, isMuted, updateListener, setVolume } from './audio.js';
 import { S, save as saveSettings, held, isAction, drawCrosshair, openSettings, onSettingsChange } from './settings.js';
@@ -237,7 +238,7 @@ addEventListener('keydown', (e) => {
   const p = game.player;
   if (isAction(e.code, 'buy')) { toggleBuy(); return; }
   if (buyOpen) {
-    const it = BUY_LIST.find((b) => b.hot === e.key);
+    const it = BUY_LIST.find((b) => b.hot === e.key.toLowerCase());
     if (it) doBuy(it.key);
     if (e.code === 'Escape') toggleBuy(false);
     return;
@@ -253,7 +254,6 @@ addEventListener('keydown', (e) => {
     case 'secondary': switchWeapon(p, 'secondary'); if (net.role === 'client') net.lobby.toHost({ t: 'switch', slot: 'secondary' }); break;
     case 'ability1': playerAbility('q'); break;
     case 'ability2': playerAbility('e'); break;
-    case 'ultimate': playerAbility('x'); break;
     case 'mute': setMuted(!isMuted()); break;
   }
 });
@@ -271,14 +271,15 @@ function playerAbility(slot) {
   const p = game.player;
   if (useAbility(p, slot)) {
     tutFlags.ability = true;
-    if (slot === 'x') flashMsg(p.agent[slot].name.toUpperCase(), 'Ultimate activated', 1.4);
   } else if (game.phase === 'live' && !abilityReady(p, slot) && net.role !== 'client') sfx('empty');
 }
 
 // ---------------------------------------------------------------------------
 // Menu
 // ---------------------------------------------------------------------------
-let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 5), difficulty: store.get('difficulty', 'normal'), mode: store.get('mode', 'plant'), map: store.get('map', 'random') };
+let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 5), difficulty: store.get('difficulty', 'normal'), mode: store.get('mode', 'uplink'), map: store.get('map', 'random') };
+// Uplink became the main mode: switch older saves over once
+if (!store.get('modeV2', false)) { choice.mode = 'uplink'; store.set('mode', 'uplink'); store.set('modeV2', true); }
 if (choice.map !== 'random' && !MAPS[choice.map]) choice.map = 'random';
 
 function renderMenu() {
@@ -290,7 +291,8 @@ function renderMenu() {
     b.style.setProperty('--acc', a.color);
     b.innerHTML = `<div class="face">${a.name}</div><div class="role">${a.role.toUpperCase()}</div>
       <div class="blurb">${a.blurb}</div>
-      <ul>${['q', 'e', 'x'].map((s) => `<li><kbd>${s.toUpperCase()}</kbd> <b>${a[s].name}</b> — ${a[s].desc}</li>`).join('')}</ul>`;
+      <div class="perk"><b>${a.perk.name}</b>${a.perk.desc}</div>
+      <div class="picks">Likes: ${a.picks.map((k) => GADGETS[k].name).join(' · ')}</div>`;
     b.onclick = () => { choice.agent = a.key; store.set('agent', a.key); renderMenu(); };
     wrap.appendChild(b);
   }
@@ -305,6 +307,7 @@ function renderMenu() {
   $('fps').hidden = !S.showFps;
 }
 const MODE_HINTS = {
+  uplink: 'Each round a Rift Node switches on at A, B or mid. Stand in it to capture it, then hold it for 20 seconds — or wipe the other team. First to 5 rounds.',
   plant: 'Attack: plant the Rift Charge on A or B. Defend: stop or defuse it. First to 5 rounds, sides swap at half.',
   elim: 'Round-based: wipe the other team. First to 5 rounds.',
   tdm: 'Quick match: instant respawns, free loadout (press B). First team to the kill target in 5 minutes wins.',
@@ -433,6 +436,7 @@ function setPaused(p) {
 // ---------------------------------------------------------------------------
 function teardown() {
   hideCharge();
+  hideNode();
   game.tac = null;
   clearAbilities();
   clearRagdolls(scene);
@@ -465,7 +469,7 @@ function startMatch(cfg, roster = null, mapId = null) {
   switchMap(mapId || (roster ? cfg.map : resolveMap(cfg.map)));
   game.config = cfg;
   game.mapId = MAP.id;
-  game.config.mode ??= 'plant';
+  game.config.mode ??= 'uplink';
   game.time = 0; game.round = 0; game.score = [0, 0]; game.lossStreak = [0, 0];
   game.attackers = Math.random() < 0.5 ? 0 : 1;
   game.noises = [];
@@ -533,7 +537,7 @@ function showMatchHud() {
   $('menu').hidden = true; $('over').hidden = true; $('hud').hidden = false;
   $('killfeed').innerHTML = '';
   $('comms').innerHTML = '';
-  $('topbar').hidden = game.config.mode === 'range';
+  $('matchPanel').hidden = game.config.mode === 'range';
   $('rangeStats').hidden = game.config.mode !== 'range';
   $('tutorial').hidden = !game.config.tutorial;
   setupAbilityHud();
@@ -544,6 +548,7 @@ function showMatchHud() {
 const pickW = (opts) => { let r = Math.random() * opts.reduce((t, o) => t + o[1], 0); for (const [k, w] of opts) if ((r -= w) <= 0) return k; return opts[0][0]; };
 function botLoadout() {
   return {
+    gadgets: [pickW(Object.keys(GADGETS).map((k) => [k, 1])), pickW(Object.keys(GADGETS).map((k) => [k, 1]))],
     primary: pickW([['raptor', 5], ['wraith', 4], ['talon', 3], ['hornet', 3], ['warden', 2], ['sentry', 2], ['hammer', 1], ['longbow', 1]]),
     secondary: pickW([['p9', 3], ['wasp', 2], ['magnum', 2]]),
   };
@@ -556,6 +561,12 @@ function giveLoadout(f) {
   if (L.primary) f.give(L.primary);
   f.cur = L.primary ? 'primary' : 'secondary';
   setGunLook(f);
+  refillGadgets(f);
+}
+/** Free-loadout modes: fill both gadget slots from the saved picks (operative favourites by default). */
+function refillGadgets(f) {
+  f.resetAbilities();
+  for (const k of f.loadout?.gadgets || f.agent.picks) giveGadget(f, k);
 }
 
 function spawnPoint(team, i) {
@@ -581,9 +592,9 @@ function startRound() {
     if (!f.alive || game.round === 1 || halftime) {
       f.primary = null; f.secondary = 'p9'; f.armor = 0;
       f.ammo = { p9: WEAPONS.p9.mag };
+      f.resetAbilities();          // gadgets are lost on death
     }
-    if (game.round === 1 || halftime) { f.credits = ECON.start; if (game.round === 1) f.ult = 0; }
-    else f.ult = Math.min(MATCH.ultCost, f.ult + 1);
+    if (game.round === 1 || halftime) f.credits = ECON.start;
     f.alive = true; f.hp = 100;
     for (const k of [f.primary, f.secondary]) if (k) f.ammo[k] = WEAPONS[k].mag;
     f.cur = f.primary ? 'primary' : 'secondary';
@@ -595,7 +606,6 @@ function startRound() {
     f.blindUntil = f.revealedUntil = f.spottedUntil = f.overchargeUntil = f.slowUntil = f.furyUntil = f.nearsightUntil = 0;
     f.furyShots = 0; f.healLeft = 0; f.dashT = 0;
     f.bought = []; f.damagedBy.clear();
-    f.resetAbilities();
     f.deathT = 0;
     setGunLook(f);
     if (f.brain) { f.brain.planRound(); botBuy(f); setGunLook(f); }
@@ -607,10 +617,15 @@ function startRound() {
   // west spawn zone shows the colour of whoever spawns there
   setSpawnColors(TEAM_COLORS[sideSign(0) < 0 ? 0 : 1], TEAM_COLORS[sideSign(0) < 0 ? 1 : 0]);
   if (game.config.mode === 'tdm') {
-    for (const f of game.fighters) { giveLoadout(f); f.armor = 50; f.ult = 0; }
+    for (const f of game.fighters) { giveLoadout(f); f.armor = 50; }
     hideCharge();
     game.phaseT = 5;
     flashMsg('TEAM DEATHMATCH', `${MAP.name} · first to ${game.tdmTarget} kills · press B to change loadout (free)`, 4);
+  } else if (game.config.mode === 'uplink') {
+    hideCharge();
+    resetNode();
+    for (const f of game.fighters) if (f.brain) f.brain.plan = { side: 'uplink' };
+    flashMsg(game.round === 1 ? MAP.name.toUpperCase() : `ROUND ${game.round}`, `UPLINK — the Rift Node is in ${game.node.key === 'MID' ? 'MID' : game.node.key + ' lane'} · capture it and hold it · press B to buy`, 3.5);
   } else if (plantMode) {
     resetCharge();
     planTactics();
@@ -690,6 +705,14 @@ function updatePhase(dt) {
     else if (!aD) endRound(A, 'Defenders eliminated');
     else if (!aA && c.state !== 'planted') endRound(D, 'Attackers eliminated');
     else if (game.phaseT <= 0 && c.state !== 'planted') endRound(D, 'Time expired — no plant');
+  } else if (game.phase === 'live' && game.config.mode === 'uplink') {
+    const n = game.node, a0 = aliveCount(0), a1 = aliveCount(1);
+    if (!a0 || !a1) endRound(a0 ? 0 : 1, a0 ? 'Enemy team eliminated' : 'Your team was eliminated');
+    else if (n.hold[0] >= UPLINK.hold || n.hold[1] >= UPLINK.hold) endRound(n.hold[0] >= UPLINK.hold ? 0 : 1, 'Rift Node uplinked');
+    else if (game.phaseT <= 0) {
+      const w = n.hold[0] !== n.hold[1] ? (n.hold[0] > n.hold[1] ? 0 : 1) : n.owner >= 0 ? n.owner : a0 >= a1 ? 0 : 1;
+      endRound(w, 'Time expired — most uplink time wins');
+    }
   } else if (game.phase === 'live') {
     const a0 = aliveCount(0), a1 = aliveCount(1);
     if (!a0 || !a1) endRound(a0 ? 0 : 1, a0 ? 'Enemy team eliminated' : 'Your team was eliminated');
@@ -780,7 +803,6 @@ function startRange(tutorial) {
   p.loadout = tutorial ? { secondary: 'p9' } : { primary: 'raptor', secondary: 'p9' };
   giveLoadout(p);
   p.pos.set(-35.5, 0, -27); p.yaw = Math.PI; p.pitch = 0;
-  p.ult = MATCH.ultCost;
   hideCharge();
   setSpawnColors(TEAM_COLORS[0], TEAM_COLORS[1]);
   game.phase = 'live'; game.phaseT = 0; game.roundStartTime = 0;
@@ -810,12 +832,13 @@ const TUT_STEPS = [
   { t: 'Look around', sub: 'Move your mouse', done: () => tut.yawAcc > 2.5 },
   { t: 'Move', sub: () => `Use ${['forward', 'left', 'back', 'right'].map((a) => keyLabel(a)).join(' ')} to walk around`, done: () => game.player.pos.distanceTo(tut.start) > 5 },
   { t: 'Jump', sub: () => `Press ${keyLabel('jump')}`, done: () => !game.player.onGround },
+  { t: 'Sprint and slide', sub: () => `Hold ${keyLabel('sprint')} while running forward, then press ${keyLabel('crouch')} to slide`, done: () => tutFlags.slide },
   { t: 'Crouch', sub: () => `Hold ${keyLabel('crouch')} — crouching makes you smaller and more accurate`, done: () => game.player.crouch > 0.9 },
   { t: 'Shoot a target', sub: 'Left click. Stand still for the best accuracy', done: () => rs2.kills >= 1 },
   { t: 'Reload', sub: () => `Fire a few shots, then press ${keyLabel('reload')}`, done: () => game.player.reloadT > 0 },
   { t: 'Aim down sights', sub: 'Hold right click and hit one of the far targets (20m+)', done: () => tutFlags.adsFar },
   { t: 'Buy a primary weapon', sub: () => `Press ${keyLabel('buy')} to open the armory and pick a rifle, SMG or shotgun (free here)`, done: () => game.player.primary && categoryOf(game.player.primary) !== 'secondary' },
-  { t: 'Use an ability', sub: () => `Press ${keyLabel('ability1')} or ${keyLabel('ability2')} — your operative's skills`, done: () => tutFlags.ability },
+  { t: 'Throw a gadget', sub: () => `Buy one with ${keyLabel('buy')} (free here), then press ${keyLabel('ability1')} or ${keyLabel('ability2')}`, done: () => tutFlags.ability },
   { t: 'Land a headshot kill', sub: 'Aim for the head — it does much more damage', done: () => tutFlags.headKill },
 ];
 const keyLabel = (a) => `<kbd>${({ Space: 'Space', ShiftLeft: 'Shift' })[S.binds[a]] || S.binds[a].replace(/^Key|^Digit/, '')}</kbd>`;
@@ -840,8 +863,8 @@ function renderTutorial() {
 let rangeT = 0;
 function updateRange(dt) {
   const p = game.player;
-  // keep abilities and ultimate topped up so they can be tried freely
-  if ((rangeT += dt) > 6) { rangeT = 0; p.resetAbilities(); p.ult = MATCH.ultCost; }
+  // keep gadgets topped up so they can be tried freely
+  if ((rangeT += dt) > 6) { rangeT = 0; refillGadgets(p); }
   const acc = rs2.shots ? Math.round((rs2.hits / rs2.shots) * 100) : 0;
   const hs = rs2.hits ? Math.round((rs2.heads / rs2.hits) * 100) : 0;
   const ttk = rs2.ttkN ? (rs2.ttk / rs2.ttkN).toFixed(2) + 's' : '—';
@@ -935,7 +958,6 @@ function installClientHooks(lobby) {
     const p = game.player;
     lobby.toHost({ t: 'abil', slot, target: target ? A3(target) : null, yaw: p.yaw, pitch: p.pitch, p: A3(p.pos) });
   };
-  game.onFury = (f, o, d) => { if (f === game.player) lobby.toHost({ t: 'fury', o: A3(o), d: A3(d) }); };
   lobby.off('game');
   lobby.on('game', (m) => clientMsg(m));
 }
@@ -946,14 +968,13 @@ function clientMsg(m) {
   switch (m.t) {
     case 's': clientSnapshot(m); break;
     case 'shot': { const f = byFid(m.fid); if (f && f !== game.player) playShotFx(f, m.w, m.r); break; }
-    case 'fury': { const f = byFid(m.fid); if (f && f !== game.player) tracer(f.muzzle(new THREE.Vector3()), V3(m.o).addScaledVector(V3(m.d), 100), 0x7dff6b, 0.12, 0.35); break; }
     case 'abil': {
       const f = byFid(m.fid);
       if (!f) break;
       const keep = [f.pos.clone(), f.yaw, f.pitch];
       f.pos.set(...m.p); f.yaw = m.yaw; f.pitch = m.pitch;
-      useAbility(f, m.slot, m.target ? V3(m.target) : null, true);
-      if (f === game.player) { f.pos.copy(keep[0]); f.yaw = keep[1]; f.pitch = keep[2]; tutFlags.ability = true; if (m.slot === 'x') flashMsg(f.agent.x.name.toUpperCase(), 'Ultimate activated', 1.4); }
+      useAbility(f, m.slot, m.target ? V3(m.target) : null, true, m.g);
+      if (f === game.player) { f.pos.copy(keep[0]); f.yaw = keep[1]; f.pitch = keep[2]; tutFlags.ability = true; }
       break;
     }
     case 'kill': {
@@ -1009,7 +1030,8 @@ function clientRound(m) {
   else if (game.config.mode === 'plant') {
     const attacking = p.team === game.attackers;
     flashMsg(m.halftime ? 'SWITCHING SIDES' : `ROUND ${game.round}`, `${attacking ? 'ATTACK — plant the Rift Charge on A or B' : 'DEFEND — stop the plant or defuse it'} · press B to buy`, 3.5);
-  } else flashMsg(`ROUND ${game.round}`, 'BUY PHASE — press B to open the armory', 3);
+  } else if (game.config.mode === 'uplink') flashMsg(`ROUND ${game.round}`, 'UPLINK — capture the Rift Node and hold it · press B to buy', 3.5);
+  else flashMsg(`ROUND ${game.round}`, 'BUY PHASE — press B to open the armory', 3);
   sfx('round');
 }
 
@@ -1024,16 +1046,17 @@ function clientApply() {
   game.phase = s.phase === 'over' ? game.phase : s.phase;
   game.phaseT = s.phaseT; game.score = s.score; game.attackers = s.attackers;
   if (game.config.mode === 'plant') applyChargeSnapshot(unpackCharge(s.ch), (id) => net.byFid.get(id));
+  if (game.config.mode === 'uplink') applyNodeSnapshot(s.nd);
   const interp = interpolate();
   const byFid = interp ? new Map(interp.map((x) => [x.fid, x])) : new Map();
   for (const raw of s.f) {
     const f = net.byFid.get(raw[0]);
     if (!f) continue;
     const u = unpackFighter(raw);
-    f.hp = u.hp; f.armor = u.armor; f.ult = u.ult; f.credits = u.credits; f.furyShots = f === game.player && f.furyShots < u.fury ? f.furyShots : u.fury;
+    f.hp = u.hp; f.armor = u.armor; f.credits = u.credits; f.spottedUntil = Math.max(f.spottedUntil, u.spotted);
     f.kills = u.kills; f.deaths = u.deaths; f.assists = u.assists; f.damage = u.damage;
-    f.overchargeUntil = u.overcharge; f.revealedUntil = Math.max(f.revealedUntil, u.revealed);
-    f.abil.q.charges = u.q; f.abil.e.charges = u.e; f.abil.q.cd = u.qcd; f.abil.e.cd = u.ecd;
+    f.revealedUntil = Math.max(f.revealedUntil, u.revealed);
+    f.abil.q.charges = u.q; f.abil.e.charges = u.e; f.abil.q.key = u.qk; f.abil.e.key = u.ek;
     // inventory (buys, round resets, deaths) — keep local ammo unless the gun changed
     if (f.primary !== u.primary) { if (u.primary) f.give(u.primary); else { f.primary = null; f.cur = 'secondary'; setGunLook(f); } if (f === game.player && buyOpen) renderBuy(); }
     if (f.secondary !== u.secondary && u.secondary) { const cur = f.cur; f.give(u.secondary); if (f.primary && cur === 'primary') f.cur = 'primary'; setGunLook(f); }
@@ -1049,7 +1072,7 @@ function clientApply() {
     if (ip) {
       f.pos.set(...ip.pos); f.vel.set(...ip.vel); f.yaw = ip.yaw; f.pitch = ip.pitch; f.crouch = ip.crouch;
     }
-    f.onGround = u.onGround;
+    f.onGround = u.onGround; f.sprinting = u.sprint; f.slideT = u.slide ? 0.05 : 0;
     const want = u.curPrimary && f.primary ? 'primary' : 'secondary';
     if (f.cur !== want) { f.cur = want; setGunLook(f); }
     f.reloadT = u.reload >= 0 ? (1 - u.reload) * f.weapon().reload : 0;
@@ -1063,8 +1086,7 @@ function installHostHooks(lobby) {
     const r = fx.map((x) => ({ e: A3(x.end), h: x.hit, n: x.n ? A3(x.n) : null, p: x.pens.map(([pt, n, s]) => [A3(pt), A3(n), s]) }));
     hostEvent({ t: 'shot', fid: f.id, w: w.key, r }, f.netOwner || null);
   };
-  game.onAbilityUsed = (f, slot, target) => hostEvent({ t: 'abil', fid: f.id, slot, target: target ? A3(target) : null, yaw: f.yaw, pitch: f.pitch, p: A3(f.pos) });
-  game.onFury = (f, o, d) => hostEvent({ t: 'fury', fid: f.id, o: A3(o), d: A3(d) }, f.netOwner || null);
+  game.onAbilityUsed = (f, slot, target, g) => hostEvent({ t: 'abil', fid: f.id, slot, g, target: target ? A3(target) : null, yaw: f.yaw, pitch: f.pitch, p: A3(f.pos) });
   game.onDamage = (target, attacker, dealt, head, killed) => {
     if (attacker?.netOwner) hostEventTo(attacker.id, { t: 'hit', v: target.id, d: Math.round(dealt), h: head, k: killed });
     if (target.netOwner) hostEventTo(target.id, { t: 'hurt', a: fid(attacker), d: Math.round(dealt) });
@@ -1091,7 +1113,6 @@ function hostMsg(m, peerId) {
   switch (m.t) {
     case 'i': f.netInput = m; f.netUse = !!m.use; break;
     case 'fire': remoteFire(f, V3(m.o), m.d.map(V3), m.w, rewind); break;
-    case 'fury': if (f.furyShots > 0) { f.furyShots--; fireFury(f, m); hostEvent({ t: 'fury', fid: f.id, o: m.o, d: m.d }, peerId); } break;
     case 'abil': {
       f.yaw = m.yaw; f.pitch = m.pitch;
       useAbility(f, m.slot, m.target ? V3(m.target) : null);
@@ -1104,6 +1125,12 @@ function hostMsg(m, peerId) {
 }
 
 function hostBuyFor(f, item) {
+  if (freeLoadout() && GADGETS[item]) {
+    f.loadout ??= {};
+    f.loadout.gadgets = [...(f.loadout.gadgets || f.agent.picks).slice(-1), item];
+    if (f.alive && sideSign(f.team) * f.pos.x > 30) refillGadgets(f);
+    return;
+  }
   if (freeLoadout()) {
     if (ARMOR[item] || !WEAPONS[item]) return;
     f.loadout ??= {};
@@ -1294,6 +1321,9 @@ const BUY_LIST = [
   { key: 'talon', cat: 'rifle', hot: '6' }, { key: 'raptor', cat: 'rifle', hot: '7' }, { key: 'wraith', cat: 'rifle', hot: '8' },
   { key: 'sentry', cat: 'heavy', hot: '9' }, { key: 'hammer', cat: 'heavy', hot: '0' }, { key: 'longbow', cat: 'heavy', hot: '-' },
   { key: 'light', cat: 'armor', hot: 'z' }, { key: 'heavy', cat: 'armor', hot: 'x' },
+  { key: 'smoke', cat: 'gadget', hot: 'c' }, { key: 'flash', cat: 'gadget', hot: 'v' }, { key: 'frag', cat: 'gadget', hot: 'f' },
+  { key: 'gas', cat: 'gadget', hot: 'g' }, { key: 'sensor', cat: 'gadget', hot: 'h' }, { key: 'medkit', cat: 'gadget', hot: 'j' },
+  { key: 'cover', cat: 'gadget', hot: 'k' },
 ];
 
 const freeLoadout = () => game.config.mode === 'tdm' || game.config.mode === 'range';
@@ -1309,6 +1339,14 @@ function toggleBuy(force) {
 function doBuy(key) {
   const p = game.player;
   if (net.role === 'client') { net.lobby.toHost({ t: 'buy', item: key }); sfx('buy'); return; }
+  if (freeLoadout() && GADGETS[key]) {
+    p.loadout ??= {};
+    p.loadout.gadgets = [...(p.loadout.gadgets || p.agent.picks).slice(-1), key];
+    if (p.alive && (game.config.mode === 'range' || sideSign(p.team) * p.pos.x > 30)) refillGadgets(p);
+    else flashMsg('LOADOUT SAVED', 'You get it on your next respawn', 1.5);
+    sfx('buy'); renderBuy();
+    return;
+  }
   if (freeLoadout()) {
     if (ARMOR[key]) { if (game.config.mode === 'range') p.armor = ARMOR[key].value; }
     else {
@@ -1330,6 +1368,16 @@ function renderBuy() {
   $('buyCredits').textContent = `¤ ${p.credits}`;
   for (const box of document.querySelectorAll('#buyMenu .items')) box.innerHTML = '';
   for (const it of BUY_LIST) {
+    if (GADGETS[it.key]) {
+      const g = GADGETS[it.key], have = ['q', 'e'].reduce((n, s) => n + (p.abil[s].key === it.key ? p.abil[s].charges : 0), 0);
+      const cost = gadgetCost(p, it.key);
+      const b = document.createElement('button');
+      b.className = 'item' + (have ? ' owned' : '') + (!freeLoadout() && p.credits < cost ? ' poor' : '');
+      b.innerHTML = `<span><span class="k">${it.hot.toUpperCase()}</span>${g.name}${have ? ` ×${have}` : ''}<small>${g.desc}</small></span><span class="c">${freeLoadout() ? 'FREE' : '¤ ' + cost}</span>`;
+      b.onclick = () => doBuy(it.key);
+      document.querySelector(`#buyMenu .items[data-cat="gadget"]`).appendChild(b);
+      continue;
+    }
     const isArmor = !!ARMOR[it.key];
     const def = isArmor ? ARMOR[it.key] : WEAPONS[it.key];
     const owned = isArmor ? p.armor >= def.value : p.primary === it.key || p.secondary === it.key;
@@ -1360,12 +1408,7 @@ function flashMsg(main, sub = '', dur = 2, cls = '') {
 }
 
 function setupAbilityHud() {
-  const a = game.player.agent;
-  for (const s of ['q', 'e', 'x']) {
-    const el = $('ab' + s.toUpperCase());
-    el.style.setProperty('--acc', a.color);
-    el.querySelector('.nm').textContent = a[s].name;
-  }
+  for (const s of ['q', 'e']) $('ab' + s.toUpperCase()).querySelector('kbd').textContent = (S.binds[s === 'q' ? 'ability1' : 'ability2'] || '').replace(/^Key|^Digit/, '');
 }
 
 function buildPips() {
@@ -1416,7 +1459,7 @@ function drawMinimap() {
   mg.fillStyle = east; { const [a, b] = toPx(30, -30), [c, d] = toPx(40, 30); mg.fillRect(a, b, c - a, d - b); }
   if (game.config.mode === 'plant') {
     mg.strokeStyle = 'rgba(255,214,63,0.7)'; mg.lineWidth = 1.5; mg.fillStyle = 'rgba(255,214,63,0.85)';
-    mg.font = 'bold 13px Rajdhani, sans-serif'; mg.textAlign = 'center';
+    mg.font = 'bold 13px "Chakra Petch", sans-serif'; mg.textAlign = 'center';
     SITE_RECTS.forEach(([x0, z0, x1, z1], i) => {
       const [a, b] = toPx(x0, z0), [c, d] = toPx(x1, z1);
       mg.strokeRect(a, b, c - a, d - b);
@@ -1424,6 +1467,12 @@ function drawMinimap() {
     });
   }
   drawMapBoxes(mg, toPx);
+  if (game.config.mode === 'uplink' && game.node) {
+    const n = game.node, [x, y] = toPx(n.pos.x, n.pos.z);
+    mg.strokeStyle = n.owner >= 0 ? (n.owner ? '#ffb066' : '#7fb2ff') : '#ffffff'; mg.lineWidth = 2;
+    mg.beginPath(); mg.arc(x, y, UPLINK.radius * MM_S, 0, Math.PI * 2); mg.stroke();
+    mg.fillStyle = mg.strokeStyle; mg.beginPath(); mg.arc(x, y, 3, 0, Math.PI * 2); mg.fill();
+  }
   const c = game.charge;
   if (game.config.mode === 'plant' && c && (c.state === 'planted' || c.state === 'dropped') && (p.team === game.attackers || c.state === 'planted')) {
     const [x, y] = toPx(c.pos.x, c.pos.z);
@@ -1491,6 +1540,19 @@ function updateHud(dt) {
 
   // vitals
   setText('hpVal', String(Math.ceil(viewF.hp)));
+  $('hpBar').style.width = `${Math.max(0, Math.min(100, viewF.hp))}%`;
+  $('armorBar').style.width = `${Math.max(0, Math.min(100, viewF.armor))}%`;
+  // uplink progress
+  const node = game.node;
+  $('uplinkBar').hidden = !(game.config.mode === 'uplink' && node);
+  if (node && game.config.mode === 'uplink') {
+    $('ub0').style.width = `${Math.min(100, (node.hold[0] / UPLINK.hold) * 100)}%`;
+    $('ub1').style.width = `${Math.min(100, (node.hold[1] / UPLINK.hold) * 100)}%`;
+    const mine = p.team;
+    const st = node.contested ? 'CONTESTED' : node.owner === mine ? 'NODE HELD' : node.owner >= 0 ? 'ENEMY HOLDS' : Math.abs(node.c) > 0.02 ? `CAPTURING ${Math.round(Math.abs(node.c) * 100)}%` : `NODE ${node.key === 'MID' ? 'MID' : node.key + ' LANE'}`;
+    setText('uplinkTxt', st);
+    $('uplinkTxt').style.color = node.contested ? '#fff' : node.owner >= 0 ? (node.owner ? '#ffb066' : '#7fb2ff') : '#e8eaed';
+  }
   $('hpVal').classList.toggle('low', viewF.hp <= 30);
   setText('armorVal', String(Math.ceil(viewF.armor)));
   const w = viewF.weapon();
@@ -1500,21 +1562,20 @@ function updateHud(dt) {
   setText('weaponName', w.name.toUpperCase());
   setText('credits', `¤ ${p.credits}`);
 
-  // abilities
+  // gadgets
   for (const s of ['q', 'e']) {
-    const el = $('ab' + s.toUpperCase()), a = p.abil[s], def = p.agent[s];
-    el.querySelector('.ch').textContent = a.charges;
-    el.classList.toggle('empty', a.charges <= 0);
-    el.querySelector('.cd').style.height = def.cooldown > 0 && a.cd > 0 ? `${(a.cd / def.cooldown) * 100}%` : '0';
+    const el = $('ab' + s.toUpperCase()), a = p.abil[s], g = GADGETS[a.key];
+    const name = g && a.charges > 0 ? g.name : 'Empty';
+    if (el.dataset.k !== name + a.charges) {
+      el.dataset.k = name + a.charges;
+      el.querySelector('.nm').textContent = name;
+      el.querySelector('.ch').textContent = g && a.charges > 0 ? `×${a.charges}` : '';
+      el.style.setProperty('--acc', g ? g.color : '#666');
+      el.classList.toggle('empty', !g || a.charges <= 0);
+    }
   }
-  const ux = $('abX');
-  ux.querySelector('.ch').textContent = `${p.ult}/${MATCH.ultCost}`;
-  ux.classList.toggle('ready', p.ult >= MATCH.ultCost);
-  ux.classList.toggle('empty', p.ult < MATCH.ultCost);
 
   const buffs = [];
-  if (t < p.overchargeUntil) buffs.push(`<div class="buff" style="color:#ffd23f">OVERCHARGE ${Math.ceil(p.overchargeUntil - t)}</div>`);
-  if (p.furyShots > 0) buffs.push(`<div class="buff" style="color:#7dff6b">FURY ×${p.furyShots} — click to fire</div>`);
   if (p.healLeft > 0) buffs.push(`<div class="buff" style="color:#3ee6d6">MENDING</div>`);
   if (t < p.slowUntil) buffs.push(`<div class="buff" style="color:#8cff4a">SLOWED</div>`);
   const bh = buffs.join('');
@@ -1575,9 +1636,20 @@ function updatePlayer(dt) {
     const l = Math.hypot(fx, fz); if (l > 0) { fx /= l; fz /= l; }
   }
   p.wish = { x: fx, z: fz };
-  const walking = held(keys, 'walk');
-  p.wantCrouch = held(keys, 'crouch') && !buyOpen;
-  const speed = (p.crouch > 0.5 ? MOVE.crouch : walking ? MOVE.walk : MOVE.run) * p.speedMul * (aimK > 0.5 ? 0.8 : 1);
+  const crouchKey = held(keys, 'crouch') && !buyOpen;
+  // sprint: hold the key while moving forward; aiming, reloading, crouching or firing stops it
+  const fwdHeld = !buyOpen && held(keys, 'forward') && !held(keys, 'back');
+  const wasSprinting = p.sprinting;
+  p.sprinting = fwdHeld && held(keys, 'sprint') && p.slideT <= 0 && !crouchKey && aimK < 0.3 && p.reloadT <= 0 && !mouse.left && !p.scoped;
+  if (wasSprinting && !p.sprinting) p.sprintOutUntil = now() + 0.14;
+  // slide: crouch while sprinting fast on the ground
+  if (crouchKey && !prevCrouchKey && wasSprinting && p.onGround && Math.hypot(p.vel.x, p.vel.z) > MOVE.run) {
+    p.slideT = MOVE.slideTime; p.slideDir.set(p.vel.x, 0, p.vel.z).normalize(); p.sprinting = false;
+    sfx('slide', { vol: 0.7 }); tutFlags.slide = true;
+  }
+  prevCrouchKey = crouchKey;
+  p.wantCrouch = crouchKey || p.slideT > 0;
+  const speed = (p.sprinting ? MOVE.sprint : p.crouch > 0.5 ? MOVE.crouch : MOVE.run) * p.speedMul * (aimK > 0.5 ? 0.8 : 1);
   if (!p.onGround) airVel = Math.min(airVel, p.vel.y);
   moveFighter(p, fx, fz, speed, held(keys, 'jump') && !buyOpen, dt);
   if (p.onGround && wasAirborne && airVel < -3) { sfx('land', { vol: Math.min(1, -airVel / 8) }); landT = Math.min(1, -airVel / 9); }
@@ -1596,8 +1668,7 @@ function updatePlayer(dt) {
 
   if (!buyOpen && locked() && actionProgress < 0) {
     const w = p.weapon();
-    if (p.furyShots > 0) { if (mouse.leftPressed) fireFury(p); }
-    else if (w.auto ? mouse.left : mouse.leftPressed) tryFire(p);
+    if (w.auto ? mouse.left : mouse.leftPressed) tryFire(p);
   }
   mouse.leftPressed = false;
   if (p.scoped && !p.weapon().scope) p.scoped = false;
@@ -1630,7 +1701,7 @@ function playerVision() {
 // Camera + first-person weapon animation
 // ---------------------------------------------------------------------------
 let forceAim = false; // test hook
-let bob = 0, aimK = 0, landT = 0, lastReloadStage = -1;
+let bob = 0, aimK = 0, landT = 0, lastReloadStage = -1, sprintK = 0, prevCrouchKey = false;
 const _fwd = new THREE.Vector3();
 
 // hip and aim-down-sights poses per weapon slot
@@ -1677,7 +1748,7 @@ function updateCamera(dt) {
     }
     const base = S.fov;
     if (p.scoped) fov = base / w.scope;
-    else fov = base - aimK * (base - (w.adsFov || 62) * base / 75);
+    else fov = base - aimK * (base - (w.adsFov || 62) * base / 75) + sprintK * 6 + (p.slideT > 0 ? 4 : 0);
   } else {
     const s = game.specTarget && game.specTarget.alive ? game.specTarget : null;
     if (!s) cycleSpectate();
@@ -1717,7 +1788,9 @@ function updateCamera(dt) {
   const tilt = p.reloadT > 0 ? Math.sin(Math.min(1, k * 1.15) * Math.PI) : 0;
   // the sniper's long scope sits further out so the eyepiece doesn't crowd the camera
   const hip = u.boltAction ? [pose.hip[0] + 0.01, pose.hip[1] - 0.01, pose.hip[2] - 0.07] : pose.hip, ads = [0, -u.sightY, -0.2];
-  const bobAmt = (1 - aimK * 0.85) * hs;
+  sprintK += ((p.sprinting ? 1 : 0) - sprintK) * Math.min(1, dt * 10);
+  const slideK = p.slideT > 0 ? 1 : 0;
+  const bobAmt = (1 - aimK * 0.85) * hs * (1 + sprintK * 0.8);
   const breathe = Math.sin(now() * 1.6) * 0.002 * (1 - aimK);
   vmRoot.position.set(
     hip[0] + (ads[0] - hip[0]) * aimK - swayX * (1 - aimK * 0.7) + Math.sin(bob) * 0.012 * bobAmt,
@@ -1725,6 +1798,7 @@ function updateCamera(dt) {
     hip[2] + (ads[2] - hip[2]) * aimK,
   );
   vmRoot.position.add(rs.p);
+  vmRoot.position.x += sprintK * 0.05; vmRoot.position.y -= sprintK * 0.07 + slideK * 0.02; vmRoot.position.z += sprintK * 0.03;
   // bolt-action: gun rolls and dips while the bolt is worked
   const cyc = u.boltAction && shotT > 0.28 && shotT < 0.95 ? Math.sin((shotT - 0.28) / 0.67 * Math.PI) : 0;
   vmRoot.position.y -= cyc * 0.02;
@@ -1733,6 +1807,7 @@ function updateCamera(dt) {
     pose.rot * (1 - aimK) + swayX * 1.5 + rs.r.y,
     tilt * 0.55 - swayX * 1.2 + rs.r.z + cyc * 0.22,
   );
+  vmRoot.rotation.x -= sprintK * 0.32; vmRoot.rotation.y += sprintK * 0.55; vmRoot.rotation.z += sprintK * 0.25 + slideK * 0.18;
   // magazine out / in, then bolt or slide
   if (u.mag) {
     const out = k > 0.12 && k < 0.7 ? Math.min(1, (k - 0.12) / 0.15) * (k < 0.5 ? 1 : 1 - (k - 0.5) / 0.2) : 0;
@@ -1819,6 +1894,7 @@ function step(dt) {
   noiseFootsteps(dt);
   updateAbilities(dt);
   if (game.config.mode === 'plant') { updateCharge(dt); if (!client) updateTactics(); }
+  if (game.config.mode === 'uplink' && !client) updateNode(dt);
   updateFx(dt);
   updateRagdolls(dt);
   updateWorldFx(t);

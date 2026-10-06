@@ -35,14 +35,16 @@ export class Fighter {
     this.overchargeUntil = 0; this.slowUntil = 0; this.furyUntil = 0; this.furyShots = 0;
     this.healLeft = 0;
     this.dashT = 0; this.dashDir = new THREE.Vector3();
+    this.sprinting = false; this.slideT = 0; this.slideDir = new THREE.Vector3(); this.sprintOutUntil = 0;
     this.crouch = 0; this.wantCrouch = false;
     this.burstLeft = 0; this.burstT = 0;
     this.mesh = buildCharacter(TEAM_COLORS[team], this.agent);
     this.resetAbilities();
   }
 
+  /** Empty both gadget slots (death, new half). */
   resetAbilities() {
-    for (const s of ['q', 'e']) this.abil[s] = { charges: this.agent[s].charges, cd: 0 };
+    for (const s of ['q', 'e']) this.abil[s] = { key: null, charges: 0, cd: 0 };
   }
 
   weapon() { return WEAPONS[this.cur === 'primary' && this.primary ? this.primary : this.secondary]; }
@@ -81,7 +83,7 @@ export class Fighter {
   }
 
   get speedMul() {
-    let m = this.weapon().speedMul;
+    let m = this.weapon().speedMul * (this.agent.key === 'volt' ? 1.05 : 1);
     if (this.scoped) m *= 0.6;
     if (now() < this.overchargeUntil) m *= 1.2;
     if (now() < this.slowUntil) m *= 0.6;
@@ -128,7 +130,7 @@ export function updateFighterMesh(f, dt, viewer) {
   const w = f.weapon();
   animateCharacter(m, {
     yaw: f.yaw, pitch: f.pitch + f.recoil * 0.5, vel: f.vel, onGround: f.onGround,
-    kick: f.kickT || 0, reload: f.reloadT > 0 ? 1 - f.reloadT / w.reload : -1, crouch: f.crouch,
+    kick: f.kickT || 0, reload: f.reloadT > 0 ? 1 - f.reloadT / w.reload : -1, crouch: f.crouch, sprint: f.sprinting, slide: f.slideT > 0,
   }, adt);
   const t = now();
   u.ghost.visible = viewer && f.team !== viewer.team && t < f.revealedUntil;
@@ -188,7 +190,16 @@ function blockedAbove(f) {
 
 /** wishX/wishZ: desired horizontal direction (unit or zero). */
 export function moveFighter(f, wishX, wishZ, speed, jump, dt) {
-  if (f.dashT > 0) {
+  if (f.slideT > 0) {
+    // slide: a burst of speed in the sprint direction that bleeds off; you stay low and can steer a little
+    f.slideT -= dt;
+    const k = Math.max(0, f.slideT / MOVE.slideTime), v = 3.5 + (MOVE.slide - 3.5) * k;
+    f.slideDir.x += (wishX - f.slideDir.x) * dt * 1.5; f.slideDir.z += (wishZ - f.slideDir.z) * dt * 1.5;
+    const l = Math.hypot(f.slideDir.x, f.slideDir.z) || 1;
+    f.vel.x = f.slideDir.x / l * v; f.vel.z = f.slideDir.z / l * v;
+    f.wantCrouch = true;
+    if (!f.onGround) f.slideT = Math.min(f.slideT, 0.1);
+  } else if (f.dashT > 0) {
     f.dashT -= dt;
     f.vel.x = f.dashDir.x * 21; f.vel.z = f.dashDir.z * 21;
   } else {
@@ -198,7 +209,8 @@ export function moveFighter(f, wishX, wishZ, speed, jump, dt) {
     if (dl > a) { dx *= a / dl; dz *= a / dl; }
     f.vel.x += dx; f.vel.z += dz;
   }
-  if (jump && f.onGround && f.crouch < 0.5) { f.vel.y = MOVE.jump; f.onGround = false; }
+  if (jump && f.onGround && f.slideT > 0) { f.slideT = 0; f.vel.y = MOVE.jump; f.onGround = false; }      // slide-jump keeps the speed
+  else if (jump && f.onGround && f.crouch < 0.5) { f.vel.y = MOVE.jump; f.onGround = false; }
   // crouch blends in/out; can't stand up under something
   let want = f.wantCrouch ? 1 : 0;
   if (!want && f.crouch > 0 && blockedAbove(f)) want = f.crouch;
@@ -369,6 +381,7 @@ function falloffMul(w, t) {
 export function tryFire(f) {
   const w = f.weapon();
   if (!f.alive || f.reloadT > 0 || f.fireCD > 0 || f.burstLeft > 0 || game.phase === 'buy' || game.phase === 'end') return false;
+  if (f.sprinting || now() < (f.sprintOutUntil || 0)) return false;     // gun is lowered while sprinting
   if ((f.ammo[w.key] ?? 0) <= 0) { startReload(f); if (f.isPlayer) sfx('empty'); return false; }
   const rateMul = now() < f.overchargeUntil ? 1.25 : 1;
   f.fireCD = 1 / (w.rate * rateMul);
@@ -414,6 +427,10 @@ function afterShot(f, w, fx) {
   game.onAnyShot?.(f, muz);
   emitSound(f, w.key);
   game.noises.push({ pos: f.pos.clone(), team: f.team, t: now(), shooter: f, quiet: !!w.suppressed });
+  // Keen Ears perk: a Recon operative nearby hears the shot and marks the shooter for the team
+  for (const h of game.fighters) {
+    if (h.alive && h.team !== f.team && h.agent.key === 'hawk' && h.pos.distanceTo(f.pos) < 30) { f.spottedUntil = Math.max(f.spottedUntil, now() + 3); break; }
+  }
 }
 
 /**
@@ -604,6 +621,7 @@ export function applyDamage(target, amount, attacker, opts = {}) {
   target.lastHitHead = !!opts.head;
   if (amount >= 5) flinch(target.mesh, opts.dir, opts.head);
   target.lastHitT = now();
+  target.lastHurtT = now();
   target.brain?.onDamaged(attacker);
   if (attacker === game.player) game.onPlayerHit?.(target, dealt, opts.head, target.hp <= 0);
   if (target === game.player) game.onPlayerDamaged?.(attacker, dealt);
@@ -618,7 +636,7 @@ export function kill(target, attacker, opts = {}) {
   if (attacker && attacker !== target && attacker.team !== target.team) {
     attacker.kills++;
     attacker.credits = Math.min(ECON.max, attacker.credits + ECON.kill);
-    attacker.ult = Math.min(MATCH.ultCost, attacker.ult + 1);
+    if (attacker.agent.key === 'volt') attacker.hp = Math.min(100, attacker.hp + 25);   // Adrenaline perk
   }
   const t = now();
   for (const [f, when] of target.damagedBy) {

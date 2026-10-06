@@ -8,16 +8,16 @@ export const DEFAULTS = {
   volume: 0.7,
   crosshair: { color: '#6effc4', length: 6, thickness: 2, gap: 3, dot: true, outline: true, opacity: 1, dynamic: true },
   binds: {
-    forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', walk: 'ShiftLeft', crouch: 'KeyC',
-    reload: 'KeyR', primary: 'Digit1', secondary: 'Digit2', ability1: 'KeyQ', ability2: 'KeyE', ultimate: 'KeyX',
+    forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', sprint: 'ShiftLeft', crouch: 'KeyC',
+    reload: 'KeyR', primary: 'Digit1', secondary: 'Digit2', ability1: 'KeyQ', ability2: 'KeyE',
     use: 'KeyF', buy: 'KeyB', scoreboard: 'Tab', mute: 'KeyM',
   },
 };
 
 export const ACTION_LABELS = {
   forward: 'Move forward', back: 'Move back', left: 'Strafe left', right: 'Strafe right', jump: 'Jump',
-  walk: 'Walk (hold)', crouch: 'Crouch (hold)', reload: 'Reload', primary: 'Primary weapon', secondary: 'Sidearm',
-  ability1: 'Ability 1', ability2: 'Ability 2', ultimate: 'Ultimate', use: 'Plant / defuse (hold)',
+  sprint: 'Sprint (hold)', crouch: 'Crouch (hold) · slide while sprinting', reload: 'Reload', primary: 'Primary weapon', secondary: 'Sidearm',
+  ability1: 'Gadget 1', ability2: 'Gadget 2', use: 'Plant / defuse (hold)',
   buy: 'Buy menu', scoreboard: 'Scoreboard (hold)', mute: 'Mute',
 };
 
@@ -31,7 +31,7 @@ function load() {
   return {
     ...DEFAULTS, ...saved,
     crosshair: { ...DEFAULTS.crosshair, ...(saved.crosshair || {}) },
-    binds: { ...DEFAULTS.binds, ...(saved.binds || {}) },
+    binds: Object.fromEntries(Object.keys(DEFAULTS.binds).map((k) => [k, saved.binds?.[k] ?? DEFAULTS.binds[k]])),
   };
 }
 
@@ -44,7 +44,7 @@ export function save() {
 }
 
 /** Is the key bound to `action` currently held? */
-export const held = (keys, action) => !!keys[S.binds[action]] || (action === 'walk' && !!keys.ShiftRight && S.binds.walk === 'ShiftLeft');
+export const held = (keys, action) => !!keys[S.binds[action]] || (action === 'sprint' && !!keys.ShiftRight && S.binds.sprint === 'ShiftLeft');
 export const isAction = (code, action) => S.binds[action] === code;
 
 export function keyName(code) {

@@ -1,10 +1,20 @@
 import { game } from './state.js';
-import { WEAPONS, ARMOR, MATCH } from './config.js';
+import { WEAPONS, ARMOR, MATCH, GADGETS } from './config.js';
 import { setGunLook } from './entities.js';
+import { giveGadget } from './abilities.js';
+
+/** Gadget price for this fighter (Quartermaster perk halves it). */
+export const gadgetCost = (f, key) => Math.round(GADGETS[key].cost * (f.agent.key === 'haze' ? 0.5 : 1));
 
 /** Buy a weapon key or armor key. Re-buying in the same slot refunds this round's earlier purchase. */
 export function buy(f, item) {
   if (game.phase !== 'buy' || !f.alive) return false;
+  if (GADGETS[item]) {
+    const cost = gadgetCost(f, item);
+    if (f.credits < cost || !giveGadget(f, item)) return false;
+    f.credits -= cost;
+    return true;
+  }
   const armor = ARMOR[item];
   const w = WEAPONS[item];
   if (!armor && !w) return false;
@@ -51,4 +61,10 @@ export function botBuy(f) {
   }
   if (f.armor < 50 && f.credits >= 1000) buy(f, 'heavy');
   else if (f.armor < 25 && f.credits >= 400) buy(f, 'light');
+  // gadgets: mostly the operative's favourites, sometimes something else
+  for (let i = 0; i < 2; i++) {
+    const keys = Object.keys(GADGETS);
+    const k = Math.random() < 0.75 ? f.agent.picks[i % f.agent.picks.length] : keys[Math.floor(Math.random() * keys.length)];
+    if (f.credits >= gadgetCost(f, k) + (pistolRound ? 0 : 200)) buy(f, k);
+  }
 }

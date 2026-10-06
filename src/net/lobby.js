@@ -15,7 +15,7 @@ export class Lobby {
     this.isHost = isHost;
     this.peers = new Map();        // peerId -> Peer
     this.members = [];             // [{ id, name, team, agent, ready, host }]
-    this.settings = { mode: 'plant', teamSize: 5, difficulty: 'normal', map: 'random' };
+    this.settings = { mode: 'uplink', teamSize: 5, difficulty: 'normal', map: 'random' };
     this.chat = [];
     this.fns = {};
     this.started = false;

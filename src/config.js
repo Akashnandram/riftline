@@ -96,7 +96,7 @@ export const ECON = {
 };
 
 export const MATCH = {
-  roundsToWin: 5, buyTime: 12, roundTime: 110, endTime: 4.5, ultCost: 5,
+  roundsToWin: 5, buyTime: 12, roundTime: 110, endTime: 4.5,
   // plant mode
   halfRounds: 4, plantTime: 4, defuseTime: 7, chargeTime: 45, blastRadius: 14, plantBonus: 300,
 };
@@ -114,36 +114,43 @@ export const PENETRATION = {
   car: 2.0, pole: 4, barrel: 2, sandbag: Infinity,
 };
 
-// Ability: charges refill every round. cooldown > 0 means a spent charge recharges mid-round.
+// Operatives: no ability kits — each has one passive perk; everyone buys gadgets in the armory.
 export const AGENTS = {
   volt: {
     key: 'volt', name: 'VOLT', role: 'Assault', color: '#ffd23f',
-    blurb: 'Self-sufficient entry fragger who blinds and outpaces enemies.',
-    q: { name: 'Surge Dash', desc: 'Dash a short distance in your movement direction.', charges: 2, cooldown: 14 },
-    e: { name: 'Flashpoint', desc: 'Throw a flash that pops mid-air, blinding enemies looking at it.', charges: 2, cooldown: 0 },
-    x: { name: 'Overcharge', desc: '10s: +25% fire rate, +20% speed and health regeneration.' },
+    blurb: 'Front-line fighter who keeps pushing after every kill.',
+    perk: { name: 'Adrenaline', desc: 'Each kill restores 25 HP. Moves 5% faster.' },
+    picks: ['flash', 'frag'],
   },
   haze: {
     key: 'haze', name: 'HAZE', role: 'Tactician', color: '#b18cff',
-    blurb: 'Cuts sightlines with smoke and denies space with toxin.',
-    q: { name: 'Veil', desc: 'Deploy a smoke cloud where you aim that blocks vision.', charges: 2, cooldown: 30 },
-    e: { name: 'Toxin Orb', desc: 'Lob an orb that leaves a damaging, slowing pool.', charges: 1, cooldown: 0 },
-    x: { name: 'Blackout', desc: 'All enemies are blinded and revealed for 4 seconds.' },
+    blurb: 'Plans the round and carries the utility for the team.',
+    perk: { name: 'Quartermaster', desc: 'Gadgets cost half price.' },
+    picks: ['smoke', 'gas'],
   },
   aegis: {
     key: 'aegis', name: 'AEGIS', role: 'Support', color: '#3ee6d6',
-    blurb: 'Locks down angles with barriers and keeps fighting with heals.',
-    q: { name: 'Bulwark', desc: 'Raise a bullet-proof barrier in front of you for 20s.', charges: 1, cooldown: 0 },
-    e: { name: 'Mend', desc: 'Heal 60 HP over 3 seconds.', charges: 1, cooldown: 30 },
-    x: { name: 'Bastion', desc: 'Instantly restore full health and gain 100 armor.' },
+    blurb: 'Hard to put down; holds an angle for the whole round.',
+    perk: { name: 'Field Medic', desc: 'Regenerates to 60 HP after 4 s without taking damage.' },
+    picks: ['medkit', 'cover'],
   },
   hawk: {
     key: 'hawk', name: 'HAWK', role: 'Recon', color: '#7dff6b',
-    blurb: 'Gathers intel and flushes enemies out of cover.',
-    q: { name: 'Sonar Puck', desc: 'Throw a sensor that pings every enemy within 14 m once, even through walls.', charges: 1, cooldown: 35 },
-    e: { name: 'Pulse Grenade', desc: 'Lob a bouncing grenade that bursts after 1.2 s for up to 75 damage.', charges: 2, cooldown: 0 },
-    x: { name: 'Orbital Strike', desc: 'Mark the spot you aim at; 1.5 s later a beam hits it for up to 120 damage (roofs block it).' },
+    blurb: 'Hears everything and tells the team where the enemy is.',
+    perk: { name: 'Keen Ears', desc: 'Enemies who fire within 30 m show on your team\'s minimap for 3 s.' },
+    picks: ['sensor', 'frag'],
   },
+};
+
+// Gadgets: bought in the armory (two slots, Q and E). Kept when you survive the round.
+export const GADGETS = {
+  smoke: { key: 'smoke', name: 'Smoke Canister', cost: 200, max: 2, color: '#b7b0c8', desc: 'Thrown canister that blooms into a cloud you can\'t see through.' },
+  flash: { key: 'flash', name: 'Flashbang', cost: 200, max: 2, color: '#ffd23f', desc: 'Pops mid-air and blinds anyone looking at it.' },
+  frag: { key: 'frag', name: 'Frag Grenade', cost: 300, max: 1, color: '#ff8a1f', desc: 'Bounces, then explodes for up to 75 damage.' },
+  gas: { key: 'gas', name: 'Gas Grenade', cost: 300, max: 1, color: '#8cff4a', desc: 'Leaves a damaging, slowing gas patch on the ground.' },
+  sensor: { key: 'sensor', name: 'Sonar Puck', cost: 250, max: 1, color: '#7dff6b', desc: 'Pings every enemy within 14 m once, through walls.' },
+  medkit: { key: 'medkit', name: 'Med-Kit', cost: 250, max: 1, color: '#3ee6d6', desc: 'Heals 60 HP over 3 seconds.' },
+  cover: { key: 'cover', name: 'Deploy Cover', cost: 400, max: 1, color: '#3ee6d6', desc: 'Bullet-proof energy wall in front of you for 16 s.' },
 };
 
 // Bot skill. dmgMul scales the damage bots deal, spreadMul widens their bullet spread,
@@ -161,4 +168,5 @@ export const BOT_NAMES = [
   'Quill', 'Rhea', 'Zephyr', 'Onyx', 'Lynx', 'Cobalt', 'Wren', 'Atlas', 'Pike', 'Nova',
 ];
 
-export const MOVE = { run: 6.75, walk: 3.8, crouch: 2.6, crouchDrop: 0.42, accel: 60, airAccel: 12, jump: 5.4, gravity: 16 };
+// run = normal jog; sprint (hold Shift) lowers the gun; slide = crouch while sprinting
+export const MOVE = { run: 5.9, sprint: 7.9, walk: 3.6, crouch: 2.6, slide: 10, slideTime: 0.75, crouchDrop: 0.42, accel: 60, airAccel: 12, jump: 5.4, gravity: 16 };

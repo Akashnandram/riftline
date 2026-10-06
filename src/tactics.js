@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { game, now } from './state.js';
 import { boxes, isWalkable, hasLOS, BOUNDS, onMapLoad, navHeight, snapWalkable } from './world.js';
 import { SITES, siteAt, zoneName } from './objective.js';
+import { uplinkGoal } from './uplink.js';
 
 // Team-level bot strategy for plant mode:
 //  attack  — pick a site + strategy (full execute or split through mid), gather at a staging
@@ -193,6 +194,7 @@ export function updateTactics() {
 // ---------------------------------------------------------------------------
 export function tacticalGoal(bot) {
   const f = bot.f, plan = bot.plan, c = game.charge, tac = game.tac;
+  if (plan?.side === 'uplink') return uplinkGoal(f);
   if (!plan || !c || !tac) return null;
   const site = c.state === 'planted' ? c.site : tac.site;
 

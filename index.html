@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Riftline – Tactical Hero Shooter</title>
-  <meta name="description" content="5v5 tactical hero shooter in your browser. Pick an operative, buy weapons, use abilities and win rounds against bots." />
+  <title>Riftline – Squad Shooter</title>
+  <meta name="description" content="5v5 squad shooter in your browser. Pick an operative, buy weapons and gadgets, sprint and slide, and capture the Rift Node." />
   <meta name="theme-color" content="#12161c" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="Riftline – 5v5 tactical hero shooter in your browser" />
-  <meta property="og:description" content="Pick an operative, buy guns, plant or defuse the Rift Charge. Free, no download." />
+  <meta property="og:title" content="Riftline – 5v5 squad shooter in your browser" />
+  <meta property="og:description" content="Pick an operative, buy guns and gadgets, capture and hold the Rift Node. Free, no download." />
   <meta property="og:url" content="https://riftline-flame.vercel.app/" />
   <meta property="og:image" content="https://riftline-flame.vercel.app/og-image.jpg" />
   <meta property="og:image:width" content="1200" />
@@ -16,7 +16,7 @@
   <meta name="twitter:card" content="summary_large_image" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <script type="importmap">
     { "imports": {
@@ -30,15 +30,18 @@
 
   <!-- ===================== HUD ===================== -->
   <div id="hud" hidden>
-    <div id="topbar">
-      <div class="pips" id="pips0"></div>
-      <div class="score blue" id="score0">0</div>
-      <div class="clock"><div id="timer">1:50</div><div id="roundLabel">ROUND 1</div></div>
-      <div class="score red" id="score1">0</div>
-      <div class="pips" id="pips1"></div>
+    <!-- match panel (top-left): score, clock, squads, uplink progress -->
+    <div id="matchPanel">
+      <div class="mp-row">
+        <div class="score blue" id="score0">0</div>
+        <div class="clock"><div id="timer">1:50</div><div id="roundLabel">ROUND 1</div></div>
+        <div class="score red" id="score1">0</div>
+      </div>
+      <div class="mp-pips"><div class="pips" id="pips0"></div><div class="pips" id="pips1"></div></div>
+      <div id="uplinkBar" hidden><div class="ub"><i id="ub0"></i></div><span id="uplinkTxt"></span><div class="ub r"><i id="ub1"></i></div></div>
     </div>
-    <div id="killfeed"></div>
-    <canvas id="minimap" width="252" height="192"></canvas>
+    <!-- right column: minimap and kill feed -->
+    <div id="rightCol"><canvas id="minimap" width="252" height="192"></canvas><div id="killfeed"></div></div>
 
     <div id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b></b></div>
     <div id="hitmarker"></div>
@@ -52,19 +55,23 @@
     <div id="comms"></div>
     <div id="buffs"></div>
 
-    <div id="bottomLeft">
-      <div class="stat"><span id="hpVal">100</span><small>HP</small></div>
-      <div class="stat armor"><span id="armorVal">0</span><small>ARMOR</small></div>
+    <!-- vitals (bottom-centre): health and armor bars -->
+    <div id="vitals">
+      <div class="vnum"><span id="hpVal">100</span><small>HP</small></div>
+      <div class="vbars"><div class="vbar ar"><i id="armorBar"></i></div><div class="vbar hp"><i id="hpBar"></i></div></div>
+      <div class="vnum armor"><span id="armorVal">0</span><small>ARMOR</small></div>
     </div>
-    <div id="abilities">
-      <div class="abil" id="abQ"><div class="cd"></div><kbd>Q</kbd><span class="nm"></span><span class="ch"></span></div>
-      <div class="abil" id="abE"><div class="cd"></div><kbd>E</kbd><span class="nm"></span><span class="ch"></span></div>
-      <div class="abil ult" id="abX"><div class="cd"></div><kbd>X</kbd><span class="nm"></span><span class="ch"></span></div>
-    </div>
+    <!-- weapon card (bottom-right): gadgets, ammo, credits -->
     <div id="bottomRight">
-      <div id="ammo"><span id="ammoMag">12</span><small id="ammoMax">/12</small></div>
-      <div id="weaponName">P9 Sidearm</div>
-      <div id="credits">¤ 800</div>
+      <div id="abilities">
+        <div class="abil" id="abQ"><kbd>Q</kbd><span class="nm"></span><span class="ch"></span></div>
+        <div class="abil" id="abE"><kbd>E</kbd><span class="nm"></span><span class="ch"></span></div>
+      </div>
+      <div class="wcard">
+        <div id="weaponName">P9 Sidearm</div>
+        <div id="ammo"><span id="ammoMag">12</span><small id="ammoMax">/12</small></div>
+        <div id="credits">¤ 800</div>
+      </div>
     </div>
   </div>
 
@@ -82,6 +89,7 @@
       <div><h3>RIFLES</h3><div class="items" data-cat="rifle"></div></div>
       <div><h3>HEAVY &amp; SNIPER</h3><div class="items" data-cat="heavy"></div></div>
       <div><h3>ARMOR</h3><div class="items" data-cat="armor"></div></div>
+      <div><h3>GADGETS</h3><div class="items" data-cat="gadget"></div></div>
     </div>
     <p class="hint">Click or press the key shown to buy · buying again in the same slot refunds this round's purchase · <kbd>B</kbd> to close</p>
   </div>
@@ -91,7 +99,7 @@
 
   <!-- ===================== MENUS ===================== -->
   <div id="menu" class="screen">
-    <div class="menuInner">
+    <div class="menuInner menuGrid">
       <div class="menuTop">
         <div id="profileBadge" class="badge"></div>
         <div class="navBtns">
@@ -101,31 +109,31 @@
           <button id="btnSettings" class="ghost">Settings</button>
         </div>
       </div>
-      <h1>RIFT<span>LINE</span></h1>
-      <p class="tag">Tactical 5v5 hero shooter · pick an operative · win the rounds</p>
-      <div id="newHere" hidden>New here? <button id="btnTutorial2">Play the 2-minute tutorial</button> (+500 XP)</div>
-
-      <h3>CHOOSE YOUR OPERATIVE</h3>
-      <div id="agentCards"></div>
-
-      <div class="opts">
-        <div class="opt"><h4>GAME MODE</h4><div class="seg" id="segMode">
-          <button data-v="plant" class="on">Plant / Defuse</button><button data-v="elim">Elimination</button><button data-v="tdm">Team Deathmatch</button>
-        </div></div>
-        <div class="opt"><h4>TEAM SIZE</h4><div class="seg" id="segSize">
-          <button data-v="1">1v1</button><button data-v="3">3v3</button><button data-v="5" class="on">5v5</button>
-        </div></div>
-        <div class="opt"><h4>MAP</h4><div class="seg" id="segMap"></div></div>
-        <div class="opt"><h4>BOT DIFFICULTY</h4><div class="seg" id="segDiff">
-          <button data-v="veryeasy">Super Easy</button><button data-v="easy">Easy</button><button data-v="normal" class="on">Normal</button><button data-v="hard">Hard</button>
-        </div></div>
-      </div>
-      <p id="modeHint" class="hint"></p>
-
-      <button id="lockIn" class="big">DEPLOY</button>
-      <p id="touchWarn" hidden>Riftline needs a keyboard and mouse — open it on a desktop browser.</p>
-
-      <div id="dailyBox" class="daily"></div>
+      <section class="mLeft">
+        <h1>RIFT<span>LINE</span></h1>
+        <p class="tag">Squad shooter · 5 maps · capture the Rift Node</p>
+        <div id="newHere" hidden>New here? <button id="btnTutorial2">Play the 2-minute tutorial</button> (+500 XP)</div>
+        <div class="opts">
+          <div class="opt"><h4>GAME MODE</h4><div class="seg" id="segMode">
+            <button data-v="uplink" class="on">Uplink</button><button data-v="plant">Plant / Defuse</button><button data-v="elim">Elimination</button><button data-v="tdm">Team Deathmatch</button>
+          </div></div>
+          <div class="opt"><h4>MAP</h4><div class="seg" id="segMap"></div></div>
+          <div class="opt"><h4>SQUAD SIZE</h4><div class="seg" id="segSize">
+            <button data-v="1">1v1</button><button data-v="3">3v3</button><button data-v="5" class="on">5v5</button>
+          </div></div>
+          <div class="opt"><h4>BOT DIFFICULTY</h4><div class="seg" id="segDiff">
+            <button data-v="veryeasy">Super Easy</button><button data-v="easy">Easy</button><button data-v="normal" class="on">Normal</button><button data-v="hard">Hard</button>
+          </div></div>
+        </div>
+        <p id="modeHint" class="hint"></p>
+        <div class="deployRow"><button id="lockIn" class="big">DEPLOY</button></div>
+        <p id="touchWarn" hidden>Riftline needs a keyboard and mouse — open it on a desktop browser.</p>
+      </section>
+      <section class="mRight">
+        <h3>OPERATIVE</h3>
+        <div id="agentCards"></div>
+        <div id="dailyBox" class="daily"></div>
+      </section>
     </div>
   </div>
 

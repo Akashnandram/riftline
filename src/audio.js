@@ -314,6 +314,8 @@ export function sfx(name, opts = {}) {
       break;
     case 'step': (STEP[opts.surface] || STEP.concrete)(out, t, 1); break;
     case 'land': hiss(out, t, { dur: 0.1, freq: 300, type: 'lowpass', peak: 1 }); break;
+    case 'capture': osc(out, t, { freq: 520, dur: 0.18, peak: 0.5, slide: 1.5 }); osc(out, t + 0.12, { freq: 780, dur: 0.25, peak: 0.45, slide: 1.3 }); break;
+    case 'slide': hiss(out, t, { dur: 0.6, freq: 700, type: 'lowpass', peak: 0.7, sweepTo: 250 }); break;
     case 'impact': (IMPACT[opts.surface] || IMPACT.concrete)(out, t); break;
     case 'whizz':
       hiss(out, t, { dur: 0.09, freq: 5000, q: 2, peak: 0.8, sweepTo: 1800, attack: 0.01 });

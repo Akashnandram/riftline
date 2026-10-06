@@ -199,18 +199,25 @@ async function createLobby() {
   showLobby();
 }
 
+let joinAttempt = 0;
 async function joinLobby(code) {
   if (!code || code.length < 6) { const e = $('olErr'); if (e) e.textContent = 'Enter the 6-character code'; return; }
   if (!(await needName())) { pendingJoin = code; return; }
   if (lobby) leaveLobby(false);
   const e = $('olErr'); if (e) e.textContent = 'Connecting…';
+  const attempt = ++joinAttempt;
+  let joined;
   try {
-    lobby = await Lobby.join(code, api.choice().agent);
+    joined = await Lobby.join(code, api.choice().agent);
   } catch (err) {
+    // an older attempt failing late (e.g. a mistyped code timing out) must not cancel a newer one
+    if (attempt !== joinAttempt) return;
     if ($('olErr')) $('olErr').textContent = err.message; else toast(err.message);
     lobby = null;
     return;
   }
+  if (attempt !== joinAttempt) { joined.leave?.(false); return; }
+  lobby = joined;
   wireLobby();
   showLobby();
 }
@@ -251,7 +258,7 @@ function renderLobby() {
       <div class="side">
         <section><h3>YOUR OPERATIVE</h3><div class="agents">${Object.values(AGENTS).map((a) => `<button data-agent="${a.key}" class="${mine?.agent === a.key ? 'on' : ''}" style="--acc:${a.color}">${a.name}</button>`).join('')}</div></section>
         <section><h3>MATCH ${lobby.isHost ? '' : '<small>(host decides)</small>'}</h3>
-          ${seg('mode', [['plant', 'Plant / Defuse'], ['elim', 'Elimination'], ['tdm', 'Team DM']])}
+          ${seg('mode', [['uplink', 'Uplink'], ['plant', 'Plant / Defuse'], ['elim', 'Elimination'], ['tdm', 'Team DM']])}
           ${seg('teamSize', [[1, '1v1'], [2, '2v2'], [3, '3v3'], [5, '5v5']])}
           ${seg('difficulty', [['veryeasy', 'Super easy bots'], ['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}
           ${seg('map', [['random', 'Random map'], ...MAP_LIST.map((m) => [m.id, m.name])])}</section>

@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { game, now, enemiesOf } from './state.js';
-import { MATCH } from './config.js';
+import { GADGETS } from './config.js';
 import { smokes, raycastWorld, hasLOS, pointInSolid, addDynamicBox, removeDynamicBox, boxMesh } from './world.js';
-import { applyDamage, traceShot, emitSound } from './entities.js';
-import { ring, burstSphere, tracer, spark } from './fx.js';
+import { applyDamage, emitSound } from './entities.js';
+import { ring, burstSphere, spark } from './fx.js';
 
 const projectiles = [];
 const pools = [];
@@ -19,47 +19,45 @@ function drop(m) {
 }
 const _v = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3();
 
+/** Gadget slot ('q' | 'e') has something to throw. */
 export function abilityReady(f, slot) {
-  if (slot === 'x') return f.ult >= MATCH.ultCost;
-  return f.abil[slot].charges > 0;
+  const a = f.abil[slot];
+  return !!(a && a.key && a.charges > 0);
 }
 
-/** target: optional world point (bots aim abilities at a spot). */
-export function useAbility(f, slot, target = null, mirror = false) {
-  // mirror: an online client replaying an ability the host already approved (visuals only)
-  if (mirror) { IMPL[f.agent.key][slot](f, target); return true; }
+/**
+ * Use the gadget in a slot. target: optional world point (bots aim gadgets at a spot).
+ * mirror: an online client replaying a gadget the host already approved (visuals only); gkey says which.
+ */
+export function useAbility(f, slot, target = null, mirror = false, gkey = null) {
+  if (mirror) { const k = gkey || f.abil[slot]?.key; if (IMPL[k]) IMPL[k](f, target); return true; }
   if (game.net?.role === 'client') { if (f.alive && game.phase === 'live' && abilityReady(f, slot)) game.net.sendAbility?.(slot, target); return false; }
   if (!f.alive || game.phase !== 'live' || !abilityReady(f, slot)) return false;
-  if (!target && f.agent.key === 'hawk' && slot === 'x') target = aimPoint(f);   // so online clients replay the same spot
-  const ok = IMPL[f.agent.key][slot](f, target);
-  if (!ok) return false;
-  game.onAbilityUsed?.(f, slot, target);
-  if (slot === 'x') { f.ult = 0; emitSound(f, 'ult'); return true; }
-  const a = f.abil[slot];
+  const a = f.abil[slot], key = a.key;
+  if (!IMPL[key](f, target)) return false;
+  game.onAbilityUsed?.(f, slot, target, key);
   a.charges--;
-  if (f.agent[slot].cooldown > 0 && a.cd <= 0) a.cd = f.agent[slot].cooldown;
   return true;
 }
 
+/** Add one gadget to a fighter (stacks up to its max, else takes an empty slot). Returns the slot or null. */
+export function giveGadget(f, key) {
+  const def = GADGETS[key];
+  if (!def) return null;
+  for (const s of ['q', 'e']) { const a = f.abil[s]; if (a.key === key && a.charges < def.max) { a.charges++; return s; } }
+  for (const s of ['q', 'e']) { const a = f.abil[s]; if (!a.key || a.charges <= 0) { a.key = key; a.charges = 1; return s; } }
+  return null;
+}
+
 export function updateAbilityState(f, dt) {
-  for (const s of ['q', 'e']) {
-    const a = f.abil[s], def = f.agent[s];
-    if (def.cooldown > 0 && a.cd > 0) {
-      a.cd -= dt;
-      if (a.cd <= 0) {
-        a.charges = Math.min(def.charges, a.charges + 1);
-        a.cd = a.charges < def.charges ? def.cooldown : 0;
-      }
-    }
-  }
   if (!f.alive) return;
   const t = now();
-  if (t < f.overchargeUntil) f.hp = Math.min(100, f.hp + 6 * dt);
   if (f.healLeft > 0) {
     const h = Math.min(f.healLeft, 20 * dt);
     f.healLeft -= h; f.hp = Math.min(100, f.hp + h);
   }
-  if (f.furyShots > 0 && t > f.furyUntil) f.furyShots = 0;
+  // Field Medic perk: slow regeneration back to 60 when out of the fight
+  if (f.agent.key === 'aegis' && f.hp < 60 && t - (f.lastHurtT || 0) > 4) f.hp = Math.min(60, f.hp + 5 * dt);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,140 +192,54 @@ function explodeShock(p) {
     const c = _a.set(e.pos.x, e.pos.y + 1, e.pos.z);
     const d = c.distanceTo(at);
     if (d > 4.5 || !hasLOS(at, c, true)) continue;
-    applyDamage(e, Math.round(75 * (1 - 0.6 * d / 4.5)), p.owner, { ability: 'Pulse Grenade' });
+    applyDamage(e, Math.round(75 * (1 - 0.6 * d / 4.5)), p.owner, { ability: 'Frag Grenade' });
   }
 }
 
-const SONAR_R = 14, STRIKE_R = 5;
-
-/** Ground point under the crosshair (up to 60 m). */
-function aimPoint(f) {
-  const o = f.eye(new THREE.Vector3()), d = f.lookDir(new THREE.Vector3(), false);
-  const t = Math.min(raycastWorld(o, d, 60), 60);
-  const p = o.addScaledVector(d, Math.max(0, t - 0.2));
-  p.y = groundBelow(p.setY(p.y + 0.1));
-  return p;
-}
-
-/** Orbital Strike: warning ring on the target, then a beam from the sky 1.5 s later. */
-function orbitalStrike(owner, at) {
-  const pos = new THREE.Vector3(at.x, at.y, at.z);
-  ring(pos, STRIKE_R, 0x7dff6b, 1.5, pos.y + 0.06);
-  emitSound({ pos }, 'ping');
-  timers.push({ at: now() + 1.5, fn: () => {
-    burstSphere(pos, STRIKE_R, 0xb8ff9a, 0.45);
-    tracer(pos.clone().setY(pos.y + 45), pos, 0xd8ffc8, 0.5, 0.4);
-    emitSound({ pos }, 'boom');
-    const sky = new THREE.Vector3(pos.x, pos.y + 40, pos.z);
-    for (const e of enemiesOf(owner)) {
-      const c = _a.set(e.pos.x, e.pos.y + 1, e.pos.z);
-      const d = c.distanceTo(pos);
-      if (d > STRIKE_R) continue;
-      // a roof or overhang between the sky and the target protects it
-      if (!hasLOS(sky.set(e.pos.x, pos.y + 40, e.pos.z), c, true)) continue;
-      applyDamage(e, Math.round(120 * (1 - 0.6 * d / STRIKE_R)), owner, { ability: 'Orbital Strike' });
-      e.revealedUntil = Math.max(e.revealedUntil, now() + 3);
-      e.spottedUntil = Math.max(e.spottedUntil, now() + 3);
-    }
-  } });
-}
-
-export function fireFury(f, given = null) {
-  if (!given && (f.furyShots <= 0 || f.fireCD > 0)) return false;
-  if (!given) { f.furyShots--; f.fireCD = 0.9; }
-  const o = given ? new THREE.Vector3(...given.o) : f.eye(new THREE.Vector3());
-  const d = given ? new THREE.Vector3(...given.d) : f.lookDir(new THREE.Vector3(), false);
-  if (!given) game.onFury?.(f, o, d);
-  const { hits } = traceShot(f, o, d, 100, true);
-  for (const h of hits) {
-    applyDamage(h.target, 80, f, { ability: "Hunter's Fury" });
-    h.target.revealedUntil = Math.max(h.target.revealedUntil, now() + 3);
-    h.target.spottedUntil = Math.max(h.target.spottedUntil, now() + 3);
-  }
-  const end = o.clone().addScaledVector(d, 100);
-  tracer(f.muzzle(new THREE.Vector3()), end, 0x7dff6b, 0.12, 0.35);
-  emitSound(f, 'beam');
-  return true;
-}
+const SONAR_R = 14;
 
 // ---------------------------------------------------------------------------
 // Ability implementations: return true if the ability was used.
 // ---------------------------------------------------------------------------
 const IMPL = {
-  volt: {
-    q(f) {
-      const d = f.wish && (f.wish.x || f.wish.z) ? _v.set(f.wish.x, 0, f.wish.z) : _v.set(-Math.sin(f.yaw), 0, -Math.cos(f.yaw));
-      f.dashDir.copy(d).normalize();
-      f.dashT = 0.2;
-      emitSound(f, 'dash');
-      return true;
-    },
-    e(f, target) {
-      throwProjectile(f, { speed: 20, grav: 0.35, lift: 1, fuse: 0.55, bounce: 0.5, color: 0xffd23f, onFuse: popFlash }, target);
-      return true;
-    },
-    x(f) { f.overchargeUntil = now() + 10; return true; },
+  smoke(f, target) {
+    throwProjectile(f, { speed: 18, grav: 1, lift: 2, fuse: 1.1, bounce: 0.3, color: 0xb7b0c8, size: 0.11, onFuse: (p) => spawnSmoke(p.pos) }, target);
+    return true;
   },
-  haze: {
-    q(f, target) {
-      let pt = target;
-      if (!pt) {
-        const o = f.eye(new THREE.Vector3()), d = f.lookDir(new THREE.Vector3(), false);
-        const t = Math.min(35, raycastWorld(o, d, 35));
-        pt = o.addScaledVector(d, Math.max(0, t - 1));
-      }
-      spawnSmoke(pt);
-      return true;
-    },
-    e(f, target) {
-      throwProjectile(f, { speed: 16, grav: 1, lift: 2, fuse: 1.6, bounce: 0.3, color: 0x8cff4a, onFuse: spawnPool }, target);
-      return true;
-    },
-    x(f) {
-      for (const e of enemiesOf(f)) {
-        e.nearsightUntil = now() + 4;
-        e.revealedUntil = Math.max(e.revealedUntil, now() + 4);
-        e.spottedUntil = Math.max(e.spottedUntil, now() + 4);
-        if (e === game.player) game.onBlackout?.(4);
-      }
-      return true;
-    },
+  flash(f, target) {
+    throwProjectile(f, { speed: 20, grav: 0.35, lift: 1, fuse: 0.55, bounce: 0.5, color: 0xffd23f, onFuse: popFlash }, target);
+    return true;
   },
-  aegis: {
-    q(f) {
-      const fx = -Math.sin(f.yaw), fz = -Math.cos(f.yaw);
-      const c = { x: f.pos.x + fx * 3, z: f.pos.z + fz * 3 };
-      const alongX = Math.abs(fz) > Math.abs(fx);
-      const hw = alongX ? 3 : 0.3, hd = alongX ? 0.3 : 3;
-      const b = { minX: c.x - hw, maxX: c.x + hw, minZ: c.z - hd, maxZ: c.z + hd, minY: f.pos.y, maxY: f.pos.y + 3.2, kind: 'barrier' };
-      addDynamicBox(b);
-      const mesh = boxMesh(b, 0x3ee6d6, { transparent: true, opacity: 0.45, emissive: 0x1aa79b, emissiveIntensity: 0.6 });
-      game.scene.add(mesh);
-      barriers.push({ box: b, mesh, until: now() + 16 });
-      emitSound(f, 'ability');
-      return true;
-    },
-    e(f) {
-      if (f.hp >= 100) return false;
-      f.healLeft = 60;
-      emitSound(f, 'ability');
-      return true;
-    },
-    x(f) { f.hp = 100; f.armor = 100; f.healLeft = 0; return true; },
+  frag(f, target) {
+    throwProjectile(f, { speed: 17, grav: 1, lift: 2, fuse: 1.2, bounce: 0.35, color: 0xff8a1f, onFuse: (p) => explodeShock(p) }, target);
+    return true;
   },
-  hawk: {
-    q(f, target) {
-      throwProjectile(f, {
-        speed: 20, grav: 1, lift: 2, color: 0x7dff6b, size: 0.1, fuse: 0.9, bounce: 0.3,
-        onFuse: (p) => { sonarPing(p); },
-      }, target);
-      return true;
-    },
-    e(f, target) {
-      throwProjectile(f, { speed: 17, grav: 1, lift: 2, fuse: 1.2, bounce: 0.35, color: 0x7dff6b, onFuse: (p) => { explodeShock(p); } }, target);
-      return true;
-    },
-    x(f, target) { orbitalStrike(f, target || aimPoint(f)); return true; },
+  gas(f, target) {
+    throwProjectile(f, { speed: 16, grav: 1, lift: 2, fuse: 1.6, bounce: 0.3, color: 0x8cff4a, onFuse: spawnPool }, target);
+    return true;
+  },
+  sensor(f, target) {
+    throwProjectile(f, { speed: 20, grav: 1, lift: 2, color: 0x7dff6b, size: 0.1, fuse: 0.9, bounce: 0.3, onFuse: (p) => sonarPing(p) }, target);
+    return true;
+  },
+  medkit(f) {
+    if (f.hp >= 100) return false;
+    f.healLeft = 60;
+    emitSound(f, 'ability');
+    return true;
+  },
+  cover(f) {
+    const fx = -Math.sin(f.yaw), fz = -Math.cos(f.yaw);
+    const c = { x: f.pos.x + fx * 3, z: f.pos.z + fz * 3 };
+    const alongX = Math.abs(fz) > Math.abs(fx);
+    const hw = alongX ? 3 : 0.3, hd = alongX ? 0.3 : 3;
+    const b = { minX: c.x - hw, maxX: c.x + hw, minZ: c.z - hd, maxZ: c.z + hd, minY: f.pos.y, maxY: f.pos.y + 3.2, kind: 'barrier' };
+    addDynamicBox(b);
+    const mesh = boxMesh(b, 0x3ee6d6, { transparent: true, opacity: 0.45, emissive: 0x1aa79b, emissiveIntensity: 0.6 });
+    game.scene.add(mesh);
+    barriers.push({ box: b, mesh, until: now() + 16 });
+    emitSound(f, 'ability');
+    return true;
   },
 };
 
@@ -356,7 +268,7 @@ export function updateAbilities(dt) {
     p.mesh.material.opacity = 0.35 + Math.sin(t * 8) * 0.08;
     for (const e of enemiesOf(p.owner)) {
       if (Math.hypot(e.pos.x - p.pos.x, e.pos.z - p.pos.z) < p.r && Math.abs(e.pos.y - p.pos.y) < 1.5) {
-        applyDamage(e, 30 * dt, p.owner, { ability: 'Toxin Orb' });
+        applyDamage(e, 30 * dt, p.owner, { ability: 'Gas Grenade' });
         e.slowUntil = t + 0.25;
         if (Math.random() < dt * 6) spark(_a.set(e.pos.x, e.pos.y + 0.2, e.pos.z), 0x8cff4a);
       }

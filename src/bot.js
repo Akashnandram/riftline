@@ -5,7 +5,7 @@ import { hasLOS, findPath, MAP, snapWalkable } from './world.js';
 import { moveFighter, tryFire, startReload, switchWeapon, penetrable } from './entities.js';
 import { tacticalGoal, onSpotted, cornerToCheck } from './tactics.js';
 import { tickAction } from './objective.js';
-import { useAbility, abilityReady, fireFury, inPool } from './abilities.js';
+import { useAbility, abilityReady, inPool } from './abilities.js';
 
 const _eye = new THREE.Vector3(), _tp = new THREE.Vector3(), _v = new THREE.Vector3();
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -59,11 +59,11 @@ export class BotBrain {
     this.lastSeenT = now();
     this.holdUntil = 0;
     if (!this.visible) this.target = attacker;
-    // Haze: smoke off a long-range attacker we can't see
-    const f = this.f;
-    if (f.agent.key === 'haze' && !this.visible && f.pos.distanceTo(attacker.pos) > 18 && Math.random() < this.d.abilityChance) {
+    // smoke off a long-range attacker we can't see
+    const f = this.f, s = this.slotWith('smoke');
+    if (s && !this.visible && f.pos.distanceTo(attacker.pos) > 18 && Math.random() < this.d.abilityChance) {
       const mid = f.pos.clone().lerp(attacker.pos, 0.35);
-      useAbility(f, 'q', mid);
+      useAbility(f, s, mid);
     }
   }
 
@@ -145,7 +145,7 @@ export class BotBrain {
 
     // ---------------- goal selection ----------------
     let goal = null, lookAt = null, walk = false, action = null, holding = false;
-    const plantMode = game.config.mode === 'plant' && this.plan;
+    const plantMode = (game.config.mode === 'plant' || game.config.mode === 'uplink') && this.plan;
     const tg = plantMode && live && !this.visible ? tacticalGoal(this) : null;
     const anchored = tg && this.plan.side === 'def' && game.charge?.state !== 'planted';
     const carrying = game.charge?.carrier === f;
@@ -189,7 +189,7 @@ export class BotBrain {
 
     // ---------------- movement ----------------
     let wx = 0, wz = 0;
-    let speed = MOVE.run * f.speedMul;
+    let speed = MOVE.run * f.speedMul, sprint = false;
     if (this.visible && this.target) {
       const tx = this.target.pos.x - f.pos.x, tz = this.target.pos.z - f.pos.z;
       const dist = Math.hypot(tx, tz) || 1;
@@ -214,7 +214,12 @@ export class BotBrain {
       }
       // walk (quiet, accurate) when close to where we expect an enemy
       if (walk || (lookAt && f.pos.distanceTo(lookAt) < 12)) speed = MOVE.walk * f.speedMul;
+      // sprint on long rotations when nothing is around
+      else if (!holding && !action && Math.hypot(goal.x - f.pos.x, goal.z - f.pos.z) > 14 && t - this.lastSeenT > 4) sprint = true;
     }
+    if (sprint) speed = MOVE.sprint * f.speedMul;
+    if (f.sprinting && !sprint) f.sprintOutUntil = t + 0.12;
+    f.sprinting = sprint;
     if (action) { wx = 0; wz = 0; }
     if (inPool(f)) { wx = -wx || rand(-1, 1); wz = -wz || rand(-1, 1); }
 
@@ -235,9 +240,8 @@ export class BotBrain {
 
     // ---------------- aim ----------------
     let dYaw = f.yaw, dPitch = 0;
-    const furyTarget = f.furyShots > 0 && this.lastSeen && t - this.lastSeenT < 3;
     const wallbanging = !this.visible && t < this.wallbangUntil && this.lastSeen;
-    if ((this.visible && this.target) || furyTarget || wallbanging) {
+    if ((this.visible && this.target) || wallbanging) {
       const tgt = this.visible ? this.target.pos : this.lastSeen;
       const vel = this.visible ? this.target.vel : _v.set(0, 0, 0);
       f.eye(_eye);
@@ -272,9 +276,7 @@ export class BotBrain {
 
     // ---------------- shoot ----------------
     if (live && t >= this.reactAt && t >= f.blindUntil) {
-      if (furyTarget || (f.furyShots > 0 && this.visible)) {
-        if (Math.abs(wrap(dYaw - f.yaw)) < 0.05) fireFury(f);
-      } else if (wallbanging) {
+      if (wallbanging) {
         if (Math.abs(wrap(dYaw - f.yaw)) < 0.04 && t >= this.burstPauseUntil) tryFire(f);
       } else if (this.visible && this.target) {
         const dist = f.pos.distanceTo(this.target.pos);
@@ -300,41 +302,32 @@ export class BotBrain {
     if ((this.abilityT -= dt) <= 0) { this.abilityT = rand(0.8, 1.6); this.botAbility(); }
   }
 
-  // ---------------- ability heuristics ----------------
+  // ---------------- gadget heuristics ----------------
+  /** Slot holding a usable gadget of one of these kinds, or null. */
+  slotWith(...keys) {
+    for (const s of ['q', 'e']) if (keys.includes(this.f.abil[s].key) && abilityReady(this.f, s)) return s;
+    return null;
+  }
+
   botAbility() {
     const f = this.f, t = now(), d = this.d;
     if (game.phase !== 'live' || Math.random() > d.abilityChance) return;
-    const key = f.agent.key;
     const hidden = !this.visible && this.lastSeen && t - this.lastSeenT < 4;
     const distLS = this.lastSeen ? f.pos.distanceTo(this.lastSeen) : 99;
     const lsTarget = this.lastSeen ? new THREE.Vector3(this.lastSeen.x, this.lastSeen.y + 0.5, this.lastSeen.z) : null;
-
-    if (key === 'volt') {
-      if (hidden && distLS > 5 && distLS < 25 && abilityReady(f, 'e')) useAbility(f, 'e', lsTarget);
-      else if (this.visible && f.hp < 45 && abilityReady(f, 'q')) {
-        const tx = this.target.pos.x - f.pos.x, tz = this.target.pos.z - f.pos.z, l = Math.hypot(tx, tz) || 1;
-        f.wish = { x: -tz / l, z: tx / l };
-        useAbility(f, 'q');
-      } else if (this.visible && abilityReady(f, 'x')) useAbility(f, 'x');
-    } else if (key === 'haze') {
-      if (hidden && distLS > 6 && distLS < 22 && abilityReady(f, 'e')) useAbility(f, 'e', lsTarget);
-      else if ((this.visible || game.phase === 'live' && t - game.roundStartTime > 30) && abilityReady(f, 'x')) useAbility(f, 'x');
-    } else if (key === 'aegis') {
-      if (!this.visible && f.hp < 60 && abilityReady(f, 'e')) useAbility(f, 'e');
-      else if (this.visible && f.hp < 50 && abilityReady(f, 'q')) useAbility(f, 'q');
-      else if (this.visible && f.hp < 40 && abilityReady(f, 'x')) useAbility(f, 'x');
-    } else if (key === 'hawk') {
-      if (hidden && distLS > 6 && distLS < 24 && abilityReady(f, 'e')) useAbility(f, 'e', lsTarget);
-      else if (hidden && lsTarget && distLS > 8 && distLS < 45 && abilityReady(f, 'x')) useAbility(f, 'x', lsTarget);
-    }
+    let s;
+    if (!this.visible && f.hp < 60 && (s = this.slotWith('medkit'))) useAbility(f, s);
+    else if (this.visible && f.hp < 50 && (s = this.slotWith('cover'))) useAbility(f, s);
+    else if (hidden && distLS > 5 && distLS < 25 && (s = this.slotWith('flash', 'frag', 'gas'))) useAbility(f, s, lsTarget);
+    else if (hidden && distLS < 28 && (s = this.slotWith('sensor'))) useAbility(f, s, lsTarget);
   }
 
   botAbilityOnAdvance() {
     const f = this.f;
-    if (game.phase !== 'live' || Math.random() > this.d.abilityChance) return;
+    if (game.phase !== 'live' || Math.random() > this.d.abilityChance || this.wpI !== 2) return;
     const ahead = this.waypoints[Math.min(this.wpI + 1, this.waypoints.length - 1)];
     const pt = new THREE.Vector3(ahead.x, 1.5, ahead.z);
-    if (f.agent.key === 'hawk' && this.wpI === 2 && abilityReady(f, 'q')) useAbility(f, 'q', pt);
-    if (f.agent.key === 'haze' && this.wpI === 2 && abilityReady(f, 'q') && Math.random() < 0.5) useAbility(f, 'q', pt);
+    const s = this.slotWith('sensor') || (Math.random() < 0.5 && this.slotWith('smoke'));
+    if (s) useAbility(f, s, pt);
   }
 }
