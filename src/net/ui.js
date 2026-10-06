@@ -93,7 +93,7 @@ function openLogin() {
   $('aGuest').onclick = () => { s.hidden = true; };
 }
 
-function askUsername() {
+function askUsername(then) {
   const s = screen('nameScreen');
   s.hidden = false;
   s.innerHTML = `<div class="menuInner small auth">
@@ -102,17 +102,19 @@ function askUsername() {
     <input id="uName" maxlength="16" placeholder="3–16 letters, numbers or _" value="${esc(me.username || '')}">
     <div class="err" id="uErr"></div>
     <button class="big" id="uOk">SAVE</button>
+    <button class="ghost" id="uCancel">Cancel</button>
   </div>`;
+  $('uCancel').onclick = () => { s.hidden = true; };
   $('uName').focus();
   $('uOk').onclick = async () => {
-    try { await setUsername($('uName').value.trim()); s.hidden = true; } catch (e) { $('uErr').textContent = e.message; }
+    try { await setUsername($('uName').value.trim()); s.hidden = true; then?.(); } catch (e) { $('uErr').textContent = e.message; }
   };
   $('uName').onkeydown = (e) => { if (e.key === 'Enter') $('uOk').click(); };
 }
 
-async function needName() {
+async function needName(then) {
   if (me.username) return true;
-  askUsername();
+  askUsername(then);
   return false;
 }
 
@@ -120,7 +122,7 @@ async function needName() {
 // Play online: create / join + friends
 // ---------------------------------------------------------------------------
 async function openOnline() {
-  if (!(await needName())) return;
+  if (!(await needName(openOnline))) return;
   const s = screen('onlineScreen');
   s.hidden = false;
   s.innerHTML = `<div class="menuInner online-wrap">

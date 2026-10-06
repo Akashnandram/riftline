@@ -27,7 +27,7 @@ import { S, save as saveSettings, held, isAction, drawCrosshair, openSettings, o
 import { outfitFor, setOutfit } from './progress.js';
 import { OUTFIT_SLOTS, randomOutfit, cleanOutfit } from './outfits.js';
 import { buildCharacter, animateCharacter, setCharacterGun } from './characters.js';
-import { profile, levelInfo, unlockedSkins, skinFor, equip, startTracking, trackKill, trackRound, trackObjective, finishMatch, completeTutorial, categoryOf } from './progress.js';
+import { profile, levelInfo, unlockedSkins, skinFor, equip, startTracking, trackKill, trackRound, trackObjective, trackStreak, trackDrop, onChallengeDone, rerollDaily, resetsIn, finishMatch, completeTutorial, categoryOf } from './progress.js';
 import { SKINS, SKIN_BY_KEY, applySkin } from './skins.js';
 import { net, setupNet, resetNet, hostTick, applyRemoteInput, sendSpawn, hostEvent, hostEventTo, clientTick, clientSnapshot, interpolate, unpackFighter, unpackCharge, rewindPos } from './net/netgame.js';
 import { me, setPresence } from './net/backend.js';
@@ -373,8 +373,11 @@ const MODE_HINTS = {
 function renderProfile() {
   const L = levelInfo();
   $('profileBadge').innerHTML = `<span class="lv">${L.level}</span><div><div>LEVEL ${L.level}</div><div class="bar"><i style="width:${(L.into / L.need) * 100}%"></i></div><small>${L.into} / ${L.need} XP</small></div>`;
-  $('dailyBox').innerHTML = `<h4>DAILY CHALLENGES · reset at midnight</h4>${profile.daily.list.map((c) => `
-    <div class="ch${c.done ? ' done' : ''}"><span>${c.done ? '✓ ' : ''}${c.desc}</span><div class="bar"><i style="width:${(c.prog / c.goal) * 100}%"></i></div><em>+${c.xp} XP</em></div>`).join('')}`;
+  const row = (c, i, daily) => `<div class="ch${c.done ? ' done' : ''}"><span>${c.done ? '✓ ' : ''}${c.desc}<small>${c.prog} / ${c.goal}</small></span>
+    <div class="bar"><i style="width:${(c.prog / c.goal) * 100}%"></i></div><em>+${c.xp}</em>${daily && !c.done && !profile.daily.rerolled ? `<button class="reroll" data-i="${i}" title="Swap this challenge (once a day)">↻</button>` : '<i></i>'}</div>`;
+  $('dailyBox').innerHTML = `<h4>DAILY CHALLENGES <small>· new in ${resetsIn('daily')}${profile.daily.rerolled ? '' : ' · ↻ swaps one (once a day)'}</small></h4>${profile.daily.list.map((c, i) => row(c, i, true)).join('')}
+    <h4 class="wk">WEEKLY <small>· new in ${resetsIn('weekly')}</small></h4>${profile.weekly.list.map((c, i) => row(c, i, false)).join('')}`;
+  for (const b of $('dailyBox').querySelectorAll('.reroll')) b.onclick = () => { if (rerollDaily(+b.dataset.i)) { sfx('buy'); renderProfile(); } };
   $('newHere').hidden = profile.tutorialDone;
   $('modeHint').textContent = MODE_HINTS[choice.mode] || '';
 }
@@ -392,6 +395,7 @@ $('quickPlay').onclick = quickPlay;
 $('buyClose').onclick = () => toggleBuy(false);
 // phones: rearrange / resize the touch buttons from the pause menu
 $('pauseControls').hidden = !IS_TOUCH;
+if (IS_TOUCH) $('resume').textContent = 'TAP TO RESUME';
 $('pauseControls').onclick = () => { $('pause').hidden = true; openTouchEditor(() => { $('pause').hidden = !game.paused; }); };
 initTouch({
   active: () => locked(),
@@ -1125,7 +1129,7 @@ function clientMsg(m) {
     case 'hit': { const t = byFid(m.v); if (t) game.onPlayerHit(t, m.d, m.h, m.k); break; }
     case 'streak': { const f = byFid(m.fid); const s = STREAKS.find((x) => x.key === m.k); if (f && s) game.onStreak(f, s); break; }
     case 'sdrop': spawnDrop(m.id, V3(m.p), m.team); break;
-    case 'sgone': { removeDrop(m.id); if (m.by === game.player.id) medal('SUPPLIES COLLECTED', 'LMG · armor · gadgets', '#6effc4'); break; }
+    case 'sgone': { removeDrop(m.id); if (m.by === game.player.id) { medal('SUPPLIES COLLECTED', 'LMG · armor · gadgets', '#6effc4'); trackDrop(); } break; }
     case 'hurt': { hurtT = 0.35; const a = byFid(m.a); if (a) game.onPlayerDamaged(a, m.d); sfx('hurt', { vol: 0.6 }); break; }
     case 'spawn': {
       const p = game.player;
@@ -1298,13 +1302,14 @@ game.onKill = (attacker, target, opts) => {
   const mode = game.config.mode;
   if (net.role === 'host') hostEvent({ t: 'kill', a: attacker ? attacker.id : -1, v: target.id, ak: attacker?.kills || 0, o: { weapon: opts.weapon, head: !!opts.head, ability: opts.ability || null }, dir: target.lastHitDir ? A3(target.lastHitDir) : null });
   if (attacker === game.player && target.team !== attacker.team) {
-    trackKill(opts.weapon, opts.head);
+    trackKill(opts.weapon, opts.head, { dist: attacker.pos.distanceTo(target.pos), gadget: !!opts.ability });
     if (mode === 'range') { rs2.kills++; if (target.firstHitT != null) { rs2.ttk += now() - target.firstHitT; rs2.ttkN++; } if (opts.head) tutFlags.headKill = true; }
   }
   target.firstHitT = null;
   // kill streaks (counted on every peer for the HUD; rewards are granted by the host)
   if (attacker && attacker !== target && attacker.team !== target.team) {
     attacker.streak = (attacker.streak || 0) + 1;
+    if (attacker === game.player) trackStreak(attacker.streak);
     if (net.role !== 'client' && respawnMode() && mode !== 'range') grantStreak(attacker, attacker.streak);
   }
   target.streak = 0;
@@ -1498,9 +1503,10 @@ game.onStreak = (f, s) => {
   else comms(`Enemy ${s.name}!`, null, true);
 };
 game.onDropSpawned = (d) => { if (net.role === 'host') hostEvent({ t: 'sdrop', id: d.id, p: A3(d.pos), team: d.team }); };
+onChallengeDone((c) => { medal('CHALLENGE COMPLETE', `${c.desc} · +${c.xp} XP`, '#6effc4'); sfx('capture', { vol: 0.6 }); });
 game.onDropGone = (id, taker) => {
   if (net.role === 'host') hostEvent({ t: 'sgone', id, by: taker ? taker.id : -1 });
-  if (taker === game.player) { medal('SUPPLIES COLLECTED', 'LMG · armor · gadgets', '#6effc4'); setViewModel(taker); }
+  if (taker === game.player) { medal('SUPPLIES COLLECTED', 'LMG · armor · gadgets', '#6effc4'); setViewModel(taker); trackDrop(); }
 };
 game.onNodeMoved = (n) => { flashMsg('NODE MOVED', `The Rift Node is now at ${NODE_NAMES[n.key]}`, 2.2); sfx('nodeMove'); announce(`Node moving to ${NODE_NAMES[n.key].toLowerCase()}`, true); };
 game.onNodeCaptured = (team, n) => {
@@ -1969,6 +1975,10 @@ function updatePlayer(dt) {
 
 function noiseFootsteps(dt) {
   for (const f of game.fighters) {
+    // running (not walking or crouching) makes noise bots can hear
+    if (f.alive && f.onGround && Math.hypot(f.vel.x, f.vel.z) > 4.5 && (f.heardT = (f.heardT ?? 0) - dt) <= 0) {
+      f.heardT = 0.5; game.noises.push({ pos: f.pos.clone(), team: f.team, t: now(), quiet: true, step: true });
+    }
     if (f.isPlayer || !f.alive || !f.onGround) continue;
     const hs = Math.hypot(f.vel.x, f.vel.z);
     if (hs < 4.5) continue;

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { game, now, enemiesOf, sideSign } from './state.js';
 import { DIFFICULTY, MOVE } from './config.js';
-import { hasLOS, findPath, MAP, snapWalkable } from './world.js';
+import { hasLOS, findPath, MAP, snapWalkable, navHeight } from './world.js';
 import { moveFighter, tryFire, startReload, switchWeapon, penetrable } from './entities.js';
 import { tacticalGoal, onSpotted, cornerToCheck } from './tactics.js';
 import { tickAction } from './objective.js';
@@ -29,6 +29,9 @@ export class BotBrain {
       stuckT: 0, stuckPos: new THREE.Vector3(), sidestepUntil: 0, sidestep: 0,
       abilityT: rand(2, 6), noiseSeen: now(), lookYaw: this.f.yaw,
       crouchShoot: false, wallbangUntil: 0, checkPt: null, checkT: 0, plan: null,
+      coverPt: null, coverUntil: 0, coverTry: 0, flankPt: null, flankFor: -1, huntPt: null, huntUntil: 0,
+      // some bots work round the side instead of running straight at the fight
+      flanker: Math.random() < 0.15 + 0.35 * (this.d.smarts ?? 0),
     });
     this.f.wantCrouch = false;
   }
@@ -153,6 +156,10 @@ export class BotBrain {
       goal = null;
     } else if (this.visible) {
       lookAt = null;
+    } else if (t < this.coverUntil && this.coverPt) {
+      // behind cover: finish the reload / heal, watching where they were
+      goal = this.coverPt; lookAt = this.lastSeen;
+      if (Math.hypot(this.coverPt.x - f.pos.x, this.coverPt.z - f.pos.z) < 0.8 && f.reloadT <= 0 && f.hp >= 35) this.coverUntil = 0;
     } else if (plantMode && tg) {
       if (this.lastSeen && t - this.lastSeenT < 3 && (anchored || carrying || tg.action)) {
         // hold position and watch where they were instead of chasing
@@ -163,13 +170,13 @@ export class BotBrain {
         goal = tg.goal; lookAt = tg.look; walk = tg.walk; action = tg.action; holding = !!tg.hold;
       }
     } else if (this.lastSeen && t - this.lastSeenT < 5) {
-      goal = this.lastSeen; lookAt = this.lastSeen;
+      goal = this.chaseGoal(t); lookAt = this.lastSeen;
     } else if (this.intelPos && t - this.intelT < 8) {
       goal = this.intelPos;
+      // heard something close: turn towards it
+      if (t - this.intelT < 2.5 && f.pos.distanceTo(this.intelPos) < 22) lookAt = this.intelPos;
     } else if (hunt) {
-      let best = null, bd = Infinity;
-      for (const e of enemiesOf(f)) { const dd = e.pos.distanceTo(f.pos); if (dd < bd) { bd = dd; best = e; } }
-      goal = best ? best.pos : null;
+      goal = this.huntGoal(t);
     } else if (t < this.holdUntil) {
       goal = null;
     } else if (this.waypoints && this.wpI < this.waypoints.length) {
@@ -190,7 +197,19 @@ export class BotBrain {
     // ---------------- movement ----------------
     let wx = 0, wz = 0;
     let speed = MOVE.run * f.speedMul, sprint = false;
-    if (this.visible && this.target) {
+    // reloading or hurt in a fight: smarter bots duck behind something first
+    if (this.visible && this.target && (f.reloadT > 0 || f.hp < 35) && t > this.coverTry) {
+      this.coverTry = t + 1.5;
+      if (Math.random() < (d.smarts ?? 0)) {
+        this.coverPt = this.findCover(this.target);
+        if (this.coverPt) this.coverUntil = t + 3;
+      }
+    }
+    const toCover = t < this.coverUntil && this.coverPt && Math.hypot(this.coverPt.x - f.pos.x, this.coverPt.z - f.pos.z) > 0.6;
+    if (this.visible && this.target && toCover) {
+      const dx = this.coverPt.x - f.pos.x, dz = this.coverPt.z - f.pos.z, dl = Math.hypot(dx, dz);
+      wx = dx / dl; wz = dz / dl;
+    } else if (this.visible && this.target) {
       const tx = this.target.pos.x - f.pos.x, tz = this.target.pos.z - f.pos.z;
       const dist = Math.hypot(tx, tz) || 1;
       const px = -tz / dist, pz = tx / dist;
@@ -302,6 +321,63 @@ export class BotBrain {
     if ((this.abilityT -= dt) <= 0) { this.abilityT = rand(0.8, 1.6); this.botAbility(); }
   }
 
+  // ---------------- cover, flanking, hunting ----------------
+  /** A spot a few metres away that the enemy can't see (to reload / heal behind), or null. */
+  findCover(enemy) {
+    const f = this.f;
+    _eye.set(enemy.pos.x, enemy.pos.y + 1.5, enemy.pos.z);
+    let best = null, bd = Infinity;
+    const a0 = Math.random() * Math.PI * 2;
+    for (let i = 0; i < 12; i++) {
+      const a = a0 + (i / 12) * Math.PI * 2, r = 2.5 + (i % 3) * 2;
+      const p = snapWalkable({ x: f.pos.x + Math.cos(a) * r, z: f.pos.z + Math.sin(a) * r });
+      const y = navHeight(p.x, p.z);
+      if (Math.abs(y - f.pos.y) > 1.2) continue;
+      if (hasLOS(_eye, _tp.set(p.x, y + 1.3, p.z))) continue;
+      // don't run towards them to get there
+      const toward = (p.x - f.pos.x) * (enemy.pos.x - f.pos.x) + (p.z - f.pos.z) * (enemy.pos.z - f.pos.z);
+      const d = Math.hypot(p.x - f.pos.x, p.z - f.pos.z) + (toward > 0 ? 4 : 0);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  }
+
+  /** Where to go after losing sight of someone: straight there, or (flankers) round the side. */
+  chaseGoal(t) {
+    const f = this.f, ls = this.lastSeen;
+    if (!this.flanker || t - this.lastSeenT < 0.8) return ls;
+    if (this.flankFor !== this.lastSeenT) {
+      this.flankFor = this.lastSeenT;
+      const dx = ls.x - f.pos.x, dz = ls.z - f.pos.z, d = Math.hypot(dx, dz) || 1;
+      if (d < 8) { this.flankPt = null; return ls; }
+      const side = (f.id % 2 ? 1 : -1) * rand(8, 12);
+      // a point beside their position, a bit short of it
+      const p = snapWalkable({ x: ls.x - dx / d * 4 + -dz / d * side, z: ls.z - dz / d * 4 + dx / d * side });
+      this.flankPt = Math.abs(navHeight(p.x, p.z) - ls.y) < 3 ? p : null;
+    }
+    if (this.flankPt && Math.hypot(this.flankPt.x - f.pos.x, this.flankPt.z - f.pos.z) < 2) this.flankPt = null;
+    return this.flankPt || ls;
+  }
+
+  /** Nobody in sight for a while: sweep the area the enemy is probably in (not their exact spot). */
+  huntGoal(t) {
+    const f = this.f;
+    if (this.huntPt && t < this.huntUntil && Math.hypot(this.huntPt.x - f.pos.x, this.huntPt.z - f.pos.z) > 2.5) return this.huntPt;
+    let best = null, bd = Infinity;
+    for (const e of enemiesOf(f)) { const dd = e.pos.distanceTo(f.pos); if (dd < bd) { bd = dd; best = e; } }
+    if (!best) return null;
+    const fuzz = 6 + 8 * (1 - (this.d.smarts ?? 0.5)), a = Math.random() * Math.PI * 2;
+    let x = best.pos.x + Math.cos(a) * fuzz, z = best.pos.z + Math.sin(a) * fuzz;
+    if (this.flanker) {
+      const dx = best.pos.x - f.pos.x, dz = best.pos.z - f.pos.z, d = Math.hypot(dx, dz) || 1;
+      const side = (f.id % 2 ? 1 : -1) * 10;
+      x += -dz / d * side; z += dx / d * side;
+    }
+    this.huntPt = snapWalkable({ x, z });
+    this.huntUntil = t + rand(4, 7);
+    return this.huntPt;
+  }
+
   // ---------------- gadget heuristics ----------------
   /** Slot holding a usable gadget of one of these kinds, or null. */
   slotWith(...keys) {
@@ -316,7 +392,12 @@ export class BotBrain {
     const distLS = this.lastSeen ? f.pos.distanceTo(this.lastSeen) : 99;
     const lsTarget = this.lastSeen ? new THREE.Vector3(this.lastSeen.x, this.lastSeen.y + 0.5, this.lastSeen.z) : null;
     let s;
-    if (!this.visible && f.hp < 60 && (s = this.slotWith('medkit'))) useAbility(f, s);
+    // two or more of them bunched up in view: grenade the group
+    const grouped = this.visible && this.target && enemiesOf(f).filter((e) => e.alive && e.pos.distanceTo(this.target.pos) < 5).length >= 2;
+    const distT = this.target ? f.pos.distanceTo(this.target.pos) : 99;
+    if (grouped && distT > 8 && distT < 26 && Math.random() < 0.3 + 0.7 * (d.smarts ?? 0) && (s = this.slotWith('frag', 'gas', 'flash'))) {
+      useAbility(f, s, new THREE.Vector3(this.target.pos.x, this.target.pos.y + 0.5, this.target.pos.z));
+    } else if (!this.visible && f.hp < 60 && (s = this.slotWith('medkit'))) useAbility(f, s);
     else if (this.visible && f.hp < 50 && (s = this.slotWith('cover'))) useAbility(f, s);
     else if (hidden && distLS > 5 && distLS < 25 && (s = this.slotWith('flash', 'frag', 'gas'))) useAbility(f, s, lsTarget);
     else if (hidden && distLS < 28 && (s = this.slotWith('sensor'))) useAbility(f, s, lsTarget);
