@@ -259,7 +259,14 @@ const STEP = {
   concrete: (o, t, v) => { hiss(o, t, { dur: 0.05, freq: 380, type: 'lowpass', peak: 0.7 * v }); hiss(o, t + 0.008, { dur: 0.025, freq: 3500, q: 1.5, peak: 0.18 * v }); },
   wood: (o, t, v) => { hiss(o, t, { dur: 0.08, freq: 260, q: 4, peak: 1.1 * v }); osc(o, t, { freq: 140, dur: 0.07, peak: 0.25 * v }); },
   metal: (o, t, v) => { hiss(o, t, { dur: 0.04, freq: 500, type: 'lowpass', peak: 0.6 * v }); osc(o, t, { freq: 920 + Math.random() * 80, dur: 0.18, type: 'triangle', peak: 0.07 * v }); osc(o, t, { freq: 1530, dur: 0.12, peak: 0.04 * v }); },
+  // soft, shifting sand: a muffled push and a dry trickle
+  sand: (o, t, v) => { hiss(o, t, { dur: 0.09, freq: 520, type: 'lowpass', peak: 0.55 * v, attack: 0.01 }); hiss(o, t + 0.02, { dur: 0.08, freq: 2600, q: 0.8, peak: 0.12 * v }); },
+  // packed snow: a short crunch made of a few grainy clicks
+  snow: (o, t, v) => { for (let i = 0; i < 3; i++) hiss(o, t + i * 0.018, { dur: 0.03, freq: 1300 + i * 400, q: 2.5, peak: (0.35 - i * 0.08) * v }); hiss(o, t, { dur: 0.07, freq: 300, type: 'lowpass', peak: 0.4 * v }); },
+  // grass / leaf litter: a light swish
+  grass: (o, t, v) => { hiss(o, t, { dur: 0.11, freq: 3200, q: 0.6, peak: 0.2 * v, attack: 0.015 }); hiss(o, t, { dur: 0.05, freq: 260, type: 'lowpass', peak: 0.45 * v }); },
 };
+STEP.floor = STEP.concrete;
 
 const IMPACT = {
   concrete: (o, t) => { hiss(o, t, { dur: 0.06, freq: 1800, q: 0.8, peak: 0.6 }); hiss(o, t + 0.01, { dur: 0.12, freq: 600, type: 'lowpass', peak: 0.25 }); },
@@ -314,6 +321,10 @@ export function sfx(name, opts = {}) {
       break;
     case 'step': (STEP[opts.surface] || STEP.concrete)(out, t, 1); break;
     case 'land': hiss(out, t, { dur: 0.1, freq: 300, type: 'lowpass', peak: 1 }); break;
+    case 'streak': for (let i = 0; i < 4; i++) osc(out, t + i * 0.07, { freq: 520 * Math.pow(1.26, i), dur: 0.16, type: 'triangle', peak: 0.22 }); break;
+    case 'nodeLost': osc(out, t, { freq: 620, dur: 0.22, type: 'triangle', peak: 0.25, slide: 0.7 }); osc(out, t + 0.16, { freq: 410, dur: 0.3, type: 'triangle', peak: 0.22, slide: 0.8 }); break;
+    case 'nodeMove': for (let i = 0; i < 3; i++) osc(out, t + i * 0.16, { freq: 1180, dur: 0.08, type: 'square', peak: 0.08 }); break;
+    case 'medal': osc(out, t, { freq: 1320, dur: 0.06, type: 'triangle', peak: 0.12 }); break;
     case 'capture': osc(out, t, { freq: 520, dur: 0.18, peak: 0.5, slide: 1.5 }); osc(out, t + 0.12, { freq: 780, dur: 0.25, peak: 0.45, slide: 1.3 }); break;
     case 'slide': hiss(out, t, { dur: 0.6, freq: 700, type: 'lowpass', peak: 0.7, sweepTo: 250 }); break;
     case 'impact': (IMPACT[opts.surface] || IMPACT.concrete)(out, t); break;
@@ -348,4 +359,110 @@ export function sfx(name, opts = {}) {
     case 'round': osc(out, t, { freq: 440, dur: 0.3, type: 'triangle', peak: 0.25 }); osc(out, t + 0.18, { freq: 660, dur: 0.4, type: 'triangle', peak: 0.25 }); break;
     case 'lose': osc(out, t, { freq: 330, dur: 0.3, type: 'triangle', peak: 0.25 }); osc(out, t + 0.18, { freq: 220, dur: 0.5, type: 'triangle', peak: 0.25 }); break;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Music: an 8-bar loop (Am – F – C – G, 104 bpm) rendered once offline from synth parts —
+// pad, bass, arpeggio and drums — then looped. Plays in the menus (and quietly in matches if
+// the player turns that on).
+// ---------------------------------------------------------------------------
+let musicBuf = null, musicSrc = null, musicGain = null, musicLevel = 0.5, musicWant = 0, musicRendering = false;
+const NOTE = (n) => 440 * Math.pow(2, (n - 69) / 12);
+
+async function renderMusic() {
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!OAC) return null;
+  const bpm = 104, beat = 60 / bpm, bar = beat * 4, bars = 8, rate = 32000;
+  const oc = new OAC(2, Math.ceil(bar * bars * rate), rate);
+  const out = oc.createDynamicsCompressor(); out.threshold.value = -18; out.ratio.value = 3; out.connect(oc.destination);
+  const nbuf = oc.createBuffer(1, rate, rate); const nd = nbuf.getChannelData(0); for (let i = 0; i < rate; i++) nd[i] = Math.random() * 2 - 1;
+  const chords = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];       // Am F C G
+  const tone = (type, f, t0, dur, peak, dest, attack = 0.005, release = 0.08) => {
+    const o = oc.createOscillator(), g = oc.createGain();
+    o.type = type; o.frequency.value = f;
+    g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(peak, t0 + attack);
+    g.gain.setValueAtTime(peak, Math.max(t0 + attack, t0 + dur - release)); g.gain.linearRampToValueAtTime(0, t0 + dur);
+    o.connect(g); g.connect(dest); o.start(t0); o.stop(t0 + dur + 0.02);
+  };
+  const noiseHit = (t0, dur, peak, type, freq, dest) => {
+    const s = oc.createBufferSource(); s.buffer = nbuf;
+    const f = oc.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+    const g = oc.createGain(); g.gain.setValueAtTime(peak, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    s.connect(f); f.connect(g); g.connect(dest); s.start(t0); s.stop(t0 + dur + 0.02);
+  };
+  const padBus = oc.createBiquadFilter(); padBus.type = 'lowpass'; padBus.frequency.value = 1400; padBus.connect(out);
+  const arpBus = oc.createBiquadFilter(); arpBus.type = 'lowpass'; arpBus.frequency.value = 2600; arpBus.connect(out);
+  for (let b = 0; b < bars; b++) {
+    const t0 = b * bar, ch = chords[b % 4];
+    // pad: detuned saws, slow swell
+    for (const n of ch) for (const det of [-6, 6]) { const o = NOTE(n) * Math.pow(2, det / 1200); tone('sawtooth', o, t0, bar, 0.035, padBus, 0.35, 0.4); }
+    // bass: driving eighths on the root
+    for (let i = 0; i < 8; i++) tone('triangle', NOTE(ch[0] - 24), t0 + i * beat / 2, beat / 2 * 0.9, i % 2 ? 0.16 : 0.22, out, 0.004, 0.05);
+    // arpeggio from bar 3 on: sixteenths over the chord, up an octave
+    if (b >= 2) for (let i = 0; i < 16; i++) tone('square', NOTE(ch[i % 3] + 12 + (i % 8 > 5 ? 12 : 0)), t0 + i * beat / 4, beat / 4 * 0.6, 0.03, arpBus, 0.002, 0.04);
+    // drums: kick on every beat, snare on 2 & 4, off-beat hats
+    for (let i = 0; i < 4; i++) {
+      const tk = t0 + i * beat;
+      const k = oc.createOscillator(), kg = oc.createGain();
+      k.frequency.setValueAtTime(120, tk); k.frequency.exponentialRampToValueAtTime(42, tk + 0.18);
+      kg.gain.setValueAtTime(0.55, tk); kg.gain.exponentialRampToValueAtTime(0.001, tk + 0.25);
+      k.connect(kg); kg.connect(out); k.start(tk); k.stop(tk + 0.3);
+      if (i % 2) { noiseHit(tk, 0.16, 0.22, 'bandpass', 1800, out); tone('triangle', 190, tk, 0.08, 0.12, out, 0.001, 0.05); }
+      noiseHit(tk + beat / 2, 0.05, 0.07, 'highpass', 7000, out);
+    }
+  }
+  return oc.startRendering();
+}
+
+/** Music volume (0..1) from settings. */
+export function setMusicVolume(v) { musicLevel = v; applyMusic(); }
+
+/** Fade the music in (1), down to a quiet bed (0.3) or out (0). */
+export async function music(level) {
+  musicWant = level;
+  if (!ctx) return;
+  if (!musicBuf && !musicRendering) {
+    musicRendering = true;
+    try { musicBuf = await renderMusic(); } catch { musicBuf = null; }
+    musicRendering = false;
+  }
+  if (!musicBuf) return;
+  if (!musicSrc) {
+    musicGain = ctx.createGain(); musicGain.gain.value = 0;
+    musicGain.connect(master);
+    musicSrc = ctx.createBufferSource(); musicSrc.buffer = musicBuf; musicSrc.loop = true;
+    musicSrc.connect(musicGain); musicSrc.start();
+  }
+  applyMusic();
+}
+function applyMusic() {
+  if (!musicGain) return;
+  musicGain.gain.setTargetAtTime(musicWant * musicLevel * 0.55, ctx.currentTime, 0.6);
+}
+
+// ---------------------------------------------------------------------------
+// Announcer: short spoken lines through the browser's built-in speech voice
+// ---------------------------------------------------------------------------
+let lastLine = 0, announcerOn = true;
+export function setAnnouncer(on) { announcerOn = on; }
+export function announce(text, important = false) {
+  if (!announcerOn || muted || !('speechSynthesis' in window)) return;
+  const t = performance.now();
+  if (!important && t - lastLine < 1400) return;
+  lastLine = t;
+  try {
+    if (important) speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.12; u.pitch = 0.85; u.volume = Math.min(1, volume * 1.2);
+    const v = speechSynthesis.getVoices().find((x) => /en[-_](US|GB)/i.test(x.lang) && /male|daniel|david|alex|google uk english male/i.test(x.name)) || speechSynthesis.getVoices().find((x) => /^en/i.test(x.lang));
+    if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  } catch { /* speech not available */ }
+}
+/** Debug/info: duration of the rendered music loop in seconds (0 until ready). */
+export function musicInfo() {
+  if (!musicBuf) return null;
+  const d = musicBuf.getChannelData(0); let peak = 0;
+  for (let i = 0; i < d.length; i += 7) peak = Math.max(peak, Math.abs(d[i]));
+  return { seconds: musicBuf.duration, peak };
 }

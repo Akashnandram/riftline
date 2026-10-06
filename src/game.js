@@ -22,7 +22,7 @@ import { BotBrain } from './bot.js';
 import { useAbility, abilityReady, updateAbilities, updateAbilityState, clearAbilities, giveGadget } from './abilities.js';
 import { buy, botBuy, gadgetCost } from './shop.js';
 import { updateFx, clearFx, smokePuff, tracer, impact, blood, muzzleSprite, ring, burstSphere, spark, bulletHole } from './fx.js';
-import { initAudio, sfx, setMuted, isMuted, updateListener, setVolume } from './audio.js';
+import { initAudio, sfx, setMuted, isMuted, updateListener, setVolume, music, setMusicVolume, announce, setAnnouncer } from './audio.js';
 import { S, save as saveSettings, held, isAction, drawCrosshair, openSettings, onSettingsChange } from './settings.js';
 import { outfitFor, setOutfit } from './progress.js';
 import { OUTFIT_SLOTS, randomOutfit, cleanOutfit } from './outfits.js';
@@ -34,7 +34,7 @@ import { me, setPresence } from './net/backend.js';
 import { initOnlineUI, onlineMatchOver, leaveOnline } from './net/ui.js';
 import { buildGun, casingGeo, casingMat } from './guns.js';
 import { flashTexture } from './textures.js';
-import { IS_TOUCH, touch, initTouch, takeLook, enterFullscreen, openTouchEditor } from './touch.js';
+import { IS_TOUCH, touch, initTouch, takeLook, enterFullscreen, openTouchEditor, buzz, requestTilt, takeTilt } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -204,7 +204,18 @@ function updateCasings(dt) {
 const keys = {};
 const mouse = { left: false, leftPressed: false, right: false };
 setVolume(S.volume);
-onSettingsChange(() => setVolume(S.volume));
+onSettingsChange(() => { setVolume(S.volume); setMusicVolume(S.music); setAnnouncer(S.announcer); updateMusic(); });
+setMusicVolume(S.music); setAnnouncer(S.announcer);
+/** Menu music in menus and on the results screen; a quiet bed (or silence) during matches. */
+function updateMusic() {
+  const inMenu = !game.config || ['menu', 'over'].includes(game.phase);
+  music(inMenu ? 1 : S.musicInMatch ? 0.3 : 0);
+}
+// browsers only allow sound after the first tap/click: start the audio (and tilt aim, if on) then
+addEventListener('pointerdown', () => { initAudio(); updateMusic(); if (S.tiltAim) requestTilt(); }, { once: true });
+let lastBuzz = 0;
+/** Phone vibration, rate-limited so rapid hits don't drone. */
+function vibe(pattern, gap = 0.08) { if (!S.vibration) return; const t = performance.now() / 1000; if (t - lastBuzz < gap) return; lastBuzz = t; buzz(pattern); }
 let swayX = 0, swayY = 0;
 let buyOpen = false;
 
@@ -293,6 +304,7 @@ function touchLook(p, dt) {
   if (best) s *= 0.55;                              // slow down over a target
   p.yaw -= lx * s;
   p.pitch = Math.max(-1.5, Math.min(1.5, p.pitch - ly * s * (S.invertY ? -1 : 1)));
+  if (S.tiltAim) { const [ty, tp] = takeTilt(); const k = S.tiltSens * (p.scoped ? 0.5 : aimK > 0.5 ? 0.7 : 1); p.yaw += ty * k; p.pitch = Math.max(-1.5, Math.min(1.5, p.pitch + tp * k)); }
   swayX += lx * 0.00008; swayY += ly * 0.00008;
   if (best && (mouse.left || aimK > 0.5)) {
     const tx = best.pos.x - _ae.x, ty = best.pos.y + 1.2 - _ae.y, tz = best.pos.z - _ae.z;
@@ -429,6 +441,7 @@ initOnlineUI({
 
 function showSettings() {
   openSettings($('settings'), {
+    requestTilt,
     quality: QUALITY,
     setQuality: (q) => { store.set('quality', q); location.reload(); },
     onClose: () => { $('fps').hidden = !S.showFps; },
@@ -534,6 +547,7 @@ function toMenu() {
   $('menu').hidden = false;
   if (locked()) document.exitPointerLock();
   renderMenu();
+  updateMusic();
 }
 
 function setPaused(p) {
@@ -617,6 +631,7 @@ function startMatch(cfg, roster = null, mapId = null) {
   startTracking(cfg.mode);
   showMatchHud();
   startRound();
+  updateMusic();
 }
 
 /**
@@ -785,6 +800,8 @@ function matchOver() {
   const draw = scored && game.score[me] === game.score[them];
   const won = scored ? game.score[me] > game.score[them] : game.score[me] >= MATCH.roundsToWin;
   $('overTitle').textContent = draw ? 'DRAW' : won ? 'VICTORY' : 'DEFEAT';
+  announce(draw ? 'Draw' : won ? 'Victory' : 'Defeat', true);
+  updateMusic();
   $('overTitle').className = draw ? '' : won ? 'win' : 'lose';
   renderXpSummary(finishMatch({ won, assists: game.player.assists }));
   $('overScore').textContent = `${game.score[0]} – ${game.score[1]}`;
@@ -919,6 +936,7 @@ function startRange(tutorial) {
   game.phase = 'live'; game.phaseT = 0; game.roundStartTime = 0;
   startTracking('range');
   showMatchHud();
+  updateMusic();
   tut = tutorial ? { i: 0, yawAcc: 0, lastYaw: p.yaw, start: p.pos.clone() } : null;
   if (tutorial) renderTutorial();
   flashMsg(tutorial ? 'TUTORIAL' : 'PRACTICE RANGE', tutorial ? 'Follow the steps at the top of the screen' : 'Press B for any weapon (free) · Esc to quit', 3);
@@ -940,16 +958,16 @@ function updateDummy(f, dt) {
 }
 
 const TUT_STEPS = [
-  { t: 'Look around', sub: 'Move your mouse', done: () => tut.yawAcc > 2.5 },
-  { t: 'Move', sub: () => `Use ${['forward', 'left', 'back', 'right'].map((a) => keyLabel(a)).join(' ')} to walk around`, done: () => game.player.pos.distanceTo(tut.start) > 5 },
-  { t: 'Jump', sub: () => `Press ${keyLabel('jump')}`, done: () => !game.player.onGround },
-  { t: 'Sprint and slide', sub: () => `Hold ${keyLabel('sprint')} while running forward, then press ${keyLabel('crouch')} to slide`, done: () => tutFlags.slide },
-  { t: 'Crouch', sub: () => `Hold ${keyLabel('crouch')} — crouching makes you smaller and more accurate`, done: () => game.player.crouch > 0.9 },
-  { t: 'Shoot a target', sub: 'Left click. Stand still for the best accuracy', done: () => rs2.kills >= 1 },
-  { t: 'Reload', sub: () => `Fire a few shots, then press ${keyLabel('reload')}`, done: () => game.player.reloadT > 0 },
-  { t: 'Aim down sights', sub: 'Hold right click and hit one of the far targets (20m+)', done: () => tutFlags.adsFar },
-  { t: 'Buy a primary weapon', sub: () => `Press ${keyLabel('buy')} to open the armory and pick a rifle, SMG or shotgun (free here)`, done: () => game.player.primary && categoryOf(game.player.primary) !== 'secondary' },
-  { t: 'Throw a gadget', sub: () => `Buy one with ${keyLabel('buy')} (free here), then press ${keyLabel('ability1')} or ${keyLabel('ability2')}`, done: () => tutFlags.ability },
+  { t: 'Look around', sub: () => IS_TOUCH ? 'Swipe on the right side of the screen' : 'Move your mouse', done: () => tut.yawAcc > 2.5 },
+  { t: 'Move', sub: () => IS_TOUCH ? 'Put your left thumb down anywhere on the left and slide it' : `Use ${['forward', 'left', 'back', 'right'].map((a) => keyLabel(a)).join(' ')} to walk around`, done: () => game.player.pos.distanceTo(tut.start) > 5 },
+  { t: 'Jump', sub: () => IS_TOUCH ? 'Tap JUMP' : `Press ${keyLabel('jump')}`, done: () => !game.player.onGround },
+  { t: 'Sprint and slide', sub: () => IS_TOUCH ? 'Push the stick all the way up to sprint, then tap CROUCH to slide' : `Hold ${keyLabel('sprint')} while running forward, then press ${keyLabel('crouch')} to slide`, done: () => tutFlags.slide },
+  { t: 'Crouch', sub: () => `${IS_TOUCH ? 'Hold CROUCH' : 'Hold ' + keyLabel('crouch')} — crouching makes you smaller and more accurate`, done: () => game.player.crouch > 0.9 },
+  { t: 'Shoot a target', sub: () => IS_TOUCH ? 'Hold FIRE (drag on it to steer). Stand still for the best accuracy' : 'Left click. Stand still for the best accuracy', done: () => rs2.kills >= 1 },
+  { t: 'Reload', sub: () => IS_TOUCH ? 'Fire a few shots, then tap R' : `Fire a few shots, then press ${keyLabel('reload')}`, done: () => game.player.reloadT > 0 },
+  { t: 'Aim down sights', sub: () => IS_TOUCH ? 'Tap AIM and hit one of the far targets (20m+) — tap AIM again to stop' : 'Hold right click and hit one of the far targets (20m+)', done: () => tutFlags.adsFar },
+  { t: 'Pick a primary weapon', sub: () => `${IS_TOUCH ? 'Tap LOADOUT' : 'Press ' + keyLabel('buy')} and pick a rifle, SMG or shotgun (free here)`, done: () => game.player.primary && categoryOf(game.player.primary) !== 'secondary' },
+  { t: 'Throw a gadget', sub: () => IS_TOUCH ? 'Tap one of the gadget cards on the right' : `Press ${keyLabel('ability1')} or ${keyLabel('ability2')} to throw one of your gadgets`, done: () => tutFlags.ability },
   { t: 'Land a headshot kill', sub: 'Aim for the head — it does much more damage', done: () => tutFlags.headKill },
 ];
 const TOUCH_LABELS = { forward: 'left stick', left: '', back: '', right: '', sprint: 'the stick pushed all the way up', crouch: 'CROUCH', jump: 'JUMP', buy: 'LOADOUT', ability1: 'the gadget', ability2: 'card', reload: 'R', use: 'USE' };
@@ -1066,6 +1084,7 @@ function startClientMatch(cfg, roster) {
   startTracking(cfg.mode);
   showMatchHud();
   game.phase = 'buy';
+  updateMusic();
 }
 
 function installClientHooks(lobby) {
@@ -1305,6 +1324,7 @@ game.onKill = (attacker, target, opts) => {
   if (target === game.player) {
     const respawning = respawnMode();
     target.streak = 0;
+    vibe(140, 0);
     target.lastKiller = attacker && attacker !== target ? attacker : null;
     if (respawning && mode !== 'range') showDeathCard(attacker, opts);
     else flashMsg('ELIMINATED', (attacker ? `by ${attacker.name}` : '') + (respawning ? ` · back in ${mode === 'range' ? 1.5 : 3.5}s` : ''), 2.2, 'lose');
@@ -1331,6 +1351,7 @@ function medal(text, sub = '', color = '#ffd23f') {
 
 function killMedals(p, target, opts) {
   const t = now();
+  const firstBloodBefore = game.firstBlood;
   p.multi = t - (p.lastKillT ?? -99) < 4 ? (p.multi || 1) + 1 : 1;
   p.lastKillT = t;
   medal(`ELIMINATED ${target.name.toUpperCase()}`, '+100', '#ffffff');
@@ -1341,6 +1362,11 @@ function killMedals(p, target, opts) {
   if (p.multi >= 2) medal(['DOUBLE KILL', 'TRIPLE KILL', 'QUAD KILL'][Math.min(2, p.multi - 2)] || 'RAMPAGE', '+50', '#ff8a1f');
   if (target === p.lastKiller) { medal('REVENGE', '+25', '#b18cff'); p.lastKiller = null; }
   if (p.streak === 5 || p.streak === 10) medal(p.streak === 5 ? 'KILLING SPREE' : 'UNSTOPPABLE', `${p.streak} in a row`, '#ff8a1f');
+  // announcer: the most notable thing about this kill
+  const line = p.multi >= 2 ? ['Double kill', 'Triple kill', 'Quad kill'][Math.min(2, p.multi - 2)] : p.streak === 5 ? 'Killing spree' : p.streak === 10 ? 'Unstoppable'
+    : !firstBloodBefore ? 'First blood' : opts.head ? 'Headshot' : 'Enemy down';
+  announce(line, p.multi >= 2 || p.streak === 5 || p.streak === 10);
+  vibe([30, 40, 30], 0);
   if (nodeMode() && (game.nodes || []).some((n) => target.pos.distanceTo(n.pos) < UPLINK.radius + 3)) medal('NODE DEFENDER', '+25', '#6effc4');
 }
 
@@ -1422,6 +1448,7 @@ game.onChargeEvent = (kind, f) => {
 let hitT = 0;
 game.onPlayerHit = (target, dmg, head, killed) => {
   if (target.mesh?.userData) target.mesh.userData.hitFlash = 1;
+  if (!killed) vibe(head ? 18 : 10);
   if (game.config.mode === 'range') {
     rs2.hits++; if (head) rs2.heads++;
     // time-to-kill restarts if the target went 2s without being hit
@@ -1444,6 +1471,7 @@ game.onPlayerHit = (target, dmg, head, killed) => {
 let hurtT = 0;
 game.onPlayerDamaged = (attacker) => {
   hurtT = 0.35;
+  vibe(40, 0.15);
   if (!attacker || attacker === game.player) return;
   // red arc pointing toward whoever hit you
   const p = game.player;
@@ -1463,7 +1491,7 @@ game.onBlackout = () => {};
 game.onStreak = (f, s) => {
   if (net.role === 'host') hostEvent({ t: 'streak', fid: f.id, k: s.key });
   const p = game.player;
-  if (f === p) { medal(s.name, s.desc, '#6effc4'); sfx('capture', { vol: 0.9 }); }
+  if (f === p) { medal(s.name, s.desc, '#6effc4'); sfx('streak', { vol: 0.9 }); announce(s.name.toLowerCase().replace(/^./, (c) => c.toUpperCase()), true); vibe([20, 30, 20, 30, 60], 0); }
   else if (f.team === p.team) comms(`${f.name}: ${s.name} — ${s.desc}`, null, true);
   else comms(`Enemy ${s.name}!`, null, true);
 };
@@ -1472,10 +1500,12 @@ game.onDropGone = (id, taker) => {
   if (net.role === 'host') hostEvent({ t: 'sgone', id, by: taker ? taker.id : -1 });
   if (taker === game.player) { medal('SUPPLIES COLLECTED', 'LMG · armor · gadgets', '#6effc4'); setViewModel(taker); }
 };
-game.onNodeMoved = (n) => { flashMsg('NODE MOVED', `The Rift Node is now at ${NODE_NAMES[n.key]}`, 2.2); sfx('round'); };
+game.onNodeMoved = (n) => { flashMsg('NODE MOVED', `The Rift Node is now at ${NODE_NAMES[n.key]}`, 2.2); sfx('nodeMove'); announce(`Node moving to ${NODE_NAMES[n.key].toLowerCase()}`, true); };
 game.onNodeCaptured = (team, n) => {
   const ours = team === game.player.team, name = game.config.mode === 'dom' && n ? NODE_NAMES[n.key] : 'the Rift Node';
   comms(ours ? `We captured ${name} — hold it!` : `The enemy took ${name}`, null, true);
+  if (!ours) sfx('nodeLost');
+  announce(ours ? 'Node captured' : 'Node lost');
   if (ours && n && game.player.alive && game.player.pos.distanceTo(n.pos) < UPLINK.radius + 1) { trackObjective(); medal('NODE CAPTURED', '+50', '#6effc4'); }
 };
 
@@ -2137,12 +2167,15 @@ function dynamicResolution(raw) {
   const fps = drN / drAcc;
   drAcc = 0; drN = 0;
   const before = resScale;
-  if (fps < 50) resScale = Math.max(0.5, resScale - (fps < 35 ? 0.15 : 0.08));
-  else if (fps > 58 && resScale < 1) resScale = Math.min(1, resScale + 0.05);
+  const target = S.batterySaver ? 30 : 60, top = S.batterySaver ? 0.8 : 1;
+  if (fps < target * 0.83) resScale = Math.max(0.5, resScale - (fps < target * 0.58 ? 0.15 : 0.08));
+  else if (fps > target * 0.96 && resScale < top) resScale = Math.min(top, resScale + 0.05);
+  if (resScale > top) resScale = top;
   if (resScale !== before) resize();
 }
 function frame(ts) {
   requestAnimationFrame(frame);
+  if (S.batterySaver && ts - last < 31) return;          // battery saver: about 30 FPS
   const raw = (ts - last) / 1000;
   const dt = Math.min(0.05, raw);
   last = ts;

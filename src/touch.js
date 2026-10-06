@@ -214,3 +214,40 @@ export function enterFullscreen() {
     p?.then?.(() => screen.orientation?.lock?.('landscape').catch(() => {})).catch?.(() => {});
   } catch { /* not allowed: keep playing in the browser UI */ }
 }
+
+// ---------------------------------------------------------------------------
+// Tilt to aim (gyroscope). Rotation rates are mapped from the device axes to the landscape
+// screen: turning the phone left/right turns the view, tilting it up/down looks up/down.
+// ---------------------------------------------------------------------------
+let tiltOn = false;
+export const tilt = { yaw: 0, pitch: 0 };
+function onMotion(e) {
+  const r = e.rotationRate;
+  if (!r || r.beta == null) return;
+  const dt = Math.min(0.05, (e.interval || 16) / (e.interval > 1 ? 1000 : 1));   // ms on most browsers, s on a few
+  const angle = (screen.orientation?.angle ?? window.orientation ?? 90) % 360;
+  const sign = angle === 270 || angle === -90 ? -1 : 1;
+  const k = (Math.PI / 180) * dt;
+  tilt.yaw += sign * r.beta * k;
+  tilt.pitch += -sign * r.gamma * k;
+}
+/** Turn the sensor on (iOS asks for permission, so call this from a tap). */
+export async function requestTilt() {
+  if (tiltOn) return true;
+  try {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      if (await DeviceMotionEvent.requestPermission() !== 'granted') return false;
+    }
+    addEventListener('devicemotion', onMotion);
+    tiltOn = true;
+    return true;
+  } catch { return false; }
+}
+/** Take (and clear) the tilt rotation gathered since the last frame, in radians. */
+export function takeTilt() { const y = tilt.yaw, p = tilt.pitch; tilt.yaw = tilt.pitch = 0; return [y, p]; }
+
+/** Short vibration (Android browsers; ignored elsewhere). */
+export function buzz(pattern) {
+  if (!IS_TOUCH || !navigator.vibrate) return;
+  try { navigator.vibrate(pattern); } catch { /* not allowed */ }
+}

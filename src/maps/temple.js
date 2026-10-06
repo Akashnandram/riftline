@@ -11,7 +11,7 @@ export default {
     hemi: [0xd8f0c8, 0x3a4a2a, 0.3],
     env: { top: [0.25, 0.42, 0.5], hor: [0.6, 0.7, 0.6], gnd: [0.2, 0.25, 0.15], intensity: 0.65 },
     fog: [0x9fb09a, 60, 200],
-    floor: 'jungle', floorSurface: 'floor',
+    floor: 'jungle', floorSurface: 'grass',
     mat: { wall: 'moss', block: 'moss', plat: 'moss', step: 'moss', outer: 'moss', pillar: 'moss' },
     tint: { wall: MOSS, block: 0xa9a58e, plat: 0xc2bda4, step: 0xb5b09a, outer: 0x8f8d7a, pillar: 0xc0bba2 },
     trims: false, rails: false,

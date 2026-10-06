@@ -75,6 +75,14 @@ players drag every button and set its size and opacity (saved on the device). Th
 compact on phones. A light aim assist slows and
 nudges the view onto targets near the crosshair. Phones use the Low graphics preset and go fullscreen landscape.
 
+Phone extras in Settings → Phone: vibration on hits/kills/damage, optional tilt-to-aim (gyroscope, with its own
+sensitivity), and a Battery saver (30 FPS, lower resolution). The tutorial explains the touch controls on phones.
+
+**Sound**: a generated menu music loop (Am–F–C–G, 104 bpm, rendered once offline; optional quiet music in
+matches), an announcer voice using the browser's speech engine ("First blood", "Headshot", "Double kill",
+"Node captured", "Supply drop"…), cues for streaks, losing and moving nodes, and footsteps that match the
+ground: sand on Dunes, snow on Frostpeak, grass on Temple.
+
 **Outfits** (Loadout & Skins → Outfits): per operative jacket colour, trousers, shoes, hairstyle, hair colour
 and headwear, unlocked by level and shown in every match (online too). Bots wear random outfits.
 

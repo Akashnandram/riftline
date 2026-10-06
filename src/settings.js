@@ -1,11 +1,14 @@
 // Player settings: mouse, video, audio, crosshair and key bindings. Saved in localStorage.
 
+import { IS_TOUCH } from './touch.js';
+
 const KEY = 'riftline.settings';
 
 export const DEFAULTS = {
   sens: 1, adsSens: 0.85, invertY: false,
   fov: 75, showFps: false, thirdPerson: false,
-  volume: 0.7,
+  volume: 0.7, music: 0.5, musicInMatch: false, announcer: true,
+  vibration: true, tiltAim: false, tiltSens: 1, batterySaver: false,
   crosshair: { color: '#6effc4', length: 6, thickness: 2, gap: 3, dot: true, outline: true, opacity: 1, dynamic: true },
   binds: {
     forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', sprint: 'ShiftLeft', crouch: 'KeyC',
@@ -81,7 +84,7 @@ export function drawCrosshair(el, extraGap = 0) {
 // ---------------------------------------------------------------------------
 let rebinding = null;
 
-export function openSettings(root, { quality, setQuality, onClose }) {
+export function openSettings(root, { quality, setQuality, onClose, requestTilt }) {
   root.hidden = false;
   render();
 
@@ -109,7 +112,18 @@ export function openSettings(root, { quality, setQuality, onClose }) {
         slider('Field of view', S.fov, 60, 100, 1, (v) => `${v}°`, (v) => { S.fov = v; }),
         toggle('Show FPS counter', S.showFps, (v) => { S.showFps = v; }),
       ],
-      audio: [slider('Master volume', S.volume, 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`, (v) => { S.volume = v; })],
+      audio: [
+        slider('Master volume', S.volume, 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`, (v) => { S.volume = v; }),
+        slider('Music volume', S.music, 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`, (v) => { S.music = v; }),
+        toggle('Music during matches (quiet)', S.musicInMatch, (v) => { S.musicInMatch = v; }),
+        toggle('Announcer voice ("Enemy down", "Node captured"…)', S.announcer, (v) => { S.announcer = v; }),
+      ],
+      phone: [
+        toggle('Vibration on hits, kills and damage', S.vibration, (v) => { S.vibration = v; }),
+        toggle('Tilt to aim (motion sensor)', S.tiltAim, (v) => { S.tiltAim = v; if (v) requestTilt?.(); }),
+        slider('Tilt sensitivity', S.tiltSens, 0.3, 2.5, 0.05, (v) => v.toFixed(2), (v) => { S.tiltSens = v; }),
+        toggle('Battery saver (30 FPS, lower resolution)', S.batterySaver, (v) => { S.batterySaver = v; }),
+      ],
       cross: [
         slider('Length', c.length, 0, 16, 1, (v) => v, (v) => { c.length = v; drawPreview(); }),
         slider('Thickness', c.thickness, 1, 6, 1, (v) => v, (v) => { c.thickness = v; drawPreview(); }),
@@ -125,12 +139,13 @@ export function openSettings(root, { quality, setQuality, onClose }) {
       <div class="set-head"><h2>SETTINGS</h2><button class="ghost" id="setReset">Reset to defaults</button><button class="big" id="setDone">DONE</button></div>
       <div class="set-grid">
         <div>
-          ${section('MOUSE', rows.mouse)}
+          ${section(IS_TOUCH ? 'LOOK' : 'MOUSE', rows.mouse)}
           ${section('VIDEO', rows.video)}
           <section><h3>GRAPHICS QUALITY</h3><div class="seg" id="setQuality">
             ${['low', 'medium', 'high'].map((q) => `<button data-v="${q}" class="${q === quality ? 'on' : ''}">${q[0].toUpperCase() + q.slice(1)}</button>`).join('')}
           </div><p class="hint">Changing quality reloads the page.</p></section>
           ${section('AUDIO', rows.audio)}
+          ${IS_TOUCH ? section('PHONE', rows.phone) : ''}
         </div>
         <div>
           <section><h3>CROSSHAIR</h3>
@@ -141,12 +156,12 @@ export function openSettings(root, { quality, setQuality, onClose }) {
           </section>
         </div>
         <div>
-          <section><h3>CONTROLS</h3><p class="hint">Click a key, then press the new key (Esc cancels).</p>
+          <section ${IS_TOUCH ? 'hidden' : ''}><h3>CONTROLS</h3><p class="hint">Click a key, then press the new key (Esc cancels).</p>
             <div class="binds">${Object.keys(DEFAULTS.binds).map((a) => `<div class="bind-row"><span>${ACTION_LABELS[a]}</span><button data-a="${a}" class="${rebinding === a ? 'wait' : ''}">${rebinding === a ? 'Press a key…' : keyName(S.binds[a])}</button></div>`).join('')}</div>
           </section>
         </div>
       </div></div>`;
-    for (const list of Object.values(rows)) for (const r of list) r.bind();
+    for (const [k, list] of Object.entries(rows)) if (k !== 'phone' || IS_TOUCH) for (const r of list) r.bind();
     drawPreview();
     root.querySelectorAll('.sw').forEach((b) => { b.onclick = () => { c.color = b.dataset.c; save(); render(); }; });
     root.querySelector('#xhCustom').oninput = (e) => { c.color = e.target.value; save(); drawPreview(); };

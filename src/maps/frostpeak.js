@@ -11,7 +11,7 @@ export default {
     hemi: [0xdde8ff, 0x8a96a8, 0.38],
     env: { top: [0.45, 0.55, 0.7], hor: [0.8, 0.85, 0.9], gnd: [0.6, 0.62, 0.66], intensity: 0.8 },
     fog: [0xc8d2de, 60, 200],
-    floor: 'snow', floorSurface: 'floor', snowCaps: true,
+    floor: 'snow', floorSurface: 'snow', snowCaps: true,
     mat: { plat: 'rock', step: 'block' },
     tint: { outer: 0xa3adbb, wall: 0xd3dae2, plat: ROCK, step: 0xb9bfc7 },
     particles: { color: 0xffffff, mode: 'snow', count: 1400 },

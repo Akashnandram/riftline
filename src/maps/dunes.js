@@ -11,7 +11,7 @@ export default {
     hemi: [0xffe6c4, 0x8f6c44, 0.25],
     env: { top: [0.32, 0.44, 0.62], hor: [0.86, 0.76, 0.6], gnd: [0.5, 0.4, 0.26], intensity: 0.7 },
     fog: [0xd9c6a2, 85, 240],
-    floor: 'sand', floorSurface: 'floor',
+    floor: 'sand', floorSurface: 'sand',
     mat: { outer: 'block', plat: 'block', step: 'block' },
     tint: { outer: 0xc9a77a, wall: SAND, plat: STONE, step: 0xd8ba8f, crate: 0xd2a874 },
     trims: false,
