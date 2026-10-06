@@ -1308,7 +1308,8 @@ game.onKill = (attacker, target, opts) => {
     if (net.role !== 'client' && respawnMode() && mode !== 'range') grantStreak(attacker, attacker.streak);
   }
   target.streak = 0;
-  if (mode === 'tdm' && attacker && attacker.team !== target.team) game.score[attacker.team]++;
+  // clients take the team score from the host's snapshots (counting here too made it jump)
+  if (mode === 'tdm' && net.role !== 'client' && attacker && attacker.team !== target.team) game.score[attacker.team]++;
   if (respawnMode()) target.respawnAt = now() + (mode === 'range' ? 1.5 : 3.5);
   const el = document.createElement('div');
   const mine = attacker === game.player || target === game.player;
@@ -1896,7 +1897,7 @@ function updateHud(dt) {
   // buy timer
   if (buyOpen) setText('buyTimer', `${Math.ceil(game.phaseT)}s left`);
 
-  const showBoard = held(keys, 'scoreboard') && game.phase !== 'over';
+  const showBoard = (held(keys, 'scoreboard') || (IS_TOUCH && touch.board)) && game.phase !== 'over';
   $('scoreboard').hidden = !showBoard;
   if (showBoard) $('scoreboard').innerHTML = scoreboardHTML();
 

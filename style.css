@@ -507,3 +507,22 @@ body.touch-editing .tbtn, body.touch-editing #abilities { outline: 2px dashed rg
 body.touch-editing #hud > *:not(#touchUI):not(#bottomRight) { visibility: hidden; }
 body.touch-editing #bottomRight .wcard { visibility: hidden; }
 body.touch-editing #menu, body.touch-editing #pause { visibility: hidden; }
+
+/* phones: the loadout fills the screen, scrolls, keeps its header (and Close) pinned on top */
+body.touch #buyMenu { top: 6px; bottom: 6px; left: 8px; right: 8px; width: auto; transform: none; padding: 0 10px 10px; overflow-y: auto; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch; touch-action: pan-y; z-index: 40; }
+body.touch .buyHead { position: sticky; top: 0; z-index: 1; padding: 8px 0 6px; background: rgba(14,17,22,0.96); align-items: center; }
+body.touch .buyHead h2 { font-size: 18px; letter-spacing: 3px; }
+body.touch #buyClose { padding: 8px 20px; font-size: 15px; border-color: var(--acc, #ff8a1f); }
+body.touch .buyCols { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 2px; }
+body.touch .buyCols h3 { margin: 2px 0 4px; font-size: 11px; }
+body.touch .items { gap: 5px; }
+body.touch .item { padding: 7px 8px; font-size: 14px; }
+body.touch .item small { font-size: 10px; }
+body.touch .item .k { display: none; }
+body.touch #buyMenu .hint { display: none; }
+#tBoard { left: 50%; top: 8px; transform: translateX(72px); font-size: 11px; }
+#tBoard.on { border-color: #ffd23f; color: #ffd23f; }
+body.touch #scoreboard { top: 50px; transform: translateX(-50%); max-height: calc(100vh - 60px); overflow-y: auto; padding: 8px; }
+body.touch #scoreboard table { font-size: 13px; }
+body.touch #scoreboard td { padding: 3px 6px; }

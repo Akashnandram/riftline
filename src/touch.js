@@ -34,6 +34,7 @@ export function initTouch(gameApi) {
   const btns = [
     button('tFire', 'FIRE', 'big'), button('tFire2', '●', 'small'), button('tAim', 'AIM'), button('tJump', 'JUMP'),
     button('tCrouch', 'CROUCH'), button('tReload', 'R'), button('tSwap', '⇄', 'small'), button('tLoadout', 'LOADOUT', 'top'), button('tPause', 'II', 'top'),
+    button('tBoard', 'SCORES', 'top'),
   ];
   for (const b of btns) root.appendChild(b);
   $('hud').appendChild(root);
@@ -93,6 +94,7 @@ export function initTouch(gameApi) {
   hold('tSwap', () => api.switchWeapon());
   hold('tLoadout', () => api.loadout());
   hold('tPause', () => api.pause());
+  hold('tBoard', () => { touch.board = !touch.board; $('tBoard').classList.toggle('on', touch.board); });
   // HUD cards become buttons
   // gadget cards are buttons (the weapon card is not: it was too easy to hit by accident)
   for (const [id, fn] of [['abQ', () => api.gadget('q')], ['abE', () => api.gadget('e')]]) {
@@ -111,7 +113,7 @@ export function initTouch(gameApi) {
 // ---------------------------------------------------------------------------
 const LAYOUT_KEY = 'riftline.touchLayout';
 const EDITABLE = [['tFire', 'Fire'], ['tFire2', 'Left fire'], ['tAim', 'Aim'], ['tJump', 'Jump'], ['tCrouch', 'Crouch'], ['tReload', 'Reload'],
-  ['tSwap', 'Swap weapon'], ['tLoadout', 'Loadout'], ['tPause', 'Pause'], ['abilities', 'Gadgets']];
+  ['tSwap', 'Swap weapon'], ['tLoadout', 'Loadout'], ['tPause', 'Pause'], ['tBoard', 'Scores'], ['abilities', 'Gadgets']];
 let layout = {};
 function loadLayout() { try { layout = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}') || {}; } catch { layout = {}; } }
 function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* ignore */ } }
