@@ -21,7 +21,7 @@ export const ACTION_LABELS = {
   buy: 'Buy menu', scoreboard: 'Scoreboard (hold)', mute: 'Mute',
 };
 
-const CROSSHAIR_PRESETS = ['#6effc4', '#ffffff', '#ffd23f', '#ff4655', '#3ee6d6', '#b18cff', '#00ff00', '#ff7bd5'];
+const CROSSHAIR_PRESETS = ['#6effc4', '#ffffff', '#ffd23f', '#ff8a1f', '#3ee6d6', '#b18cff', '#00ff00', '#ff7bd5'];
 
 function load() {
   let saved = {};

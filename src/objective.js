@@ -51,7 +51,7 @@ function chargeMesh() {
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 0.32, 8), new THREE.MeshStandardMaterial({ color: 0x2b2f36, metalness: 0.6, roughness: 0.4 }));
   body.position.y = 0.16; body.castShadow = true;
-  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.34, 8), new THREE.MeshStandardMaterial({ color: 0xff4655, emissive: 0xff2040, emissiveIntensity: 1.2 }));
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.34, 8), new THREE.MeshStandardMaterial({ color: 0xff8a1f, emissive: 0xff2040, emissiveIntensity: 1.2 }));
   core.position.y = 0.17;
   const ringM = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.02, 6, 16), new THREE.MeshStandardMaterial({ color: 0x8a8f99, metalness: 0.8, roughness: 0.3 }));
   ringM.rotation.x = Math.PI / 2; ringM.position.y = 0.28;
@@ -205,7 +205,7 @@ function plant(f) {
   c.timer = MATCH.chargeTime; c.half = false; c.plantedAt = now();
   mesh.position.copy(c.pos); mesh.rotation.set(0, f.yaw, 0); mesh.visible = true;
   for (const a of game.fighters) if (a.team === game.attackers) a.credits += MATCH.plantBonus;
-  ring(c.pos, 6, 0xff4655, 0.8);
+  ring(c.pos, 6, 0xff8a1f, 0.8);
   emitSound({ pos: c.pos }, 'planted', 1);
   game.onChargeEvent?.('planted', f);
 }

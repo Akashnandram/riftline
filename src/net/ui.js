@@ -240,7 +240,7 @@ function renderLobby() {
       <b>${esc(m.name)}</b>${m.host ? '<small>HOST</small>' : m.ready ? '<small class="ok">READY</small>' : ''}</div>`);
     for (let i = ms.length; i < st.teamSize; i++) slots.push('<div class="slot bot"><span class="ag">·</span><i>Bot</i></div>');
     const canJoin = mine && mine.team !== t && ms.length < st.teamSize;
-    return `<div class="team t${t}"><h3>${t === 0 ? 'BLUE' : 'RED'} TEAM</h3>${slots.join('')}${canJoin ? `<button class="ghost sm" data-team="${t}">Join ${t === 0 ? 'Blue' : 'Red'}</button>` : ''}</div>`;
+    return `<div class="team t${t}"><h3>${t === 0 ? 'BLUE' : 'ORANGE'} TEAM</h3>${slots.join('')}${canJoin ? `<button class="ghost sm" data-team="${t}">Join ${t === 0 ? 'Blue' : 'Red'}</button>` : ''}</div>`;
   };
   const seg = (k, opts) => `<div class="seg" data-set="${k}">${opts.map(([v, l]) => `<button data-v="${v}" class="${String(st[k]) === String(v) ? 'on' : ''}" ${lobby.isHost ? '' : 'disabled'}>${l}</button>`).join('')}</div>`;
   s.innerHTML = `<div class="menuInner lobby">
@@ -249,7 +249,7 @@ function renderLobby() {
     <div class="lb-grid">
       <div class="teams">${team(0)}${team(1)}</div>
       <div class="side">
-        <section><h3>YOUR AGENT</h3><div class="agents">${Object.values(AGENTS).map((a) => `<button data-agent="${a.key}" class="${mine?.agent === a.key ? 'on' : ''}" style="--acc:${a.color}">${a.name}</button>`).join('')}</div></section>
+        <section><h3>YOUR OPERATIVE</h3><div class="agents">${Object.values(AGENTS).map((a) => `<button data-agent="${a.key}" class="${mine?.agent === a.key ? 'on' : ''}" style="--acc:${a.color}">${a.name}</button>`).join('')}</div></section>
         <section><h3>MATCH ${lobby.isHost ? '' : '<small>(host decides)</small>'}</h3>
           ${seg('mode', [['plant', 'Plant / Defuse'], ['elim', 'Elimination'], ['tdm', 'Team DM']])}
           ${seg('teamSize', [[1, '1v1'], [2, '2v2'], [3, '3v3'], [5, '5v5']])}

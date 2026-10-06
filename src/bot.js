@@ -325,7 +325,7 @@ export class BotBrain {
       else if (this.visible && f.hp < 40 && abilityReady(f, 'x')) useAbility(f, 'x');
     } else if (key === 'hawk') {
       if (hidden && distLS > 6 && distLS < 24 && abilityReady(f, 'e')) useAbility(f, 'e', lsTarget);
-      else if (hidden && abilityReady(f, 'x')) useAbility(f, 'x');
+      else if (hidden && lsTarget && distLS > 8 && distLS < 45 && abilityReady(f, 'x')) useAbility(f, 'x', lsTarget);
     }
   }
 

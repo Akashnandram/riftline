@@ -2,7 +2,7 @@
 
 Play: https://riftline-flame.vercel.app
 
-A browser 5v5 round-based tactical shooter: pick an agent, buy weapons and shields,
+A browser 5v5 round-based tactical shooter: pick an operative, buy weapons and armor,
 use abilities and win 5 rounds against bots. Three.js (from CDN), plain ES modules – no build step.
 
 ## Deploy
@@ -105,24 +105,24 @@ A / B / mid holding spots scored by line of sight to the entrances, rotate on ca
 overshoot flicks, crouch-spray at range and shoot through cover where a target just disappeared.
 Callouts from your teammates appear under the minimap.
 
-## Agents
+## Operatives
 
-| Agent | Role | Q | E | X (ultimate, 5 points) |
+| Operative | Role | Q | E | X (ultimate, 5 points) |
 |---|---|---|---|---|
-| VOLT | Duelist | Surge Dash | Flashpoint (flash) | Overcharge |
-| HAZE | Controller | Veil (smoke) | Toxin Orb | Blackout |
-| AEGIS | Sentinel | Bulwark (barrier) | Mend (heal) | Bastion |
-| HAWK | Initiator | Recon Bolt | Shock Dart | Hunter's Fury |
+| VOLT | Assault | Surge Dash | Flashpoint (flash) | Overcharge |
+| HAZE | Tactician | Veil (smoke) | Toxin Orb | Blackout |
+| AEGIS | Support | Bulwark (barrier) | Mend (heal) | Bastion |
+| HAWK | Recon | Sonar Puck (wall-hack ping) | Pulse Grenade | Orbital Strike |
 
 ## Code map
 
-- `src/config.js` – all balance numbers: weapons, armor, economy, agents, bot difficulty
+- `src/config.js` – all balance numbers: weapons, armor, economy, operatives, bot difficulty
 - `src/world.js` – map loader + builder API, rendering, sky/lighting/backdrop, spatial grid, raycasts, smoke line-of-sight, height-aware nav grid + A*
 - `src/maps/*.js` – the five map layouts, sites, routes and themes
 - `src/textures.js` – procedural concrete/plaster/stone/wood/metal/roof/plank/paver/burlap textures, decals
 - `src/props.js` – visual detail for map props (house roofs/frames/lamps, vehicles, trees, sandbags, fences, stall, plaza, power lines), merged per material
 - `src/guns.js` – weapon models (first-person with hands, third-person for rigs)
-- `src/characters.js` – articulated soldier rigs: per-agent gear, procedural walk/run/strafe, aim, arm IK, flinch, reload, verlet ragdolls, helmet/gun drops
+- `src/characters.js` – articulated soldier rigs: per-operative gear, procedural walk/run/strafe, aim, arm IK, flinch, reload, verlet ragdolls, helmet/gun drops
 - `src/audio.js` – 3D audio engine, reverb, occlusion, synthesised sounds, optional recordings
 - `src/fx.js` – tracers, impacts, bullet holes, muzzle flashes
 - `src/entities.js` – fighters: mesh, movement/collision, shooting, damage
@@ -141,3 +141,10 @@ Callouts from your teammates appear under the minimap.
 All game state lives in `game` (`src/state.js`) and every fighter goes through the same
 `moveFighter` / `tryFire` / `useAbility` functions whether it is the player or a bot, so a
 networked player can replace a `BotBrain` without touching the combat code.
+
+## Originality
+
+Riftline is an original game: its own name, operatives, ability names, weapons, maps, colour palette
+(blue vs orange on graphite) and procedural art and audio. It borrows only general genre conventions
+(round-based plant/defuse, a buy phase, character abilities) that are shared by many tactical shooters,
+and it uses no names, logos, artwork, sounds or text from any other game.

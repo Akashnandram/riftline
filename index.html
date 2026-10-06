@@ -4,11 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Riftline – Tactical Hero Shooter</title>
-  <meta name="description" content="5v5 tactical hero shooter in your browser. Pick an agent, buy weapons, use abilities and win rounds against bots." />
-  <meta name="theme-color" content="#0f1923" />
+  <meta name="description" content="5v5 tactical hero shooter in your browser. Pick an operative, buy weapons, use abilities and win rounds against bots." />
+  <meta name="theme-color" content="#12161c" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Riftline – 5v5 tactical hero shooter in your browser" />
-  <meta property="og:description" content="Pick an agent, buy guns, plant or defuse the Rift Charge. Free, no download." />
+  <meta property="og:description" content="Pick an operative, buy guns, plant or defuse the Rift Charge. Free, no download." />
   <meta property="og:url" content="https://riftline-flame.vercel.app/" />
   <meta property="og:image" content="https://riftline-flame.vercel.app/og-image.jpg" />
   <meta property="og:image:width" content="1200" />
@@ -33,7 +33,7 @@
     <div id="topbar">
       <div class="pips" id="pips0"></div>
       <div class="score blue" id="score0">0</div>
-      <div class="clock"><div id="timer">1:40</div><div id="roundLabel">ROUND 1</div></div>
+      <div class="clock"><div id="timer">1:50</div><div id="roundLabel">ROUND 1</div></div>
       <div class="score red" id="score1">0</div>
       <div class="pips" id="pips1"></div>
     </div>
@@ -54,7 +54,7 @@
 
     <div id="bottomLeft">
       <div class="stat"><span id="hpVal">100</span><small>HP</small></div>
-      <div class="stat armor"><span id="armorVal">0</span><small>SHIELD</small></div>
+      <div class="stat armor"><span id="armorVal">0</span><small>ARMOR</small></div>
     </div>
     <div id="abilities">
       <div class="abil" id="abQ"><div class="cd"></div><kbd>Q</kbd><span class="nm"></span><span class="ch"></span></div>
@@ -81,7 +81,7 @@
       <div><h3>SMG &amp; SHOTGUN</h3><div class="items" data-cat="close"></div></div>
       <div><h3>RIFLES</h3><div class="items" data-cat="rifle"></div></div>
       <div><h3>HEAVY &amp; SNIPER</h3><div class="items" data-cat="heavy"></div></div>
-      <div><h3>SHIELDS</h3><div class="items" data-cat="armor"></div></div>
+      <div><h3>ARMOR</h3><div class="items" data-cat="armor"></div></div>
     </div>
     <p class="hint">Click or press the key shown to buy · buying again in the same slot refunds this round's purchase · <kbd>B</kbd> to close</p>
   </div>
@@ -102,10 +102,10 @@
         </div>
       </div>
       <h1>RIFT<span>LINE</span></h1>
-      <p class="tag">Tactical 5v5 hero shooter · pick an agent · win the rounds</p>
+      <p class="tag">Tactical 5v5 hero shooter · pick an operative · win the rounds</p>
       <div id="newHere" hidden>New here? <button id="btnTutorial2">Play the 2-minute tutorial</button> (+500 XP)</div>
 
-      <h3>CHOOSE YOUR AGENT</h3>
+      <h3>CHOOSE YOUR OPERATIVE</h3>
       <div id="agentCards"></div>
 
       <div class="opts">
@@ -122,7 +122,7 @@
       </div>
       <p id="modeHint" class="hint"></p>
 
-      <button id="lockIn" class="big">LOCK IN</button>
+      <button id="lockIn" class="big">DEPLOY</button>
       <p id="touchWarn" hidden>Riftline needs a keyboard and mouse — open it on a desktop browser.</p>
 
       <div id="dailyBox" class="daily"></div>

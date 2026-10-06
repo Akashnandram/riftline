@@ -517,7 +517,7 @@ export function buildWorld(scene, renderer, quality = 'medium') {
     root.add(z, line);
     spawnMats.push({ side, zoneMat, lineMat });
   }
-  setSpawnColors(0x3d8bff, 0xff4655);
+  setSpawnColors(0x3d8bff, 0xff8a1f);
 
   // plant sites: yellow boundary + big letter
   const siteMat = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.55, depthWrite: false });

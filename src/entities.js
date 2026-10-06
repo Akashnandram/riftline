@@ -8,7 +8,7 @@ import { buildCharacter, setCharacterGun, animateCharacter, startRagdoll, flinch
 import { skinFor } from './progress.js';
 
 export const RADIUS = 0.35, HEIGHT = 1.8, EYE = 1.62;
-export const TEAM_COLORS = [0x3d8bff, 0xff4655];
+export const TEAM_COLORS = [0x3d8bff, 0xff8a1f];
 
 export class Fighter {
   constructor({ id, name, team, agent, isPlayer = false }) {

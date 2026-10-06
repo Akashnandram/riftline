@@ -30,6 +30,7 @@ export function useAbility(f, slot, target = null, mirror = false) {
   if (mirror) { IMPL[f.agent.key][slot](f, target); return true; }
   if (game.net?.role === 'client') { if (f.alive && game.phase === 'live' && abilityReady(f, slot)) game.net.sendAbility?.(slot, target); return false; }
   if (!f.alive || game.phase !== 'live' || !abilityReady(f, slot)) return false;
+  if (!target && f.agent.key === 'hawk' && slot === 'x') target = aimPoint(f);   // so online clients replay the same spot
   const ok = IMPL[f.agent.key][slot](f, target);
   if (!ok) return false;
   game.onAbilityUsed?.(f, slot, target);
@@ -171,17 +172,17 @@ function spawnPool(p) {
   emitSound({ pos }, 'smoke');
 }
 
-function reconPulse(bolt) {
-  if (!bolt.owner) return;
-  ring(bolt.pos, 32, 0x7dff6b, 0.9, Math.max(0.1, bolt.pos.y));
-  emitSound({ pos: bolt.pos }, 'ping');
-  for (const e of enemiesOf(bolt.owner)) {
-    if (e.pos.distanceTo(bolt.pos) > 32) continue;
-    if (!hasLOS(bolt.pos, _a.set(e.pos.x, e.pos.y + 1.2, e.pos.z))) continue;
+/** Sonar Puck: one ping that finds every enemy within range, walls or not. */
+function sonarPing(puck) {
+  if (!puck.owner) return;
+  ring(puck.pos, SONAR_R, 0x7dff6b, 0.9, Math.max(0.1, puck.pos.y));
+  emitSound({ pos: puck.pos }, 'ping');
+  for (const e of enemiesOf(puck.owner)) {
+    if (e.pos.distanceTo(puck.pos) > SONAR_R) continue;
     e.revealedUntil = Math.max(e.revealedUntil, now() + 3);
     e.spottedUntil = Math.max(e.spottedUntil, now() + 3);
-    e.revealedBy = bolt.owner.team;
-    for (const ally of game.fighters) if (ally.team === bolt.owner.team && ally.brain) ally.brain.intel(e);
+    e.revealedBy = puck.owner.team;
+    for (const ally of game.fighters) if (ally.team === puck.owner.team && ally.brain) ally.brain.intel(e);
   }
 }
 
@@ -193,8 +194,42 @@ function explodeShock(p) {
     const c = _a.set(e.pos.x, e.pos.y + 1, e.pos.z);
     const d = c.distanceTo(at);
     if (d > 4.5 || !hasLOS(at, c, true)) continue;
-    applyDamage(e, Math.round(75 * (1 - 0.6 * d / 4.5)), p.owner, { ability: 'Shock Dart' });
+    applyDamage(e, Math.round(75 * (1 - 0.6 * d / 4.5)), p.owner, { ability: 'Pulse Grenade' });
   }
+}
+
+const SONAR_R = 14, STRIKE_R = 5;
+
+/** Ground point under the crosshair (up to 60 m). */
+function aimPoint(f) {
+  const o = f.eye(new THREE.Vector3()), d = f.lookDir(new THREE.Vector3(), false);
+  const t = Math.min(raycastWorld(o, d, 60), 60);
+  const p = o.addScaledVector(d, Math.max(0, t - 0.2));
+  p.y = groundBelow(p.setY(p.y + 0.1));
+  return p;
+}
+
+/** Orbital Strike: warning ring on the target, then a beam from the sky 1.5 s later. */
+function orbitalStrike(owner, at) {
+  const pos = new THREE.Vector3(at.x, at.y, at.z);
+  ring(pos, STRIKE_R, 0x7dff6b, 1.5, pos.y + 0.06);
+  emitSound({ pos }, 'ping');
+  timers.push({ at: now() + 1.5, fn: () => {
+    burstSphere(pos, STRIKE_R, 0xb8ff9a, 0.45);
+    tracer(pos.clone().setY(pos.y + 45), pos, 0xd8ffc8, 0.5, 0.4);
+    emitSound({ pos }, 'boom');
+    const sky = new THREE.Vector3(pos.x, pos.y + 40, pos.z);
+    for (const e of enemiesOf(owner)) {
+      const c = _a.set(e.pos.x, e.pos.y + 1, e.pos.z);
+      const d = c.distanceTo(pos);
+      if (d > STRIKE_R) continue;
+      // a roof or overhang between the sky and the target protects it
+      if (!hasLOS(sky.set(e.pos.x, pos.y + 40, e.pos.z), c, true)) continue;
+      applyDamage(e, Math.round(120 * (1 - 0.6 * d / STRIKE_R)), owner, { ability: 'Orbital Strike' });
+      e.revealedUntil = Math.max(e.revealedUntil, now() + 3);
+      e.spottedUntil = Math.max(e.spottedUntil, now() + 3);
+    }
+  } });
 }
 
 export function fireFury(f, given = null) {
@@ -283,19 +318,16 @@ const IMPL = {
   hawk: {
     q(f, target) {
       throwProjectile(f, {
-        speed: 32, grav: 0.5, lift: 1, color: 0x7dff6b, size: 0.09, life: 3.2,
-        onImpact: (p) => {
-          timers.push({ at: now() + 0.4, fn: () => reconPulse(p) }, { at: now() + 2.2, fn: () => reconPulse(p) });
-          return 'keep';
-        },
+        speed: 20, grav: 1, lift: 2, color: 0x7dff6b, size: 0.1, fuse: 0.9, bounce: 0.3,
+        onFuse: (p) => { sonarPing(p); },
       }, target);
       return true;
     },
     e(f, target) {
-      throwProjectile(f, { speed: 26, grav: 0.8, lift: 1, color: 0x7dff6b, onImpact: (p) => { explodeShock(p); } }, target);
+      throwProjectile(f, { speed: 17, grav: 1, lift: 2, fuse: 1.2, bounce: 0.35, color: 0x7dff6b, onFuse: (p) => { explodeShock(p); } }, target);
       return true;
     },
-    x(f) { f.furyShots = 3; f.furyUntil = now() + 12; return true; },
+    x(f, target) { orbitalStrike(f, target || aimPoint(f)); return true; },
   },
 };
 

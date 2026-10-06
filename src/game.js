@@ -815,7 +815,7 @@ const TUT_STEPS = [
   { t: 'Reload', sub: () => `Fire a few shots, then press ${keyLabel('reload')}`, done: () => game.player.reloadT > 0 },
   { t: 'Aim down sights', sub: 'Hold right click and hit one of the far targets (20m+)', done: () => tutFlags.adsFar },
   { t: 'Buy a primary weapon', sub: () => `Press ${keyLabel('buy')} to open the armory and pick a rifle, SMG or shotgun (free here)`, done: () => game.player.primary && categoryOf(game.player.primary) !== 'secondary' },
-  { t: 'Use an ability', sub: () => `Press ${keyLabel('ability1')} or ${keyLabel('ability2')} — your agent's skills`, done: () => tutFlags.ability },
+  { t: 'Use an ability', sub: () => `Press ${keyLabel('ability1')} or ${keyLabel('ability2')} — your operative's skills`, done: () => tutFlags.ability },
   { t: 'Land a headshot kill', sub: 'Aim for the head — it does much more damage', done: () => tutFlags.headKill },
 ];
 const keyLabel = (a) => `<kbd>${({ Space: 'Space', ShiftLeft: 'Shift' })[S.binds[a]] || S.binds[a].replace(/^Key|^Digit/, '')}</kbd>`;
@@ -1336,7 +1336,7 @@ function renderBuy() {
     const b = document.createElement('button');
     b.className = 'item' + (owned ? ' owned' : '') + (!owned && p.credits < def.cost ? ' poor' : '');
     const mode = def.pellets ? `${def.pellets} pellets` : def.burst ? `${def.burst}-round burst` : def.auto ? 'auto' : 'semi';
-    const info = isArmor ? `+${def.value} shield` : `${def.dmg} body · ${def.head} head · ${mode}${def.suppressed ? ' · suppressed' : ''}`;
+    const info = isArmor ? `+${def.value} armor` : `${def.dmg} body · ${def.head} head · ${mode}${def.suppressed ? ' · suppressed' : ''}`;
     const price = freeLoadout() || !def.cost ? 'FREE' : '¤ ' + def.cost;
     if (freeLoadout()) b.classList.remove('poor');
     b.innerHTML = `<span><span class="k">${it.hot}</span>${def.name}<small>${info}</small></span><span class="c">${price}</span>`;
@@ -1399,7 +1399,7 @@ function scoreboardHTML(final = false) {
         <td class="num">${team === game.player.team && !final ? '¤ ' + f.credits : ''}</td></tr>`);
     }
   }
-  return `<table><tr><th>AGENT</th><th>PLAYER</th><th class="num">K</th><th class="num">D</th><th class="num">A</th><th class="num">${game.config.mode === 'tdm' ? 'DMG' : 'ADR'}</th><th class="num">CREDITS</th></tr>${rows.join('')}</table>`;
+  return `<table><tr><th>OPERATIVE</th><th>PLAYER</th><th class="num">K</th><th class="num">D</th><th class="num">A</th><th class="num">${game.config.mode === 'tdm' ? 'DMG' : 'ADR'}</th><th class="num">CREDITS</th></tr>${rows.join('')}</table>`;
 }
 
 const mm = $('minimap'), mg = mm.getContext('2d');
@@ -1410,8 +1410,8 @@ function drawMinimap() {
   const t = now(), p = game.player;
   mg.clearRect(0, 0, mm.width, mm.height);
   // spawn tints follow whichever team spawns on each side
-  const west = sideSign(p.team) < 0 ? 'rgba(61,139,255,0.14)' : 'rgba(255,70,85,0.14)';
-  const east = sideSign(p.team) < 0 ? 'rgba(255,70,85,0.14)' : 'rgba(61,139,255,0.14)';
+  const west = sideSign(p.team) < 0 ? 'rgba(61,139,255,0.14)' : 'rgba(255,138,31,0.14)';
+  const east = sideSign(p.team) < 0 ? 'rgba(255,138,31,0.14)' : 'rgba(61,139,255,0.14)';
   mg.fillStyle = west; { const [a, b] = toPx(-40, -30), [c, d] = toPx(-30, 30); mg.fillRect(a, b, c - a, d - b); }
   mg.fillStyle = east; { const [a, b] = toPx(30, -30), [c, d] = toPx(40, 30); mg.fillRect(a, b, c - a, d - b); }
   if (game.config.mode === 'plant') {
@@ -1427,7 +1427,7 @@ function drawMinimap() {
   const c = game.charge;
   if (game.config.mode === 'plant' && c && (c.state === 'planted' || c.state === 'dropped') && (p.team === game.attackers || c.state === 'planted')) {
     const [x, y] = toPx(c.pos.x, c.pos.z);
-    mg.fillStyle = c.state === 'planted' && Math.floor(t * 4) % 2 ? '#ffffff' : '#ff4655';
+    mg.fillStyle = c.state === 'planted' && Math.floor(t * 4) % 2 ? '#ffffff' : '#ff8a1f';
     mg.beginPath(); mg.moveTo(x, y - 6); mg.lineTo(x + 5, y + 4); mg.lineTo(x - 5, y + 4); mg.closePath(); mg.fill();
   }
   for (const s of smokes) {
@@ -1450,7 +1450,7 @@ function drawMinimap() {
       mg.beginPath(); mg.moveTo(x, y);
       mg.arc(x, y, 34, -f.yaw - Math.PI / 2 - 0.6, -f.yaw - Math.PI / 2 + 0.6); mg.closePath(); mg.fill();
     }
-    mg.fillStyle = f.isPlayer ? '#ffffff' : ally ? '#3d8bff' : '#ff4655';
+    mg.fillStyle = f.isPlayer ? '#ffffff' : ally ? '#3d8bff' : '#ff8a1f';
     mg.beginPath(); mg.arc(x, y, f.isPlayer ? 4.5 : 4, 0, Math.PI * 2); mg.fill();
     mg.strokeStyle = f.agent.color; mg.lineWidth = 1.5; mg.stroke();
   }

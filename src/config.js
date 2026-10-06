@@ -87,8 +87,8 @@ export const WEAPONS = {
 };
 
 export const ARMOR = {
-  light: { name: 'Light Shield', cost: 400, value: 25 },
-  heavy: { name: 'Heavy Shield', cost: 1000, value: 50 },
+  light: { name: 'Light Vest', cost: 400, value: 25 },
+  heavy: { name: 'Heavy Plate', cost: 1000, value: 50 },
 };
 
 export const ECON = {
@@ -96,7 +96,7 @@ export const ECON = {
 };
 
 export const MATCH = {
-  roundsToWin: 5, buyTime: 12, roundTime: 100, endTime: 4.5, ultCost: 5,
+  roundsToWin: 5, buyTime: 12, roundTime: 110, endTime: 4.5, ultCost: 5,
   // plant mode
   halfRounds: 4, plantTime: 4, defuseTime: 7, chargeTime: 45, blastRadius: 14, plantBonus: 300,
 };
@@ -117,32 +117,32 @@ export const PENETRATION = {
 // Ability: charges refill every round. cooldown > 0 means a spent charge recharges mid-round.
 export const AGENTS = {
   volt: {
-    key: 'volt', name: 'VOLT', role: 'Duelist', color: '#ffd23f',
+    key: 'volt', name: 'VOLT', role: 'Assault', color: '#ffd23f',
     blurb: 'Self-sufficient entry fragger who blinds and outpaces enemies.',
     q: { name: 'Surge Dash', desc: 'Dash a short distance in your movement direction.', charges: 2, cooldown: 14 },
     e: { name: 'Flashpoint', desc: 'Throw a flash that pops mid-air, blinding enemies looking at it.', charges: 2, cooldown: 0 },
     x: { name: 'Overcharge', desc: '10s: +25% fire rate, +20% speed and health regeneration.' },
   },
   haze: {
-    key: 'haze', name: 'HAZE', role: 'Controller', color: '#b18cff',
+    key: 'haze', name: 'HAZE', role: 'Tactician', color: '#b18cff',
     blurb: 'Cuts sightlines with smoke and denies space with toxin.',
     q: { name: 'Veil', desc: 'Deploy a smoke cloud where you aim that blocks vision.', charges: 2, cooldown: 30 },
     e: { name: 'Toxin Orb', desc: 'Lob an orb that leaves a damaging, slowing pool.', charges: 1, cooldown: 0 },
     x: { name: 'Blackout', desc: 'All enemies are blinded and revealed for 4 seconds.' },
   },
   aegis: {
-    key: 'aegis', name: 'AEGIS', role: 'Sentinel', color: '#3ee6d6',
+    key: 'aegis', name: 'AEGIS', role: 'Support', color: '#3ee6d6',
     blurb: 'Locks down angles with barriers and keeps fighting with heals.',
     q: { name: 'Bulwark', desc: 'Raise a bullet-proof barrier in front of you for 20s.', charges: 1, cooldown: 0 },
     e: { name: 'Mend', desc: 'Heal 60 HP over 3 seconds.', charges: 1, cooldown: 30 },
-    x: { name: 'Bastion', desc: 'Instantly restore full health and gain 100 shield.' },
+    x: { name: 'Bastion', desc: 'Instantly restore full health and gain 100 armor.' },
   },
   hawk: {
-    key: 'hawk', name: 'HAWK', role: 'Initiator', color: '#7dff6b',
+    key: 'hawk', name: 'HAWK', role: 'Recon', color: '#7dff6b',
     blurb: 'Gathers intel and flushes enemies out of cover.',
-    q: { name: 'Recon Bolt', desc: 'Fire a bolt that reveals enemies in its line of sight.', charges: 1, cooldown: 35 },
-    e: { name: 'Shock Dart', desc: 'Fire a dart that explodes on impact for up to 75 damage.', charges: 2, cooldown: 0 },
-    x: { name: "Hunter's Fury", desc: '3 wall-piercing energy blasts (80 dmg) that reveal targets.' },
+    q: { name: 'Sonar Puck', desc: 'Throw a sensor that pings every enemy within 14 m once, even through walls.', charges: 1, cooldown: 35 },
+    e: { name: 'Pulse Grenade', desc: 'Lob a bouncing grenade that bursts after 1.2 s for up to 75 damage.', charges: 2, cooldown: 0 },
+    x: { name: 'Orbital Strike', desc: 'Mark the spot you aim at; 1.5 s later a beam hits it for up to 120 damage (roofs block it).' },
   },
 };
 
