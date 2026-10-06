@@ -84,7 +84,7 @@ export function drawCrosshair(el, extraGap = 0) {
 // ---------------------------------------------------------------------------
 let rebinding = null;
 
-export function openSettings(root, { quality, setQuality, onClose, requestTilt }) {
+export function openSettings(root, { quality, setQuality, onClose, requestTilt, editControls }) {
   root.hidden = false;
   render();
 
@@ -119,6 +119,8 @@ export function openSettings(root, { quality, setQuality, onClose, requestTilt }
         toggle('Announcer voice ("Enemy down", "Node captured"…)', S.announcer, (v) => { S.announcer = v; }),
       ],
       phone: [
+        { html: `<div class="set-row set-btnrow"><span>Button layout<small>Move buttons, change their size and opacity</small></span><button class="ghost" id="setTouchEdit">Customize touch controls</button></div>`,
+          bind: () => { root.querySelector('#setTouchEdit').onclick = () => { root.hidden = true; editControls?.(() => { root.hidden = false; }); }; } },
         toggle('Vibration on hits, kills and damage', S.vibration, (v) => { S.vibration = v; }),
         toggle('Tilt to aim (motion sensor)', S.tiltAim, (v) => { S.tiltAim = v; if (v) requestTilt?.(); }),
         slider('Tilt sensitivity', S.tiltSens, 0.3, 2.5, 0.05, (v) => v.toFixed(2), (v) => { S.tiltSens = v; }),

@@ -442,6 +442,7 @@ initOnlineUI({
 function showSettings() {
   openSettings($('settings'), {
     requestTilt,
+    editControls: (done) => openTouchEditor(done),
     quality: QUALITY,
     setQuality: (q) => { store.set('quality', q); location.reload(); },
     onClose: () => { $('fps').hidden = !S.showFps; },

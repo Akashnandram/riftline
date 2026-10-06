@@ -499,3 +499,11 @@ body.touch-editing .tbtn, body.touch-editing #abilities { outline: 2px dashed rg
 .te-row { display: flex; gap: 8px; justify-content: flex-end; }
 .te-row .big { padding: 6px 16px; font-size: 13px; }
 .te-row .ghost { padding: 5px 12px; font-size: 13px; }
+
+.set-btnrow { align-items: center; }
+.set-btnrow small { display: block; color: var(--dim); font-size: 11px; font-weight: 500; }
+.set-btnrow button { padding: 6px 12px; font-size: 13px; }
+/* editing the touch layout from the menu: show only the touch buttons and gadget cards over the scene */
+body.touch-editing #hud > *:not(#touchUI):not(#bottomRight) { visibility: hidden; }
+body.touch-editing #bottomRight .wcard { visibility: hidden; }
+body.touch-editing #menu, body.touch-editing #pause { visibility: hidden; }

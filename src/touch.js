@@ -146,6 +146,8 @@ export function openTouchEditor(onClose) {
     <div class="te-row"><button id="teReset" class="ghost">Reset</button><button id="teDone" class="big">DONE</button></div></div>`;
   document.body.appendChild(ov);
   document.body.classList.add('touch-editing');
+  // outside a match the gadget cards are empty: label them so they can be found
+  for (const id of ['abQ', 'abE']) { const nm = $(id)?.querySelector('.nm'); if (nm && !nm.textContent) nm.textContent = 'Gadget'; }
   let sel = null, drag = null;
   const ensure = (id) => {
     if (layout[id]?.x != null) return layout[id];
