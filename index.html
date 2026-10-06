@@ -54,6 +54,9 @@
     <div id="actionBar" hidden><div></div><span></span></div>
     <div id="comms"></div>
     <div id="buffs"></div>
+    <div id="medals"></div>
+    <div id="hintBar" hidden></div>
+    <div id="deathCard" hidden></div>
 
     <!-- vitals (bottom-centre): health and armor bars -->
     <div id="vitals">
@@ -126,7 +129,8 @@
           </div></div>
         </div>
         <p id="modeHint" class="hint"></p>
-        <div class="deployRow"><button id="lockIn" class="big">DEPLOY</button></div>
+        <div class="deployRow"><button id="quickPlay" class="big quick">QUICK PLAY</button><button id="lockIn" class="big">DEPLOY</button></div>
+        <p class="hint">Quick Play: a short 3v3 Uplink match on a random map. Deploy uses the options above.</p>
         <p id="touchWarn" hidden>Riftline needs a keyboard and mouse — open it on a desktop browser.</p>
       </section>
       <section class="mRight">
@@ -159,6 +163,17 @@
     </div>
   </div>
 
+  <div id="welcome" class="screen dim" hidden>
+    <div class="menuInner small welcomeCard">
+      <small>WELCOME TO</small>
+      <h2>RIFT<span>LINE</span></h2>
+      <p>Squads fight over a Rift Node that moves around the map. Stand in it to capture it, hold it to score.
+        You respawn every time — just jump in.</p>
+      <button id="wPlay" class="big">PLAY NOW</button>
+      <button id="wTut" class="ghost">Show me the controls first (2 min)</button>
+      <button id="wSkip" class="ghost">Look around the menu</button>
+    </div>
+  </div>
   <div id="settings" class="screen dim" hidden></div>
   <div id="loadout" class="screen dim" hidden>
     <div class="menuInner loadout">

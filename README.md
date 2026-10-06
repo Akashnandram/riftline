@@ -66,6 +66,12 @@ for the mirrored half). Its `theme` sets sky, sun, fog, floor, wall materials, p
 
 Squads are 2v2, 4v4 or 6v6; empty slots are filled with bots.
 
+**Quick Play** starts a short 3v3 Uplink (first to 75, 5 minutes) on a random map; brand-new players get a
+welcome card that drops them straight into one against Super Easy bots, with one-time tips during the match
+(movement, sprint/slide, the node, gadgets, loadout). Kills show medals (First Blood, Headshot, Long Shot,
+Double/Triple Kill, Revenge, Killing Spree, Node Defender); dying shows a "killed by" card while the camera
+turns to your killer; hit enemies flash red and stagger.
+
 ## Progression & settings
 
 - XP for kills, headshots, assists, node captures, wins and three daily challenges; levels unlock weapon

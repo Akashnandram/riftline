@@ -326,6 +326,20 @@ function renderProfile() {
 
 $('touchWarn').hidden = !matchMedia('(pointer: coarse)').matches;
 $('lockIn').onclick = () => { initAudio(); startLocal({ ...choice }); lock(); };
+/** Quick Play: short 3v3 Uplink on a random map (Super Easy bots for brand-new players). */
+function quickPlay() {
+  const first = profile.totals.matches === 0;
+  initAudio();
+  startLocal({ ...choice, mode: 'uplink', teamSize: 3, map: 'random', difficulty: first ? 'veryeasy' : choice.difficulty, quick: true });
+  lock();
+}
+$('quickPlay').onclick = quickPlay;
+// first visit: offer to jump straight into a match
+if (profile.totals.matches === 0 && !store.get('welcomed', false)) $('welcome').hidden = false;
+const closeWelcome = () => { $('welcome').hidden = true; store.set('welcomed', true); };
+$('wPlay').onclick = () => { closeWelcome(); quickPlay(); };
+$('wTut').onclick = () => { closeWelcome(); initAudio(); startRange(true); lock(); };
+$('wSkip').onclick = closeWelcome;
 $('resume').onclick = () => { initAudio(); lock(); };
 $('quit').onclick = () => toMenu();
 $('again').onclick = () => { if (game.config.mode === 'range') startRange(game.config.tutorial); else startLocal(game.config); lock(); };
@@ -497,7 +511,9 @@ function startMatch(cfg, roster = null, mapId = null) {
     }
   }
   if (cfg.mode === 'tdm' || cfg.mode === 'uplink') {
-    game.tdmTarget = cfg.mode === 'tdm' ? cfg.teamSize * 8 : UPLINK.target;
+    game.tdmTarget = cfg.mode === 'tdm' ? cfg.teamSize * 8 : cfg.quick ? 75 : UPLINK.target;
+    game.firstBlood = false;
+    resetHints();
     game.uplinkPts = [0, 0];
     for (const f of game.fighters) f.loadout = f.isPlayer ? { primary: 'raptor', secondary: 'p9' } : botLoadout();
   }
@@ -693,7 +709,7 @@ function updatePhase(dt) {
   }
   if (game.phase === 'buy' && game.phaseT <= 0) {
     game.phase = 'live';
-    game.phaseT = game.config.mode === 'tdm' ? 300 : game.config.mode === 'uplink' ? UPLINK.time : MATCH.roundTime;
+    game.phaseT = game.config.mode === 'tdm' ? 300 : game.config.mode === 'uplink' ? (game.config.quick ? 300 : UPLINK.time) : MATCH.roundTime;
     if (game.node) game.node.until = game.time + UPLINK.rotate;
     // in TDM bots start hunting soon instead of walking lanes all match
     game.roundStartTime = game.config.mode === 'tdm' ? game.time - 25 : game.time;
@@ -761,7 +777,7 @@ function respawnFighter(f) {
   }
   if (f.brain) { f.brain.planRound(); if (game.config.mode === 'uplink') f.brain.plan = { side: 'uplink' }; }
   if (f.netOwner) sendSpawn(f);
-  if (f === game.player) { game.spectating = false; setViewModel(f); }
+  if (f === game.player) { game.spectating = false; setViewModel(f); $('deathCard').hidden = true; }
   setGunLook(f);
 }
 
@@ -943,7 +959,9 @@ function startClientMatch(cfg, roster) {
   game.time = 0; game.round = 0; game.score = [0, 0]; game.lossStreak = [0, 0]; game.noises = [];
   buildRosterFighters(cfg, roster, true);
   if (cfg.mode === 'tdm') game.tdmTarget = cfg.teamSize * 8;
-  if (cfg.mode === 'uplink') game.tdmTarget = UPLINK.target;
+  if (cfg.mode === 'uplink') game.tdmTarget = cfg.quick ? 75 : UPLINK.target;
+  game.firstBlood = false;
+  resetHints();
   startTracking(cfg.mode);
   showMatchHud();
   game.phase = 'buy';
@@ -988,6 +1006,7 @@ function clientMsg(m) {
     case 'spawn': {
       const p = game.player;
       net.spawnSeq = m.seq;
+      $('deathCard').hidden = true;
       if (!p.alive) { p.alive = true; resetFighterMesh(p); }
       p.pos.set(...m.p); p.vel.set(0, 0, 0); p.yaw = m.yaw; p.pitch = 0;
       p.reloadT = 0; p.crouch = 0;
@@ -1171,9 +1190,14 @@ game.onKill = (attacker, target, opts) => {
   setTimeout(() => el.remove(), 6000);
   while ($('killfeed').children.length > 6) $('killfeed').lastChild.remove();
   if (attacker === game.player) sfx('kill');
+  if (attacker === game.player && target.team !== attacker.team && mode !== 'range') killMedals(attacker, target, opts);
+  else if (attacker && attacker !== target && target.team !== attacker.team) game.firstBlood = true;
   if (target === game.player) {
     const respawning = respawnMode();
-    flashMsg('ELIMINATED', (attacker ? `by ${attacker.name}` : '') + (respawning ? ` · back in ${mode === 'range' ? 1.5 : 3.5}s` : ''), 2.2, 'lose');
+    target.streak = 0;
+    target.lastKiller = attacker && attacker !== target ? attacker : null;
+    if (respawning && mode !== 'range') showDeathCard(attacker, opts);
+    else flashMsg('ELIMINATED', (attacker ? `by ${attacker.name}` : '') + (respawning ? ` · back in ${mode === 'range' ? 1.5 : 3.5}s` : ''), 2.2, 'lose');
     game.specIndex = -1;
     if (!respawning) setTimeout(() => { if (!game.player.alive && game.phase !== 'over') { game.spectating = true; cycleSpectate(); } }, 1200);
   }
@@ -1181,6 +1205,83 @@ game.onKill = (attacker, target, opts) => {
     flashMsg('LAST ALIVE', `1 v ${aliveCount(1 - game.player.team)}`, 1.5);
   }
 };
+
+// ---------------------------------------------------------------------------
+// Kill feedback: banner + medals for the player's kills, a "killed by" card on death
+// ---------------------------------------------------------------------------
+function medal(text, sub = '', color = '#ffd23f') {
+  const el = document.createElement('div');
+  el.className = 'medal'; el.style.setProperty('--mc', color);
+  el.innerHTML = `<b>${text}</b>${sub ? `<em>${sub}</em>` : ''}`;
+  $('medals').appendChild(el);
+  while ($('medals').children.length > 4) $('medals').firstChild.remove();
+  setTimeout(() => el.classList.add('out'), 1900);
+  setTimeout(() => el.remove(), 2400);
+}
+
+function killMedals(p, target, opts) {
+  const t = now();
+  p.streak = (p.streak || 0) + 1;
+  p.multi = t - (p.lastKillT ?? -99) < 4 ? (p.multi || 1) + 1 : 1;
+  p.lastKillT = t;
+  medal(`ELIMINATED ${target.name.toUpperCase()}`, '+100', '#ffffff');
+  if (!game.firstBlood) { game.firstBlood = true; medal('FIRST BLOOD', '+50', '#ff8a1f'); }
+  if (opts.head) medal('HEADSHOT', '+25', '#ffd23f');
+  const dist = p.pos.distanceTo(target.pos);
+  if (dist > 35) medal('LONG SHOT', `${Math.round(dist)} m`, '#7fb2ff');
+  if (p.multi >= 2) medal(['DOUBLE KILL', 'TRIPLE KILL', 'QUAD KILL'][Math.min(2, p.multi - 2)] || 'RAMPAGE', '+50', '#ff8a1f');
+  if (target === p.lastKiller) { medal('REVENGE', '+25', '#b18cff'); p.lastKiller = null; }
+  if (p.streak === 5 || p.streak === 10) medal(p.streak === 5 ? 'KILLING SPREE' : 'UNSTOPPABLE', `${p.streak} in a row`, '#ff8a1f');
+  if (game.node && game.config.mode === 'uplink' && target.pos.distanceTo(game.node.pos) < UPLINK.radius + 3) medal('NODE DEFENDER', '+25', '#6effc4');
+}
+
+function showDeathCard(killer, opts) {
+  const p = game.player, el = $('deathCard');
+  if (!killer || killer === p) {
+    el.innerHTML = '<small>YOU WERE ELIMINATED</small><h3>WATCH YOUR STEP</h3><div class="respawn" id="dcRespawn"></div>';
+  } else {
+    const wpn = opts.ability || (opts.weapon ? WEAPONS[opts.weapon].name : '—');
+    el.innerHTML = `<small>KILLED BY</small><h3 style="color:${killer.team === p.team ? '#7fb2ff' : '#ffb066'}">${killer.name}</h3>
+      <div class="dcs"><span>${killer.agent.name}</span><span><b>${wpn}</b>${opts.head ? ' · headshot' : ''}</span>
+      <span><b>${Math.ceil(killer.hp)}</b> HP left</span><span><b>${Math.round(p.pos.distanceTo(killer.pos))}</b> m</span></div>
+      <div class="respawn" id="dcRespawn"></div>`;
+  }
+  el.hidden = false;
+  game.deathCardFor = killer && killer !== p ? killer : null;
+}
+
+// ---------------------------------------------------------------------------
+// First-match hints (each shown once per browser)
+// ---------------------------------------------------------------------------
+const HINTS = [
+  { id: 'move', when: (p, t) => t > 1, text: () => `${keyLabel('forward')}${keyLabel('left')}${keyLabel('back')}${keyLabel('right')} move · mouse aims · click shoots · right-click aims closer` },
+  { id: 'sprint', when: (p, t) => t > 9, text: () => `Hold ${keyLabel('sprint')} to sprint · press ${keyLabel('crouch')} while sprinting to slide` },
+  { id: 'node', when: (p, t) => game.config.mode === 'uplink' && t > 16, text: () => 'Follow the light beam to the Rift Node · stand in its ring to capture it' },
+  { id: 'hold', when: (p) => game.node && game.node.owner === p.team && p.pos.distanceTo(game.node.pos) < UPLINK.radius, text: () => 'Your team owns the node — every second you hold it scores a point' },
+  { id: 'gadget', when: (p, t) => t > 28 && (p.abil.q.charges > 0 || p.abil.e.charges > 0), text: () => `Press ${keyLabel('ability1')} / ${keyLabel('ability2')} to throw your gadgets` },
+  { id: 'loadout', when: (p) => !p.alive, text: () => `Press ${keyLabel('buy')} to change your weapons — you get them when you respawn` },
+  { id: 'moved', when: (p, t) => game.node && game.config.mode === 'uplink' && game.node.until - game.time < 8 && t > 40, text: () => 'The node moves soon — watch the timer under the score' },
+];
+let hintSeen = new Set(), hintUntil = 0, hintShown = 0;
+function resetHints() {
+  try { hintSeen = new Set(JSON.parse(localStorage.getItem('riftline.hints') || '[]')); } catch { hintSeen = new Set(); }
+  hintUntil = 0; hintShown = 0; $('hintBar').hidden = true;
+}
+function updateHints() {
+  const p = game.player;
+  if (!p || game.config.mode === 'range' || game.phase !== 'live') return;
+  const t = game.time - (game.roundStartTime || 0);
+  if (now() < hintUntil) return;
+  $('hintBar').hidden = true;
+  if (now() - hintShown < 2) return;
+  const h = HINTS.find((x) => !hintSeen.has(x.id) && x.when(p, t));
+  if (!h) return;
+  hintSeen.add(h.id);
+  try { localStorage.setItem('riftline.hints', JSON.stringify([...hintSeen])); } catch { /* ignore */ }
+  $('hintBar').innerHTML = `<small>TIP</small>${h.text()}`;
+  $('hintBar').hidden = false;
+  hintUntil = now() + 6; hintShown = hintUntil;
+}
 
 // team comms (bot callouts) + objective events
 function comms(text, who = null, sys = false) {
@@ -1211,6 +1312,7 @@ game.onChargeEvent = (kind, f) => {
 
 let hitT = 0;
 game.onPlayerHit = (target, dmg, head, killed) => {
+  if (target.mesh?.userData) target.mesh.userData.hitFlash = 1;
   if (game.config.mode === 'range') {
     rs2.hits++; if (head) rs2.heads++;
     // time-to-kill restarts if the target went 2s without being hit
@@ -1513,6 +1615,11 @@ function drawMinimap() {
 
 function updateHud(dt) {
   const p = game.player, t = now();
+  updateHints();
+  if (!$('deathCard').hidden) {
+    if (p.alive || game.phase === 'over') $('deathCard').hidden = true;
+    else if (p.respawnAt) setText('dcRespawn', `Back in ${Math.max(0, p.respawnAt - t).toFixed(1)}s · press ${S.binds.buy.replace(/^Key/, '')} to change loadout`);
+  }
   const viewF = game.spectating && game.specTarget ? game.specTarget : p;
   // top bar
   const tl = Math.max(0, Math.ceil(game.phaseT));
@@ -1708,6 +1815,7 @@ function playerVision() {
 // Camera + first-person weapon animation
 // ---------------------------------------------------------------------------
 let forceAim = false; // test hook
+const deathLook = new THREE.Vector3();
 const _tf = new THREE.Vector3(), _tr = new THREE.Vector3(), _tp = new THREE.Vector3(), _tb = new THREE.Vector3(), _te = new THREE.Vector3();
 let bob = 0, aimK = 0, landT = 0, lastReloadStage = -1, sprintK = 0, prevCrouchKey = false;
 const _fwd = new THREE.Vector3();
@@ -1766,10 +1874,15 @@ function updateCamera(dt) {
     const side = Math.cos(p.yaw) * p.vel.x - Math.sin(p.yaw) * p.vel.z;
     camera.rotation.z = -side * 0.0025 + rs.r.z * 0.08;
     if (!p.alive) {
-      // death cam: pull back and look at your own ragdoll
+      // death cam: pull back from your body, then turn to face whoever got you
       const body = p.mesh.userData.ragdoll ? p.mesh.userData.ragdoll.pts[0] : p.pos;
+      const k = game.deathCardFor;
       camera.position.set(body.x + Math.sin(p.yaw) * 2.6, body.y + 1.9, body.z + Math.cos(p.yaw) * 2.6);
-      camera.lookAt(body.x, body.y, body.z);
+      if (k && k.alive && now() - (p.lastHitT || 0) > 0.7) {
+        _te.set(k.pos.x, k.pos.y + 1.5, k.pos.z);
+        deathLook.lerp(_te, Math.min(1, dt * 4));
+      } else deathLook.set(body.x, body.y, body.z);
+      camera.lookAt(deathLook);
     }
     const base = S.fov;
     if (p.scoped) fov = base / w.scope;

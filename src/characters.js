@@ -20,17 +20,20 @@ const L_UP = 0.29, L_FORE = 0.27, L_THIGH = 0.44, L_SHIN = 0.43, HIP_Y = 0.95;
 // ---------------------------------------------------------------------------
 // Shared body material: per-vertex colour, roughness/metalness (rm) and emissive glow (emi)
 // ---------------------------------------------------------------------------
+// per-character hit flash: set just before each body draws (see body.onBeforeRender)
+const HIT_FLASH = { value: 0 };
 function bodyMaterial() {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
   m.onBeforeCompile = (sh) => {
+    sh.uniforms.hitFlash = HIT_FLASH;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec2 rm;\nattribute vec3 emi;\nvarying vec2 vRM;\nvarying vec3 vEmi;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRM = rm; vEmi = emi;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vRM;\nvarying vec3 vEmi;')
+      .replace('#include <common>', '#include <common>\nvarying vec2 vRM;\nvarying vec3 vEmi;\nuniform float hitFlash;')
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vRM.x;')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = vRM.y;')
-      .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance += vEmi;');
+      .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance += vEmi + vec3(1.0, 0.18, 0.12) * hitFlash;');
   };
   m.customProgramCacheKey = () => 'riftline-body';
   return m;
@@ -321,11 +324,14 @@ export function buildCharacter(teamColor, agent) {
   body.boundingSphere = new THREE.Sphere(V(0, 0.95, 0), 1.4);   // fixed bounds: no per-vertex skinning pass on the CPU
   root.add(body);
   body.bind(skeleton);
+  // each body sets the shared hit-flash uniform for its own draw
+  body.onBeforeRender = () => { const v = root.userData.hitFlash || 0; if (HIT_FLASH.value !== v) { HIT_FLASH.value = v; BODY_MAT.uniformsNeedUpdate = true; } };
   const outline = null;
 
   const hg = new THREE.Group(); head.add(hg);
   const hgMesh = new THREE.Mesh(entry.head, BODY_MAT);
   hgMesh.castShadow = true; hg.add(hgMesh);
+  hgMesh.onBeforeRender = body.onBeforeRender;
 
   // through-wall reveal silhouette + ally marker
   const ghost = new THREE.Group();
@@ -455,8 +461,9 @@ export function animateCharacter(root, s, dt) {
   u.lean += (sK * amp * 0.12 - u.lean) * Math.min(1, dt * 8);
   u.hips.rotation.z = -u.lean * 0.5;
 
-  // flinch impulse decays
+  // flinch impulse and hit flash decay
   u.flinch.multiplyScalar(Math.exp(-9 * dt));
+  if (u.hitFlash) { u.hitFlash = Math.max(0, u.hitFlash - dt * 6); }
   const breathe = Math.sin(performance.now() / 650) * 0.012;
   const pitch = THREE.MathUtils.clamp(s.pitch, -1.0, 1.0);
   u.spine.rotation.set(pitch * 0.35 + fK * amp * 0.12 + u.flinch.x - 0.22 * c + sp * 0.22 - (s.slide ? 0.55 : 0), -u.hips.rotation.y * 0.8 + u.flinch.z, u.lean * 0.8 + u.flinch.y);
@@ -495,10 +502,11 @@ export function animateCharacter(root, s, dt) {
 export function flinch(root, dir, head) {
   const u = root.userData;
   if (!u || u.ragdoll) return;
-  const k = head ? 0.3 : 0.16;
+  const k = head ? 0.42 : 0.24;     // visible stagger so hits read clearly
   u.flinch.x += (Math.random() * 0.5 + 0.5) * k * (head ? -1 : 1) * 0.6;
   u.flinch.y += (Math.random() - 0.5) * k;
   u.flinch.z += (Math.random() - 0.5) * k;
+  u.hitFlash = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -576,6 +584,7 @@ export function startRagdoll(root, scene, vel, dir, head) {
     props.push(makeProp(h, push.clone().multiplyScalar(4).add(V(0, 3.5, 0)), 0.1));
   }
   root.visible = true;
+  u.hitFlash = 0;
   if (u.body) { u.body.frustumCulled = false; if (u.outline) u.outline.frustumCulled = false; }
   u.ghost.visible = false; u.marker.visible = false;
   u.ragdoll = { pts, prev, rest, holder, t: 0, sleep: false };
