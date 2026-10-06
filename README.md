@@ -1,10 +1,10 @@
-# Nodefall – third-person squad shooter
+# Riftline – third-person squad shooter
 
 Play: https://riftline-flame.vercel.app
 
 A browser third-person squad shooter with non-stop respawn matches: pick an operative (each has a
 passive perk) and a free loadout of guns and gadgets, sprint and slide around five maps and fight over
-the Rift Node. (Repo and URL keep the old working name "riftline".) Three.js (from CDN), plain ES modules – no build step.
+the Rift Node. Three.js (from CDN), plain ES modules – no build step.
 
 ## Deploy
 
@@ -152,7 +152,7 @@ networked player can replace a `BotBrain` without touching the combat code.
 
 ## Originality
 
-Nodefall is an original game: its own name, operatives and perks, gadgets, Uplink mode, weapons, maps, colour palette
+Riftline is an original game: its own name, operatives and perks, gadgets, Uplink mode, weapons, maps, colour palette
 (blue vs orange on graphite) and procedural art and audio. It borrows only general genre conventions
 (respawn matches, grenades, a capture point) that are shared by many shooters,
 and it uses no names, logos, artwork, sounds or text from any other game.

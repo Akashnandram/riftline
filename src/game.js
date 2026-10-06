@@ -61,7 +61,7 @@ renderer.shadowMap.enabled = QUALITY !== 'low';
 renderer.shadowMap.type = QUALITY === 'high' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+renderer.toneMappingExposure = 1.05;
 renderer.autoClear = false;
 // shadows: the sun and the world are static, so on Medium the shadow map is refreshed every other frame
 renderer.shadowMap.autoUpdate = QUALITY === 'high';
@@ -88,8 +88,8 @@ const GradeShader = {
     void main(){
       vec3 c = texture2D(tDiffuse, vUv).rgb;
       float l = dot(c, vec3(0.299,0.587,0.114));
-      c = mix(vec3(l), c, 1.24);                                  // bright, saturated look
-      c = (c - 0.5) * 1.06 + 0.5;
+      c = mix(vec3(l), c, 1.14);                                  // slightly vivid look
+      c = (c - 0.5) * 1.04 + 0.5;
       c = c * vec3(1.02, 1.0, 0.97) + vec3(-0.008, 0.0, 0.012) * (1.0 - l); // warm highs, cool shadows
       vec2 d = vUv - 0.5;
       c *= 1.0 - dot(d, d) * 0.55;                                // vignette

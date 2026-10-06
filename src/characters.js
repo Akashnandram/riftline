@@ -36,20 +36,21 @@ function bodyMaterial() {
   return m;
 }
 const BODY_MAT = bodyMaterial();
-// cartoon outline: the same mesh drawn again, pushed out along its normals, back faces only
-const OUTLINE_MAT = new THREE.MeshBasicMaterial({ color: 0x0c0e12, side: THREE.BackSide });
-OUTLINE_MAT.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normal * 0.018;'); };
-OUTLINE_MAT.customProgramCacheKey = () => 'riftline-outline';
+
 
 /** A "material" here is just the per-vertex values that get baked in. */
 const mat = (color, rough = 0.85, metal = 0, glow = 0) => ({ color: new THREE.Color(color), rough, metal, glow });
 
 const geoCache = new Map();
 function geo(key, make) { if (!geoCache.has(key)) geoCache.set(key, make()); return geoCache.get(key); }
-const capG = (r, l) => geo(`cap${r}|${l}`, () => new THREE.CapsuleGeometry(r, l, 3, 9));
+const capG = (r, l) => geo(`cap${r}|${l}`, () => new THREE.CapsuleGeometry(r, l, r < 0.02 ? 2 : 3, r < 0.02 ? 6 : 9));
 const boxG = (w, h, d) => geo(`box${w}|${h}|${d}`, () => new THREE.BoxGeometry(w, h, d));
 const rbG = (w, h, d, r = 0.02) => geo(`rb${w}|${h}|${d}|${r}`, () => new RoundedBoxGeometry(w, h, d, Math.max(w, h, d) > 0.25 ? 3 : 1, Math.min(r, Math.min(w, h, d) / 2.05)));
-const sphG = (r, ws = 16, hs = 12, ps = 0, pl = Math.PI * 2, ts = 0, tl = Math.PI) => geo(`sph${r}|${ws}|${hs}|${ps}|${pl}|${ts}|${tl}`, () => new THREE.SphereGeometry(r, ws, hs, ps, pl, ts, tl));
+// small parts get fewer segments (they're a few pixels on screen) to keep each body light
+const sphG = (r, ws = 16, hs = 12, ps = 0, pl = Math.PI * 2, ts = 0, tl = Math.PI) => {
+  if (r < 0.02) { ws = Math.min(ws, 8); hs = Math.min(hs, 6); } else if (r < 0.07) { ws = Math.min(ws, 12); hs = Math.min(hs, 8); }
+  return geo(`sph${r}|${ws}|${hs}|${ps}|${pl}|${ts}|${tl}`, () => new THREE.SphereGeometry(r, ws, hs, ps, pl, ts, tl));
+};
 const cylG = (rt, rb, h, s = 12) => geo(`cyl${rt}|${rb}|${h}|${s}`, () => new THREE.CylinderGeometry(rt, rb, h, s));
 const torG = (r, t) => geo(`tor${r}|${t}`, () => new THREE.TorusGeometry(r, t, 6, 16));
 
@@ -61,115 +62,132 @@ function mesh(bone, g, m, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, s
 function joint(parent, x, y, z, name) {
   const j = new THREE.Bone(); j.position.set(x, y, z); j.name = name; parent.add(j); return j;
 }
-/** Tapered limb hanging down from its joint: capsule core + a slightly narrower lower half. */
+/** Smooth tapered limb hanging from its joint: one cone-like cylinder with rounded ends. */
 function limb(j, r, len, m, taper = 0.85) {
-  mesh(j, capG(r, len * 0.55), m, 0, -len * 0.3, 0);
-  mesh(j, capG(r * taper, len * 0.5), m, 0, -len * 0.68, 0);
+  const rb = r * taper;
+  mesh(j, cylG(r, rb, len, 12), m, 0, -len / 2, 0);
+  mesh(j, sphG(r, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), m, 0, 0, 0);
+  mesh(j, sphG(rb, 12, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), m, 0, -len, 0);
 }
 
-// team fatigues + agent flavour
+// Clothing: every operative wears their own everyday/field outfit in natural colours; the team
+// colour tints the jacket and shows clearly on the armbands, shoulder patch and collar.
+const OUTFIT = {
+  volt:  { skin: 0xc68a62, hair: 0x2a1c12, top: 0x6b4a32, inner: 0xd9d4ca, pants: 0x2f3d55, shoe: 0xe6e3dc, sole: 0x9a9690, style: 'jacket' },
+  haze:  { skin: 0xe8c4a2, hair: 0x5a3a22, top: 0x5a5d63, inner: 0x2c2e33, pants: 0x26282c, shoe: 0x3a332c, sole: 0x1c1a18, style: 'hoodie' },
+  aegis: { skin: 0x8d5a3b, hair: 0x15110e, top: 0x5f6b55, inner: 0xe8e4da, pants: 0x8a7b5e, shoe: 0x4a3a2a, sole: 0x221b14, style: 'shirt' },
+  hawk:  { skin: 0xd9a37f, hair: 0x7a5534, top: 0x4f5a3c, inner: 0x7a2f2a, pants: 0x9c8a66, shoe: 0x5a4632, sole: 0x2a2018, style: 'jacket' },
+};
 function palette(teamColor, agent) {
   const team = new THREE.Color(teamColor);
-  // bold team-coloured suits (cartoon style): bright jacket, darker trousers, charcoal gear
-  const cloth = team.clone().lerp(new THREE.Color(0x2a2d33), 0.3).getHex();
-  const cloth2 = team.clone().lerp(new THREE.Color(0x1d2026), 0.62).getHex();
-  const ac = new THREE.Color(agent.color).getHex();
+  const o = OUTFIT[agent.key] || OUTFIT.volt;
+  const tint = (hex, k) => new THREE.Color(hex).lerp(team, k).getHex();
+  const skin = new THREE.Color(o.skin);
   return {
-    cloth: mat(cloth, 0.95), cloth2: mat(cloth2, 0.95),
-    vest: mat(0x30343b, 0.75),
-    webbing: mat(team.clone().lerp(new THREE.Color(0x2a2c30), 0.8).getHex(), 0.9),
-    team: mat(teamColor, 0.6),
-    gear: mat(0x26282c, 0.7, 0.1),
-    strap: mat(0x1a1b1e, 0.9),
-    boot: mat(0x24201c, 0.65), sole: mat(0x111111, 0.9),
-    glove: mat(0x222428, 0.8),
-    skin: mat({ volt: 0xc68a62, haze: 0xe0b896, aegis: 0x8d5a3b, hawk: 0xd9a37f }[agent.key] ?? 0xd2a07c, 0.55),
-    lip: mat(new THREE.Color({ volt: 0xc68a62, haze: 0xe0b896, aegis: 0x8d5a3b, hawk: 0xd9a37f }[agent.key] ?? 0xd2a07c).multiplyScalar(0.78).getHex(), 0.5),
-    eye: mat(0x101012, 0.2), brow: mat(0x241a12, 0.9),
-    accent: mat(ac, 0.5, 0.1, 0.35),
-    glow: mat(ac, 0.3, 0, 1.6),
-    metal: mat(0x4a4f57, 0.35, 0.85),
-    plate: mat(team.clone().lerp(new THREE.Color(0x555a62), 0.6).getHex(), 0.45, 0.6),
+    o,
+    top: mat(tint(o.top, 0.22), 0.85), top2: mat(new THREE.Color(tint(o.top, 0.22)).multiplyScalar(0.8).getHex(), 0.85),
+    inner: mat(o.inner, 0.9), pants: mat(o.pants, 0.9), pants2: mat(new THREE.Color(o.pants).multiplyScalar(0.85).getHex(), 0.9),
+    shoe: mat(o.shoe, 0.6), sole: mat(o.sole, 0.9),
+    team: mat(teamColor, 0.55),
+    gear: mat(0x2b2d31, 0.7, 0.1), strap: mat(0x1d1e21, 0.9), belt: mat(0x3a2a1e, 0.6),
+    metal: mat(0x9aa0a8, 0.3, 0.9),
+    skin: mat(o.skin, 0.55), skin2: mat(skin.clone().multiplyScalar(0.86).getHex(), 0.55),
+    lip: mat(skin.clone().lerp(new THREE.Color(0x9a4a44), 0.35).getHex(), 0.45),
+    hair: mat(o.hair, 0.8),
+    white: mat(0xf2f0ec, 0.25), iris: mat(0x3a2a1c, 0.2), pupil: mat(0x0a0a0a, 0.15),
+    brow: mat(new THREE.Color(o.hair).multiplyScalar(0.8).getHex(), 0.9),
+    accent: mat(new THREE.Color(agent.color).getHex(), 0.5),
   };
 }
 
+/** A human head: skull, cheeks, jaw, nose, lips, ears and eyes with whites, irises and pupils. */
 function face(head, P) {
-  mesh(head, sphG(0.108, 20, 16), P.skin, 0, 0.11, 0, 0, 0, 0, 0.9, 1.08, 1.0);         // cranium
-  mesh(head, rbG(0.15, 0.085, 0.12, 0.035), P.skin, 0, 0.045, -0.025);                  // jaw
-  mesh(head, rbG(0.03, 0.045, 0.035, 0.012), P.skin, 0, 0.1, -0.108);                   // nose
+  mesh(head, sphG(0.102, 22, 18), P.skin, 0, 0.115, 0.005, 0, 0, 0, 0.92, 1.1, 1.0);          // skull
+  mesh(head, sphG(0.085, 18, 14), P.skin, 0, 0.065, -0.02, 0, 0, 0, 0.95, 0.85, 0.95);         // lower face
+  mesh(head, sphG(0.05, 14, 10), P.skin, 0, 0.032, -0.05, 0, 0, 0, 1.15, 0.7, 0.9);            // chin/jaw
+  mesh(head, capG(0.016, 0.03), P.skin2, 0, 0.098, -0.1, 0.25, 0, 0);                          // nose bridge
+  mesh(head, sphG(0.019, 10, 8), P.skin2, 0, 0.083, -0.108);                                    // nose tip
+  mesh(head, capG(0.009, 0.034), P.lip, 0, 0.056, -0.093, 0, 0, Math.PI / 2);                  // mouth
   for (const s of [-1, 1]) {
-    mesh(head, sphG(0.028, 8, 6), P.skin, s * 0.098, 0.105, 0.005, 0, 0, 0, 0.45, 1, 0.8);  // ears
-    mesh(head, sphG(0.012, 8, 6), P.eye, s * 0.036, 0.128, -0.095);                    // eyes
-    mesh(head, boxG(0.034, 0.008, 0.012), P.brow, s * 0.037, 0.148, -0.097, 0, 0, s * -0.12);
+    mesh(head, sphG(0.026, 10, 8), P.skin2, s * 0.094, 0.105, 0.008, 0, 0, 0, 0.4, 1.05, 0.75);  // ears
+    mesh(head, sphG(0.028, 10, 8), P.skin, s * 0.048, 0.08, -0.07, 0, 0, 0, 1, 0.75, 0.6);      // cheeks
+    mesh(head, sphG(0.012, 12, 10), P.white, s * 0.034, 0.121, -0.088, 0, 0, 0, 1.15, 0.8, 0.6);  // eye (almond)
+    mesh(head, sphG(0.0068, 10, 8), P.iris, s * 0.034, 0.121, -0.0935);                          // iris
+    mesh(head, sphG(0.0035, 8, 6), P.pupil, s * 0.034, 0.121, -0.0985);                          // pupil
+    mesh(head, capG(0.0065, 0.026), P.brow, s * 0.037, 0.146, -0.094, 0, 0, Math.PI / 2 + s * 0.12);  // brow
+    mesh(head, capG(0.0055, 0.022), P.skin2, s * 0.034, 0.13, -0.09, 0, 0, Math.PI / 2);        // eyelid
   }
-  mesh(head, boxG(0.045, 0.008, 0.01), P.lip, 0, 0.055, -0.1);
+}
+
+/** Hair styles (part of the body mesh) and anything worn on the head (pops off on a headshot). */
+function hair(head, agent, P) {
+  const k = agent.key;
+  if (k === 'hawk') return;                                     // under the cap
+  // shared base: hair on top and back of the skull, leaving the forehead and ears clear
+  mesh(head, sphG(0.108, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.42), P.hair, 0, 0.122, 0.012, -0.18, 0, 0, 0.95, 1.05, 1.02);
+  mesh(head, sphG(0.1, 16, 10, 0, Math.PI * 2, Math.PI * 0.3, Math.PI * 0.35), P.hair, 0, 0.11, 0.025, 0, 0, 0, 0.98, 1.05, 1.02);
+  if (k === 'volt') {                                           // short textured quiff
+    for (let i = 0; i < 6; i++) mesh(head, sphG(0.032, 8, 6), P.hair, (i - 2.5) * 0.026, 0.215 - Math.abs(i - 2.5) * 0.006, -0.05 + (i % 2) * 0.02);
+  } else if (k === 'haze') {                                    // longer side-swept fringe
+    mesh(head, sphG(0.06, 12, 8), P.hair, 0.035, 0.19, -0.07, 0.3, 0, -0.4, 1.4, 0.55, 0.8);
+    mesh(head, sphG(0.05, 10, 8), P.hair, 0, 0.09, 0.075, 0, 0, 0, 1.6, 1.4, 0.7);
+  } else if (k === 'aegis') {                                   // close crop + short beard
+    mesh(head, sphG(0.052, 12, 8), P.hair, 0, 0.042, -0.048, 0, 0, 0, 1.25, 0.62, 0.9);
+    for (const s of [-1, 1]) mesh(head, sphG(0.034, 10, 8), P.hair, s * 0.06, 0.065, -0.035, 0, 0, 0, 0.6, 1.2, 0.9);
+  }
 }
 
 function headgear(head, agent, P) {
   const hg = new THREE.Group(); head.add(hg);
-  const k = agent.key;
-  if (k === 'aegis') {          // full ballistic helmet with glowing visor
-    mesh(hg, sphG(0.135, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.6), P.gear, 0, 0.12, 0.005);
-    mesh(hg, rbG(0.21, 0.055, 0.035, 0.015), P.glow, 0, 0.115, -0.115);
-    for (const s of [-1, 1]) mesh(hg, rbG(0.03, 0.07, 0.06, 0.01), P.metal, s * 0.132, 0.1, -0.02);
-    mesh(hg, rbG(0.06, 0.03, 0.04, 0.01), P.metal, 0, 0.255, -0.06);                   // NVG mount
+  if (agent.key === 'hawk') {                                   // baseball cap + headset
+    mesh(hg, sphG(0.112, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), P.top, 0, 0.14, 0.005, -0.08, 0, 0, 0.98, 0.95, 1.02);
+    mesh(hg, rbG(0.15, 0.012, 0.09, 0.005), P.top, 0, 0.142, -0.115, 0.18);
+    mesh(hg, rbG(0.03, 0.02, 0.02, 0.005), P.team, 0, 0.21, -0.055);
+    for (const s of [-1, 1]) mesh(hg, cylG(0.03, 0.03, 0.025), P.gear, s * 0.1, 0.1, 0.005, 0, 0, Math.PI / 2);
+    mesh(hg, torG(0.104, 0.007), P.gear, 0, 0.115, 0.005, 0, Math.PI / 2, 0, 1, 1.2, 1);
+    mesh(hg, capG(0.004, 0.06), P.gear, 0.095, 0.075, -0.05, 1.1, 0, 0);                       // mic boom
     return { group: hg, pops: true };
   }
-  if (k === 'haze') {           // hood + face mask
-    mesh(hg, sphG(0.14, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.62), P.cloth2, 0, 0.115, 0.02, -0.15);
-    mesh(hg, rbG(0.17, 0.08, 0.05, 0.02), P.strap, 0, 0.065, -0.095);
-    mesh(hg, boxG(0.14, 0.015, 0.02), P.glow, 0, 0.12, -0.106);
+  if (agent.key === 'aegis') {                                  // medic headband in team colour
+    mesh(hg, torG(0.1, 0.012), P.team, 0, 0.16, 0.01, Math.PI / 2 - 0.18, 0, 0, 1.0, 1.08, 1);
     return { group: hg, pops: true };
   }
-  if (k === 'hawk') {           // cap + headset
-    mesh(hg, sphG(0.122, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), P.vest, 0, 0.13, 0);
-    mesh(hg, rbG(0.16, 0.014, 0.12, 0.006), P.vest, 0, 0.13, -0.12, 0.12);
-    for (const s of [-1, 1]) mesh(hg, cylG(0.036, 0.036, 0.03), P.gear, s * 0.118, 0.1, 0, 0, 0, Math.PI / 2);
-    mesh(hg, torG(0.115, 0.008), P.gear, 0, 0.12, 0, 0, Math.PI / 2, 0, 1, 1.15, 1);
-    mesh(hg, boxG(0.012, 0.012, 0.09), P.accent, 0.12, 0.07, -0.06);
-    return { group: hg, pops: true };
-  }
-  // volt: spiked hair + goggles (hair doesn't pop off)
-  for (let i = 0; i < 7; i++) {
-    const a = (i / 7) * Math.PI * 2;
-    mesh(hg, cylG(0, 0.04, 0.12, 6), P.accent, Math.cos(a) * 0.05, 0.22, Math.sin(a) * 0.05 + 0.02, Math.sin(a) * 0.5, 0, -Math.cos(a) * 0.5);
-  }
-  mesh(hg, sphG(0.118, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.45), mat(0x2a1d14, 0.9), 0, 0.12, 0.01);
-  mesh(hg, rbG(0.21, 0.035, 0.03, 0.01), P.strap, 0, 0.17, -0.1, -0.3);
-  for (const s of [-1, 1]) mesh(hg, rbG(0.07, 0.04, 0.025, 0.01), P.glow, s * 0.04, 0.175, -0.112, -0.3);
   return { group: hg, pops: false };
 }
 
 function torso(hips, spine, chest, agent, P) {
-  // pelvis, belt, holster and dump pouch
-  mesh(hips, rbG(0.33, 0.18, 0.21, 0.05), P.cloth, 0, 0, 0);
-  mesh(hips, rbG(0.35, 0.05, 0.23, 0.015), P.strap, 0, 0.07, 0);
-  mesh(hips, rbG(0.05, 0.04, 0.02, 0.008), P.metal, 0, 0.07, -0.118);                 // buckle
-  mesh(hips, rbG(0.07, 0.14, 0.06, 0.015), P.gear, 0.19, -0.03, -0.02);                // holster
-  mesh(hips, rbG(0.035, 0.06, 0.035, 0.01), P.strap, 0.19, 0.06, -0.02);               // pistol grip
-  mesh(hips, rbG(0.11, 0.09, 0.07, 0.025), P.webbing, -0.12, -0.02, 0.1);              // dump pouch
-  // waist + chest
-  mesh(spine, rbG(0.29, 0.21, 0.19, 0.06), P.cloth, 0, 0.08, 0);
-  mesh(chest, rbG(0.36, 0.31, 0.21, 0.07), P.cloth, 0, 0.12, 0);
-  // plate carrier: front/back plates, cummerbund, webbing rows, pouches, radio
-  mesh(chest, rbG(0.32, 0.27, 0.05, 0.02), P.vest, 0, 0.1, -0.12);
-  mesh(chest, rbG(0.32, 0.29, 0.05, 0.02), P.vest, 0, 0.1, 0.115);
-  mesh(chest, rbG(0.39, 0.13, 0.22, 0.03), P.vest, 0, 0.02, 0);
-  for (let r = 0; r < 3; r++) mesh(chest, boxG(0.3, 0.008, 0.008), P.webbing, 0, 0.05 + r * 0.05, -0.147);
-  for (let i = -1; i <= 1; i++) mesh(chest, rbG(0.085, 0.1, 0.05, 0.015), P.gear, i * 0.098, 0.02, -0.165);
-  mesh(chest, rbG(0.12, 0.035, 0.012, 0.006), P.team, 0.06, 0.215, -0.15);            // name tape
-  mesh(chest, rbG(0.05, 0.08, 0.04, 0.012), P.gear, -0.13, 0.17, -0.15);              // radio
-  mesh(chest, cylG(0.005, 0.005, 0.22, 5), P.strap, -0.145, 0.32, -0.15);              // antenna
-  mesh(chest, rbG(0.3, 0.025, 0.27, 0.01), P.team, 0, 0.225, 0);                        // team stripe
-  // collar
-  mesh(chest, torG(0.075, 0.025), P.vest, 0, 0.285, 0, Math.PI / 2, 0, 0, 1.05, 0.9, 1);
-  // backpack + straps + hydration tube
-  mesh(chest, rbG(0.26, 0.3, 0.13, 0.04), P.gear, 0, 0.1, 0.2);
-  mesh(chest, rbG(0.2, 0.08, 0.06, 0.02), P.webbing, 0, 0.0, 0.28);
-  mesh(chest, boxG(0.04, 0.04, 0.12), P.accent, 0.1, 0.18, 0.2);
-  for (const s of [-1, 1]) mesh(chest, rbG(0.05, 0.3, 0.025, 0.008), P.strap, s * 0.12, 0.13, -0.142, 0, 0, s * 0.1);
-  mesh(chest, cylG(0.008, 0.008, 0.3, 5), P.strap, 0.08, 0.15, -0.155, 0.2, 0, 0.3);
-  if (agent.key === 'aegis') mesh(chest, rbG(0.3, 0.22, 0.03, 0.02), P.plate, 0, 0.12, -0.155);
+  const st = P.o.style;
+  // hips and belt
+  mesh(hips, sphG(0.16, 18, 12), P.pants, 0, 0.0, 0.0, 0, 0, 0, 1.08, 0.72, 0.8);
+  mesh(hips, torG(0.145, 0.022), P.belt, 0, 0.06, 0, Math.PI / 2, 0, 0, 1.08, 0.78, 1);
+  mesh(hips, rbG(0.045, 0.035, 0.012, 0.006), P.metal, 0, 0.06, -0.122);                    // buckle
+  mesh(hips, rbG(0.06, 0.12, 0.05, 0.015), P.gear, 0.17, -0.03, -0.01);                       // holster
+  // waist and chest: rounded, slightly tapered human torso
+  mesh(spine, capG(0.13, 0.08), st === 'shirt' ? P.top : P.inner, 0, 0.07, 0, 0, 0, 0, 1.12, 1, 0.78);
+  mesh(chest, capG(0.145, 0.12), P.top, 0, 0.12, 0, 0, 0, 0, 1.22, 1, 0.8);
+  if (st === 'jacket') {
+    // open jacket: shirt showing down the front, zip edges, raised collar
+    mesh(chest, rbG(0.08, 0.26, 0.02, 0.01), P.inner, 0, 0.1, -0.115);
+    for (const s of [-1, 1]) mesh(chest, rbG(0.014, 0.27, 0.025, 0.006), P.top2, s * 0.047, 0.1, -0.118);
+    mesh(chest, torG(0.075, 0.022), P.top, 0, 0.27, 0.005, Math.PI / 2 + 0.25, 0, 0, 1.15, 0.95, 1);
+    mesh(spine, rbG(0.07, 0.14, 0.02, 0.01), P.inner, 0, 0.07, -0.098);
+  } else if (st === 'hoodie') {
+    // hoodie: front pocket, drawstrings, hood lying on the shoulders
+    mesh(spine, rbG(0.18, 0.08, 0.02, 0.012), P.top2, 0, 0.04, -0.1);
+    for (const s of [-1, 1]) mesh(chest, capG(0.004, 0.08), P.inner, s * 0.025, 0.16, -0.13);
+    mesh(chest, sphG(0.11, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), P.top2, 0, 0.25, 0.07, -1.9, 0, 0, 1.15, 0.8, 0.9);
+  } else {
+    // field shirt: buttons, breast pockets, light chest rig
+    for (let i = 0; i < 4; i++) mesh(chest, sphG(0.007, 6, 4), P.inner, 0, 0.2 - i * 0.055, -0.12);
+    for (const s of [-1, 1]) mesh(chest, rbG(0.07, 0.07, 0.015, 0.008), P.top2, s * 0.07, 0.15, -0.118);
+    for (const s of [-1, 1]) mesh(chest, rbG(0.035, 0.3, 0.018, 0.006), P.strap, s * 0.09, 0.12, -0.12, 0, 0, s * 0.08);
+    mesh(chest, rbG(0.12, 0.08, 0.045, 0.015), P.gear, 0, 0.02, -0.13);                       // med pouch
+    mesh(chest, rbG(0.04, 0.04, 0.008, 0.004), P.team, 0, 0.03, -0.155);
+  }
+  // team patch on the chest and a small sling bag on the back
+  mesh(chest, rbG(0.05, 0.03, 0.008, 0.004), P.team, -0.075, 0.2, -0.125);
+  mesh(chest, rbG(0.2, 0.22, 0.08, 0.03), P.gear, 0.02, 0.1, 0.15);
+  mesh(chest, rbG(0.03, 0.32, 0.015, 0.006), P.strap, 0.04, 0.12, -0.122, 0, 0, -0.55);
 }
 
 const GHOST_MAT = new THREE.MeshBasicMaterial({ color: 0xff3355, transparent: true, opacity: 0.55, depthTest: false });
@@ -211,6 +229,7 @@ function bake(parts, boneIndex, skinned) {
     }
     geos.push(g0);
   }
+  if (!geos.length) return new THREE.BufferGeometry();       // nothing worn on the head
   const merged = mergeGeometries(geos, false);
   for (const g of geos) g.dispose();
   return merged;
@@ -234,8 +253,9 @@ export function buildCharacter(teamColor, agent) {
   const head = joint(neck, 0, 0.09, 0, 'head');
   if (!cached) {
     torso(hips, spine, chest, agent, P);
-    mesh(neck, cylG(0.052, 0.06, 0.12), P.skin, 0, 0.04, 0);
+    mesh(neck, cylG(0.048, 0.056, 0.13), P.skin, 0, 0.04, 0.005);
     face(head, P);
+    hair(head, agent, P);
   }
 
   const sh = [], el = [], hand = [];
@@ -244,16 +264,16 @@ export function buildCharacter(teamColor, agent) {
     const elbow = joint(shoulder, 0, -L_UP, 0, 'elbow');
     const h = joint(elbow, 0, -L_FORE, 0, 'hand');
     if (!cached) {
-      mesh(shoulder, sphG(0.066, 12, 10), agent.key === 'aegis' ? P.plate : P.cloth, 0, -0.01, 0, 0, 0, 0, 1.08, 0.9, 1.05);
-      limb(shoulder, 0.057, L_UP, P.cloth, 0.9);
-      mesh(shoulder, rbG(0.12, 0.045, 0.12, 0.015), P.team, 0, -0.1, 0);                 // armband
-      limb(elbow, 0.05, L_FORE, P.cloth2, 0.82);
-      mesh(elbow, rbG(0.085, 0.07, 0.09, 0.025), P.gear, 0, -0.01, 0.02);                // elbow pad
-      mesh(elbow, cylG(0.046, 0.042, 0.06), P.glove, 0, -L_FORE + 0.03, 0);               // glove cuff
-      // glove: palm, finger block, thumb
-      mesh(h, rbG(0.07, 0.075, 0.045, 0.015), P.glove, 0, -0.03, 0);
-      mesh(h, rbG(0.066, 0.05, 0.04, 0.014), P.glove, 0, -0.085, -0.008, 0.35);
-      mesh(h, rbG(0.022, 0.05, 0.022, 0.008), P.glove, s * -0.04, -0.035, -0.02, 0, 0, s * 0.5);
+      mesh(shoulder, sphG(0.068, 14, 10), P.top, 0, -0.005, 0, 0, 0, 0, 1.1, 0.95, 1.0);    // deltoid
+      limb(shoulder, 0.056, L_UP, P.top, 0.84);
+      mesh(shoulder, cylG(0.057, 0.055, 0.035, 14), P.team, 0, -0.1, 0);                        // team armband
+      const bare = P.o.style === 'shirt';                                                     // rolled sleeves
+      limb(elbow, 0.047, L_FORE, bare ? P.skin : P.top, 0.74);
+      if (bare) mesh(elbow, torG(0.05, 0.016), P.top2, 0, -0.015, 0, Math.PI / 2);
+      // bare hand: palm, four fingers curled round the grip, thumb
+      mesh(h, rbG(0.06, 0.07, 0.03, 0.013), P.skin, 0, -0.03, 0);
+      for (let i = 0; i < 4; i++) mesh(h, capG(0.008, 0.035), P.skin2, (i - 1.5) * 0.014, -0.075, -0.012, 0.6, 0, 0);
+      mesh(h, capG(0.009, 0.03), P.skin2, s * -0.032, -0.035, -0.012, 0.3, 0, s * 0.7);
     }
     sh.push(shoulder); el.push(elbow); hand.push(h);
   }
@@ -264,16 +284,13 @@ export function buildCharacter(teamColor, agent) {
     const k = joint(t, 0, -L_THIGH, 0, 'knee');
     const f = joint(k, 0, -L_SHIN, 0, 'foot');
     if (!cached) {
-      limb(t, 0.08, L_THIGH, P.cloth, 0.82);
-      mesh(t, rbG(0.06, 0.11, 0.07, 0.02), P.cloth2, s * 0.075, -0.22, 0);                  // cargo pocket
-      mesh(t, rbG(0.05, 0.025, 0.08, 0.008), P.strap, s * 0.07, -0.08, 0);                  // leg strap
-      limb(k, 0.063, L_SHIN, P.cloth2, 0.85);
-      mesh(k, rbG(0.105, 0.11, 0.06, 0.028), P.gear, 0, -0.03, -0.06);                      // knee pad
-      // boot: shaft, foot, toe cap, sole
-      mesh(f, cylG(0.06, 0.065, 0.12), P.boot, 0, 0.0, 0.0);
-      mesh(f, rbG(0.11, 0.08, 0.24, 0.03), P.boot, 0, -0.04, -0.05);
-      mesh(f, rbG(0.105, 0.05, 0.07, 0.022), P.boot, 0, -0.05, -0.15);
-      mesh(f, rbG(0.12, 0.02, 0.27, 0.008), P.sole, 0, -0.082, -0.055);
+      limb(t, 0.08, L_THIGH, P.pants, 0.76);
+      limb(k, 0.061, L_SHIN, P.pants, 0.74);
+      // shoe: rounded upper, toe, laces, thick sole
+      mesh(f, rbG(0.1, 0.075, 0.22, 0.035), P.shoe, 0, -0.035, -0.045);
+      mesh(f, sphG(0.05, 12, 8), P.shoe, 0, -0.045, -0.14, 0, 0, 0, 1, 0.7, 1.1);
+      for (let i = 0; i < 3; i++) mesh(f, rbG(0.05, 0.006, 0.01, 0.003), P.sole, 0, 0.003 - i * 0.004, -0.06 - i * 0.03);
+      mesh(f, rbG(0.11, 0.022, 0.25, 0.01), P.sole, 0, -0.078, -0.05);
     }
     thigh.push(t); knee.push(k); foot.push(f);
   }
@@ -304,15 +321,11 @@ export function buildCharacter(teamColor, agent) {
   body.boundingSphere = new THREE.Sphere(V(0, 0.95, 0), 1.4);   // fixed bounds: no per-vertex skinning pass on the CPU
   root.add(body);
   body.bind(skeleton);
-  const outline = new THREE.SkinnedMesh(entry.body, OUTLINE_MAT);
-  outline.boundingSphere = body.boundingSphere;
-  root.add(outline);
-  outline.bind(skeleton, body.bindMatrix);
+  const outline = null;
 
   const hg = new THREE.Group(); head.add(hg);
   const hgMesh = new THREE.Mesh(entry.head, BODY_MAT);
   hgMesh.castShadow = true; hg.add(hgMesh);
-  hg.add(new THREE.Mesh(entry.head, OUTLINE_MAT));
 
   // through-wall reveal silhouette + ally marker
   const ghost = new THREE.Group();
