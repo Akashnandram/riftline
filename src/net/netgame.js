@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { game, sideSign } from '../state.js';
 import { WEAPONS, MATCH, GADGETS } from '../config.js';
 import { SNAPSHOT_HZ, INPUT_HZ } from './config.js';
-import { packNode } from '../uplink.js';
+import { packNodes, nodeMode } from '../uplink.js';
 
 export const WKEYS = Object.keys(WEAPONS);
 const wi = (k) => (k ? WKEYS.indexOf(k) : -1);
@@ -70,7 +70,7 @@ function buildSnapshot() {
   const c = game.charge;
   return {
     t: 's', time: r3(game.time), phase: game.phase, phaseT: r2(game.phaseT), round: game.round, score: game.score, attackers: game.attackers,
-    nd: game.config?.mode === 'uplink' ? packNode(game.node) : null,
+    nd: nodeMode() ? packNodes(game.nodes) : null,
     ch: c ? [c.state, r2(c.pos.x), r2(c.pos.y), r2(c.pos.z), c.carrier ? c.carrier.id : -1, r2(c.timer), r2(c.progress), c.actor ? c.actor.id : -1, c.site, c.half ? 1 : 0] : null,
     f: game.fighters.map((f) => [
       f.id, r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), r2(f.vel.x), r2(f.vel.y), r2(f.vel.z), r3(f.yaw), r3(f.pitch), r2(f.crouch),

@@ -145,7 +145,7 @@ export class BotBrain {
 
     // ---------------- goal selection ----------------
     let goal = null, lookAt = null, walk = false, action = null, holding = false;
-    const plantMode = (game.config.mode === 'plant' || game.config.mode === 'uplink') && this.plan;
+    const plantMode = (game.config.mode === 'plant' || game.config.mode === 'uplink' || game.config.mode === 'dom') && this.plan;
     const tg = plantMode && live && !this.visible ? tacticalGoal(this) : null;
     const anchored = tg && this.plan.side === 'def' && game.charge?.state !== 'planted';
     const carrying = game.charge?.carrier === f;

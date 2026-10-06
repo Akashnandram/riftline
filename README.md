@@ -1,8 +1,8 @@
-# Riftline – third-person squad shooter
+# Riftline – squad shooter
 
 Play: https://riftline-flame.vercel.app
 
-A browser third-person squad shooter with non-stop respawn matches: pick an operative (each has a
+A browser first-person squad shooter with non-stop respawn matches: pick an operative (each has a
 passive perk) and a free loadout of guns and gadgets, sprint and slide around five maps and fight over
 the Rift Node. Three.js (from CDN), plain ES modules – no build step.
 
@@ -22,7 +22,7 @@ Open http://localhost:5180 in a desktop browser (needs pointer lock: keyboard + 
 
 WASD move · Mouse aim/shoot · Shift sprint (gun lowered) · C crouch (hold), slide while sprinting · Space jump (slide-jump keeps speed) ·
 RMB aim (tighter over-the-shoulder view) / scope · R reload · 1/2 primary/sidearm · Q/E gadgets · B loadout · Tab scoreboard · M mute · Esc pause.
-The camera is third-person by default (Settings → Third-person camera to switch to first person).
+The camera is first-person by default (Settings → Third-person camera for an over-the-shoulder view).
 
 ## Graphics & sound
 
@@ -62,9 +62,15 @@ for the mirrored half). Its `theme` sets sky, sun, fog, floor, wall materials, p
   at North, Core or South (on the centre line, equally far from both spawns) and moves every 60 s. Stand in its
   ring with no enemies to swing it to your team; while you own it you score a point per second. First to 150,
   or the higher score after 8 minutes.
+- **Domination**: all three nodes (North, Core, South) are live at once; every node your team holds scores
+  0.5 points per second. First to 200, or the higher score after 8 minutes.
 - **Team Deathmatch**: 5-minute respawn match, free loadout (B), first team to 8 kills per player wins.
 
 Squads are 2v2, 4v4 or 6v6; empty slots are filled with bots.
+
+**Kill streaks** (respawn modes, bots too): 3 kills in a row → Recon Sweep (all enemies on your team's minimap
+for 8 s), 5 → Supply Drop (a crate falls next to you: Hammer LMG, full armor, two gadgets — first teammate to
+reach it takes it), 7 → Battle Armor (full health and armor). Dying resets the streak.
 
 **Quick Play** starts a short 3v3 Uplink (first to 75, 5 minutes) on a random map; brand-new players get a
 welcome card that drops them straight into one against Super Easy bots, with one-time tips during the match

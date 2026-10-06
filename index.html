@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Riftline – Squad Shooter</title>
-  <meta name="description" content="Third-person squad shooter in your browser. Pick an operative, buy weapons and gadgets, sprint and slide, and capture the Rift Node." />
+  <meta name="description" content="First-person squad shooter in your browser. Pick an operative, buy weapons and gadgets, sprint and slide, and capture the Rift Node." />
   <meta name="theme-color" content="#12161c" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Riftline – squad shooter in your browser" />
@@ -55,6 +55,7 @@
     <div id="comms"></div>
     <div id="buffs"></div>
     <div id="medals"></div>
+    <div id="streakBox" hidden></div>
     <div id="hintBar" hidden></div>
     <div id="deathCard" hidden></div>
 
@@ -114,11 +115,11 @@
       </div>
       <section class="mLeft">
         <h1>RIFT<span>LINE</span></h1>
-        <p class="tag">Third-person squad shooter · 5 maps · capture the Rift Node</p>
+        <p class="tag">Squad shooter · 5 maps · 3 modes · capture the Rift Nodes</p>
         <div id="newHere" hidden>New here? <button id="btnTutorial2">Play the 2-minute tutorial</button> (+500 XP)</div>
         <div class="opts">
           <div class="opt"><h4>GAME MODE</h4><div class="seg" id="segMode">
-            <button data-v="uplink" class="on">Uplink</button><button data-v="tdm">Team Deathmatch</button>
+            <button data-v="uplink" class="on">Uplink</button><button data-v="dom">Domination</button><button data-v="tdm">Team Deathmatch</button>
           </div></div>
           <div class="opt"><h4>MAP</h4><div class="seg" id="segMap"></div></div>
           <div class="opt"><h4>SQUAD SIZE</h4><div class="seg" id="segSize">

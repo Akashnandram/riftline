@@ -11,7 +11,8 @@ import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surface
 import { MAP_LIST, MAPS, randomMap } from './maps/index.js';
 import { resetCharge, hideCharge, updateCharge, tickAction, canPlant, canDefuse, siteAt, applyChargeSnapshot } from './objective.js';
 import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
-import { resetNode, hideNode, updateNode, applyNodeSnapshot, UPLINK, NODE_NAMES } from './uplink.js';
+import { grantStreak, nextStreak, updateDrops, clearDrops, spawnDrop, removeDrop, STREAKS } from './streaks.js';
+import { resetNode, hideNode, updateNode, applyNodeSnapshot, setupDomination, UPLINK, DOM, NODE_NAMES, nodeMode } from './uplink.js';
 import {
   Fighter, TEAM_COLORS, EYE, updateFighterMesh, moveFighter, separateFighters, tryFire, startReload,
   updateWeapon, switchWeapon, setGunLook, emitSound, resetFighterMesh, remoteFire, playShotFx,
@@ -280,7 +281,7 @@ function playerAbility(slot) {
 // ---------------------------------------------------------------------------
 let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 4), difficulty: store.get('difficulty', 'normal'), mode: store.get('mode', 'uplink'), map: store.get('map', 'random') };
 // Uplink became the main mode: switch older saves over once
-if (!['uplink', 'tdm'].includes(choice.mode)) { choice.mode = 'uplink'; store.set('mode', 'uplink'); }
+if (!['uplink', 'dom', 'tdm'].includes(choice.mode)) { choice.mode = 'uplink'; store.set('mode', 'uplink'); }
 if (![2, 4, 6].includes(choice.teamSize)) { choice.teamSize = 4; store.set('teamSize', 4); }
 if (choice.map !== 'random' && !MAPS[choice.map]) choice.map = 'random';
 
@@ -312,6 +313,7 @@ const MODE_HINTS = {
   uplink: 'Non-stop squad fight with respawns. The Rift Node moves between North, Core and South every minute — stand in it to capture it, hold it to score a point per second. First to 150.',
   plant: 'Attack: plant the Rift Charge on A or B. Defend: stop or defuse it. First to 5 rounds, sides swap at half.',
   elim: 'Round-based: wipe the other team. First to 5 rounds.',
+  dom: 'Three Rift Nodes at once — North, Core and South. Every node your team holds scores points; take them, hold them, retake them. First to 200.',
   tdm: 'Respawn deathmatch, pick your loadout with B. First team to the kill target in 5 minutes wins.',
 };
 
@@ -453,6 +455,7 @@ function setPaused(p) {
 function teardown() {
   hideCharge();
   hideNode();
+  clearDrops();
   game.tac = null;
   clearAbilities();
   clearRagdolls(scene);
@@ -510,8 +513,8 @@ function startMatch(cfg, roster = null, mapId = null) {
       if (isPlayer) game.player = f;
     }
   }
-  if (cfg.mode === 'tdm' || cfg.mode === 'uplink') {
-    game.tdmTarget = cfg.mode === 'tdm' ? cfg.teamSize * 8 : cfg.quick ? 75 : UPLINK.target;
+  if (cfg.mode === 'tdm' || cfg.mode === 'uplink' || cfg.mode === 'dom') {
+    game.tdmTarget = cfg.mode === 'tdm' ? cfg.teamSize * 8 : cfg.mode === 'dom' ? DOM.target : cfg.quick ? 75 : UPLINK.target;
     game.firstBlood = false;
     resetHints();
     game.uplinkPts = [0, 0];
@@ -635,14 +638,16 @@ function startRound() {
   }
   // west spawn zone shows the colour of whoever spawns there
   setSpawnColors(TEAM_COLORS[sideSign(0) < 0 ? 0 : 1], TEAM_COLORS[sideSign(0) < 0 ? 1 : 0]);
-  if (game.config.mode === 'tdm' || game.config.mode === 'uplink') {
-    for (const f of game.fighters) { giveLoadout(f); f.armor = 50; }
+  if (game.config.mode === 'tdm' || nodeMode()) {
+    for (const f of game.fighters) { giveLoadout(f); f.armor = 50; f.streak = 0; }
     hideCharge();
     game.phaseT = 5;
-    if (game.config.mode === 'uplink') {
-      resetNode();
+    if (nodeMode()) {
+      if (game.config.mode === 'dom') setupDomination(); else resetNode();
       for (const f of game.fighters) if (f.brain) f.brain.plan = { side: 'uplink' };
-      flashMsg(MAP.name.toUpperCase(), `UPLINK · hold the Rift Node to score · first to ${game.tdmTarget} · press B for your loadout`, 4);
+      flashMsg(MAP.name.toUpperCase(), game.config.mode === 'dom'
+        ? `DOMINATION · hold North, Core and South to score · first to ${game.tdmTarget} · press B for your loadout`
+        : `UPLINK · hold the Rift Node to score · first to ${game.tdmTarget} · press B for your loadout`, 4);
     } else flashMsg('TEAM DEATHMATCH', `${MAP.name} · first to ${game.tdmTarget} kills · press B for your loadout`, 4);
   } else if (plantMode) {
     resetCharge();
@@ -682,7 +687,7 @@ function matchOver() {
   if (net.role === 'host') hostEvent({ t: 'over', score: game.score });
   game.phase = 'over';
   const me = game.player.team, them = 1 - me;
-  const scored = game.config.mode === 'tdm' || game.config.mode === 'uplink';
+  const scored = game.config.mode === 'tdm' || nodeMode();
   const draw = scored && game.score[me] === game.score[them];
   const won = scored ? game.score[me] > game.score[them] : game.score[me] >= MATCH.roundsToWin;
   $('overTitle').textContent = draw ? 'DRAW' : won ? 'VICTORY' : 'DEFEAT';
@@ -703,13 +708,13 @@ function matchOver() {
 function updatePhase(dt) {
   if (game.config.mode === 'range') return;
   game.phaseT -= dt;
-  if ((game.config.mode === 'tdm' || game.config.mode === 'uplink') && game.phase === 'live') {
+  if ((game.config.mode === 'tdm' || nodeMode()) && game.phase === 'live') {
     if (Math.max(...game.score) >= game.tdmTarget || game.phaseT <= 0) matchOver();
     return;
   }
   if (game.phase === 'buy' && game.phaseT <= 0) {
     game.phase = 'live';
-    game.phaseT = game.config.mode === 'tdm' ? 300 : game.config.mode === 'uplink' ? (game.config.quick ? 300 : UPLINK.time) : MATCH.roundTime;
+    game.phaseT = game.config.mode === 'tdm' ? 300 : game.config.mode === 'dom' ? DOM.time : game.config.mode === 'uplink' ? (game.config.quick ? 300 : UPLINK.time) : MATCH.roundTime;
     if (game.node) game.node.until = game.time + UPLINK.rotate;
     // in TDM bots start hunting soon instead of walking lanes all match
     game.roundStartTime = game.config.mode === 'tdm' ? game.time - 25 : game.time;
@@ -775,7 +780,7 @@ function respawnFighter(f) {
     f.yaw = sideSign(f.team) < 0 ? -Math.PI / 2 : Math.PI / 2; f.pitch = 0;
     giveLoadout(f);
   }
-  if (f.brain) { f.brain.planRound(); if (game.config.mode === 'uplink') f.brain.plan = { side: 'uplink' }; }
+  if (f.brain) { f.brain.planRound(); if (nodeMode()) f.brain.plan = { side: 'uplink' }; }
   if (f.netOwner) sendSpawn(f);
   if (f === game.player) { game.spectating = false; setViewModel(f); $('deathCard').hidden = true; }
   setGunLook(f);
@@ -960,6 +965,7 @@ function startClientMatch(cfg, roster) {
   buildRosterFighters(cfg, roster, true);
   if (cfg.mode === 'tdm') game.tdmTarget = cfg.teamSize * 8;
   if (cfg.mode === 'uplink') game.tdmTarget = cfg.quick ? 75 : UPLINK.target;
+  if (cfg.mode === 'dom') game.tdmTarget = DOM.target;
   game.firstBlood = false;
   resetHints();
   startTracking(cfg.mode);
@@ -1002,6 +1008,9 @@ function clientMsg(m) {
       break;
     }
     case 'hit': { const t = byFid(m.v); if (t) game.onPlayerHit(t, m.d, m.h, m.k); break; }
+    case 'streak': { const f = byFid(m.fid); const s = STREAKS.find((x) => x.key === m.k); if (f && s) game.onStreak(f, s); break; }
+    case 'sdrop': spawnDrop(m.id, V3(m.p), m.team); break;
+    case 'sgone': { removeDrop(m.id); if (m.by === game.player.id) medal('SUPPLIES COLLECTED', 'LMG · armor · gadgets', '#6effc4'); break; }
     case 'hurt': { hurtT = 0.35; const a = byFid(m.a); if (a) game.onPlayerDamaged(a, m.d); sfx('hurt', { vol: 0.6 }); break; }
     case 'spawn': {
       const p = game.player;
@@ -1046,7 +1055,7 @@ function clientRound(m) {
   else if (game.config.mode === 'plant') {
     const attacking = p.team === game.attackers;
     flashMsg(m.halftime ? 'SWITCHING SIDES' : `ROUND ${game.round}`, `${attacking ? 'ATTACK — plant the Rift Charge on A or B' : 'DEFEND — stop the plant or defuse it'} · press B to buy`, 3.5);
-  } else if (game.config.mode === 'uplink') flashMsg(MAP.name.toUpperCase(), `UPLINK · hold the Rift Node to score · first to ${game.tdmTarget} · press B for your loadout`, 4);
+  } else if (nodeMode()) flashMsg(MAP.name.toUpperCase(), `${game.config.mode === 'dom' ? 'DOMINATION · hold North, Core and South' : 'UPLINK · hold the Rift Node'} to score · first to ${game.tdmTarget} · press B for your loadout`, 4);
   else flashMsg(`ROUND ${game.round}`, 'BUY PHASE — press B to open the armory', 3);
   sfx('round');
 }
@@ -1062,7 +1071,7 @@ function clientApply() {
   game.phase = s.phase === 'over' ? game.phase : s.phase;
   game.phaseT = s.phaseT; game.score = s.score; game.attackers = s.attackers;
   if (game.config.mode === 'plant') applyChargeSnapshot(unpackCharge(s.ch), (id) => net.byFid.get(id));
-  if (game.config.mode === 'uplink') applyNodeSnapshot(s.nd);
+  if (nodeMode()) applyNodeSnapshot(s.nd);
   const interp = interpolate();
   const byFid = interp ? new Map(interp.map((x) => [x.fid, x])) : new Map();
   for (const raw of s.f) {
@@ -1178,6 +1187,12 @@ game.onKill = (attacker, target, opts) => {
     if (mode === 'range') { rs2.kills++; if (target.firstHitT != null) { rs2.ttk += now() - target.firstHitT; rs2.ttkN++; } if (opts.head) tutFlags.headKill = true; }
   }
   target.firstHitT = null;
+  // kill streaks (counted on every peer for the HUD; rewards are granted by the host)
+  if (attacker && attacker !== target && attacker.team !== target.team) {
+    attacker.streak = (attacker.streak || 0) + 1;
+    if (net.role !== 'client' && respawnMode() && mode !== 'range') grantStreak(attacker, attacker.streak);
+  }
+  target.streak = 0;
   if (mode === 'tdm' && attacker && attacker.team !== target.team) game.score[attacker.team]++;
   if (respawnMode()) target.respawnAt = now() + (mode === 'range' ? 1.5 : 3.5);
   const el = document.createElement('div');
@@ -1221,7 +1236,6 @@ function medal(text, sub = '', color = '#ffd23f') {
 
 function killMedals(p, target, opts) {
   const t = now();
-  p.streak = (p.streak || 0) + 1;
   p.multi = t - (p.lastKillT ?? -99) < 4 ? (p.multi || 1) + 1 : 1;
   p.lastKillT = t;
   medal(`ELIMINATED ${target.name.toUpperCase()}`, '+100', '#ffffff');
@@ -1232,7 +1246,7 @@ function killMedals(p, target, opts) {
   if (p.multi >= 2) medal(['DOUBLE KILL', 'TRIPLE KILL', 'QUAD KILL'][Math.min(2, p.multi - 2)] || 'RAMPAGE', '+50', '#ff8a1f');
   if (target === p.lastKiller) { medal('REVENGE', '+25', '#b18cff'); p.lastKiller = null; }
   if (p.streak === 5 || p.streak === 10) medal(p.streak === 5 ? 'KILLING SPREE' : 'UNSTOPPABLE', `${p.streak} in a row`, '#ff8a1f');
-  if (game.node && game.config.mode === 'uplink' && target.pos.distanceTo(game.node.pos) < UPLINK.radius + 3) medal('NODE DEFENDER', '+25', '#6effc4');
+  if (nodeMode() && (game.nodes || []).some((n) => target.pos.distanceTo(n.pos) < UPLINK.radius + 3)) medal('NODE DEFENDER', '+25', '#6effc4');
 }
 
 function showDeathCard(killer, opts) {
@@ -1256,8 +1270,8 @@ function showDeathCard(killer, opts) {
 const HINTS = [
   { id: 'move', when: (p, t) => t > 1, text: () => `${keyLabel('forward')}${keyLabel('left')}${keyLabel('back')}${keyLabel('right')} move · mouse aims · click shoots · right-click aims closer` },
   { id: 'sprint', when: (p, t) => t > 9, text: () => `Hold ${keyLabel('sprint')} to sprint · press ${keyLabel('crouch')} while sprinting to slide` },
-  { id: 'node', when: (p, t) => game.config.mode === 'uplink' && t > 16, text: () => 'Follow the light beam to the Rift Node · stand in its ring to capture it' },
-  { id: 'hold', when: (p) => game.node && game.node.owner === p.team && p.pos.distanceTo(game.node.pos) < UPLINK.radius, text: () => 'Your team owns the node — every second you hold it scores a point' },
+  { id: 'node', when: (p, t) => nodeMode() && t > 16, text: () => game.config.mode === 'dom' ? 'Three light beams mark the nodes · stand in a ring to capture it' : 'Follow the light beam to the Rift Node · stand in its ring to capture it' },
+  { id: 'hold', when: (p) => (game.nodes || []).some((n) => n.owner === p.team && p.pos.distanceTo(n.pos) < UPLINK.radius), text: () => 'Your team owns the node — every second you hold it scores a point' },
   { id: 'gadget', when: (p, t) => t > 28 && (p.abil.q.charges > 0 || p.abil.e.charges > 0), text: () => `Press ${keyLabel('ability1')} / ${keyLabel('ability2')} to throw your gadgets` },
   { id: 'loadout', when: (p) => !p.alive, text: () => `Press ${keyLabel('buy')} to change your weapons — you get them when you respawn` },
   { id: 'moved', when: (p, t) => game.node && game.config.mode === 'uplink' && game.node.until - game.time < 8 && t > 40, text: () => 'The node moves soon — watch the timer under the score' },
@@ -1350,11 +1364,24 @@ game.onPlayerDamaged = (attacker) => {
 let flashEnd = 0, flashDur = 1;
 game.onBlind = (dur) => { flashEnd = now() + dur; flashDur = dur; };
 game.onBlackout = () => {};
+// kill streak rewards: tell the player, the team and (online) every client
+game.onStreak = (f, s) => {
+  if (net.role === 'host') hostEvent({ t: 'streak', fid: f.id, k: s.key });
+  const p = game.player;
+  if (f === p) { medal(s.name, s.desc, '#6effc4'); sfx('capture', { vol: 0.9 }); }
+  else if (f.team === p.team) comms(`${f.name}: ${s.name} — ${s.desc}`, null, true);
+  else comms(`Enemy ${s.name}!`, null, true);
+};
+game.onDropSpawned = (d) => { if (net.role === 'host') hostEvent({ t: 'sdrop', id: d.id, p: A3(d.pos), team: d.team }); };
+game.onDropGone = (id, taker) => {
+  if (net.role === 'host') hostEvent({ t: 'sgone', id, by: taker ? taker.id : -1 });
+  if (taker === game.player) { medal('SUPPLIES COLLECTED', 'LMG · armor · gadgets', '#6effc4'); setViewModel(taker); }
+};
 game.onNodeMoved = (n) => { flashMsg('NODE MOVED', `The Rift Node is now at ${NODE_NAMES[n.key]}`, 2.2); sfx('round'); };
-game.onNodeCaptured = (team) => {
-  const ours = team === game.player.team;
-  comms(ours ? 'Rift Node captured — hold it!' : 'The enemy took the Rift Node', null, true);
-  if (ours && game.node && game.player.alive && game.player.pos.distanceTo(game.node.pos) < UPLINK.radius + 1) trackObjective();
+game.onNodeCaptured = (team, n) => {
+  const ours = team === game.player.team, name = game.config.mode === 'dom' && n ? NODE_NAMES[n.key] : 'the Rift Node';
+  comms(ours ? `We captured ${name} — hold it!` : `The enemy took ${name}`, null, true);
+  if (ours && n && game.player.alive && game.player.pos.distanceTo(n.pos) < UPLINK.radius + 1) { trackObjective(); medal('NODE CAPTURED', '+50', '#6effc4'); }
 };
 
 // ---- first-person recoil: damped springs kicked on every shot ----
@@ -1431,7 +1458,7 @@ const BUY_LIST = [
   { key: 'cover', cat: 'gadget', hot: 'k' },
 ];
 
-const respawnMode = () => ['tdm', 'uplink', 'range'].includes(game.config?.mode);
+const respawnMode = () => ['tdm', 'uplink', 'dom', 'range'].includes(game.config?.mode);
 const freeLoadout = respawnMode;
 function toggleBuy(force) {
   const open = force ?? !buyOpen;
@@ -1575,11 +1602,18 @@ function drawMinimap() {
     });
   }
   drawMapBoxes(mg, toPx);
-  if (game.config.mode === 'uplink' && game.node) {
-    const n = game.node, [x, y] = toPx(n.pos.x, n.pos.z);
+  if (nodeMode()) for (const n of game.nodes || []) {
+    const [x, y] = toPx(n.pos.x, n.pos.z);
     mg.strokeStyle = n.owner >= 0 ? (n.owner ? '#ffb066' : '#7fb2ff') : '#ffffff'; mg.lineWidth = 2;
     mg.beginPath(); mg.arc(x, y, UPLINK.radius * MM_S, 0, Math.PI * 2); mg.stroke();
-    mg.fillStyle = mg.strokeStyle; mg.beginPath(); mg.arc(x, y, 3, 0, Math.PI * 2); mg.fill();
+    mg.fillStyle = mg.strokeStyle; mg.font = 'bold 10px "Chakra Petch", sans-serif'; mg.textAlign = 'center';
+    mg.fillText(n.key, x, y + 4);
+  }
+  // supply drops waiting to be picked up
+  for (const d of game.drops || []) {
+    if (d.team !== p.team) continue;
+    const [x, y] = toPx(d.pos.x, d.pos.z);
+    mg.fillStyle = '#6effc4'; mg.fillRect(x - 3.5, y - 3.5, 7, 7);
   }
   const c = game.charge;
   if (game.config.mode === 'plant' && c && (c.state === 'planted' || c.state === 'dropped') && (p.team === game.attackers || c.state === 'planted')) {
@@ -1616,6 +1650,14 @@ function drawMinimap() {
 function updateHud(dt) {
   const p = game.player, t = now();
   updateHints();
+  // kill streak progress
+  const showStreak = respawnMode() && game.config.mode !== 'range' && p.alive;
+  $('streakBox').hidden = !showStreak;
+  if (showStreak) {
+    const n = p.streak || 0, nx = nextStreak(n);
+    const html = `STREAK <b>${n}</b><small>${nx ? `${nx.name} at ${nx.at}` : 'all rewards earned'}</small>`;
+    if (textCache.get('streakBox') !== html) { textCache.set('streakBox', html); $('streakBox').innerHTML = html; }
+  }
   if (!$('deathCard').hidden) {
     if (p.alive || game.phase === 'over') $('deathCard').hidden = true;
     else if (p.respawnAt) setText('dcRespawn', `Back in ${Math.max(0, p.respawnAt - t).toFixed(1)}s · press ${S.binds.buy.replace(/^Key/, '')} to change loadout`);
@@ -1629,7 +1671,7 @@ function updateHud(dt) {
   $('timer').classList.toggle('charge', planted && game.phase === 'live');
   const plantMode = game.config.mode === 'plant';
   const sideTxt = plantMode ? (p.team === game.attackers ? ' · ATTACK' : ' · DEFEND') : '';
-  if (game.config.mode === 'tdm' || game.config.mode === 'uplink') setText('roundLabel', game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget}`);
+  if (game.config.mode === 'tdm' || nodeMode()) setText('roundLabel', game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget}`);
   else setText('roundLabel', planted && game.phase === 'live' ? `CHARGE ON ${game.charge.site}` : game.phase === 'buy' ? 'BUY PHASE' + sideTxt : `ROUND ${game.round}${sideTxt}`);
   $('credits').hidden = freeLoadout();
   for (const f of game.fighters) f.pipEl?.classList.toggle('carrier', plantMode && game.charge?.carrier === f && f.team === p.team);
@@ -1657,8 +1699,14 @@ function updateHud(dt) {
   $('armorBar').style.width = `${Math.max(0, Math.min(100, viewF.armor))}%`;
   // uplink progress
   const node = game.node;
-  $('uplinkBar').hidden = !(game.config.mode === 'uplink' && node);
-  if (node && game.config.mode === 'uplink') {
+  $('uplinkBar').hidden = !nodeMode() || !(game.nodes || []).length;
+  if (game.config.mode === 'dom' && game.nodes?.length) {
+    $('ub0').style.width = `${Math.min(100, (game.score[0] / game.tdmTarget) * 100)}%`;
+    $('ub1').style.width = `${Math.min(100, (game.score[1] / game.tdmTarget) * 100)}%`;
+    const html = game.nodes.map((n) => `<span style="color:${n.contested ? '#fff' : n.owner < 0 ? '#8a8f96' : n.owner ? '#ffb066' : '#7fb2ff'}">${n.contested ? '◆' : '●'}${n.key}</span>`).join(' ');
+    if (textCache.get('uplinkTxt') !== html) { textCache.set('uplinkTxt', html); $('uplinkTxt').innerHTML = html; }
+    $('uplinkTxt').style.color = '';
+  } else if (node && game.config.mode === 'uplink') {
     $('ub0').style.width = `${Math.min(100, (game.score[0] / game.tdmTarget) * 100)}%`;
     $('ub1').style.width = `${Math.min(100, (game.score[1] / game.tdmTarget) * 100)}%`;
     const mine = p.team, left = Math.max(0, Math.ceil(node.until - game.time));
@@ -2033,8 +2081,9 @@ function step(dt) {
   playerVision();
   noiseFootsteps(dt);
   updateAbilities(dt);
+  updateDrops(dt, !client);
   if (game.config.mode === 'plant') { updateCharge(dt); if (!client) updateTactics(); }
-  if (game.config.mode === 'uplink' && !client) updateNode(dt);
+  if (nodeMode() && !client) updateNode(dt);
   updateFx(dt);
   updateRagdolls(dt);
   updateWorldFx(t);

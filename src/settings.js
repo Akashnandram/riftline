@@ -4,7 +4,7 @@ const KEY = 'riftline.settings';
 
 export const DEFAULTS = {
   sens: 1, adsSens: 0.85, invertY: false,
-  fov: 75, showFps: false, thirdPerson: true,
+  fov: 75, showFps: false, thirdPerson: false,
   volume: 0.7,
   crosshair: { color: '#6effc4', length: 6, thickness: 2, gap: 3, dot: true, outline: true, opacity: 1, dynamic: true },
   binds: {
@@ -28,6 +28,8 @@ function load() {
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { /* ignore */ }
   // carry over the old standalone sensitivity setting
   try { const old = localStorage.getItem('riftline.sens'); if (old != null && saved.sens == null) saved.sens = JSON.parse(old); } catch { /* ignore */ }
+  // first-person became the default again: switch earlier saves over once
+  if ((saved.camV || 0) < 2) { saved.thirdPerson = false; saved.camV = 2; }
   return {
     ...DEFAULTS, ...saved,
     crosshair: { ...DEFAULTS.crosshair, ...(saved.crosshair || {}) },
@@ -100,7 +102,7 @@ export function openSettings(root, { quality, setQuality, onClose }) {
       mouse: [
         slider('Sensitivity', S.sens, 0.1, 4, 0.05, (v) => v.toFixed(2), (v) => { S.sens = v; }),
         slider('Aim-down-sights multiplier', S.adsSens, 0.3, 1.5, 0.05, (v) => v.toFixed(2), (v) => { S.adsSens = v; }),
-        toggle('Third-person camera (over the shoulder)', S.thirdPerson, (v) => { S.thirdPerson = v; }),
+        toggle('Third-person camera (over the shoulder) — off = first person', S.thirdPerson, (v) => { S.thirdPerson = v; }),
         toggle('Invert vertical look', S.invertY, (v) => { S.invertY = v; }),
       ],
       video: [
