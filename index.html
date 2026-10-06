@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>Riftline – Squad Shooter</title>
   <meta name="description" content="First-person squad shooter in your browser. Pick an operative, buy weapons and gadgets, sprint and slide, and capture the Rift Node." />
   <meta name="theme-color" content="#12161c" />
@@ -79,6 +79,7 @@
     </div>
   </div>
 
+  <div id="rotateMsg">Turn your phone sideways to play ↻</div>
   <div id="flash"></div>
   <div id="blackout"></div>
   <div id="vignette"></div>
@@ -86,7 +87,7 @@
 
   <!-- ===================== BUY MENU ===================== -->
   <div id="buyMenu" class="panel" hidden>
-    <div class="buyHead"><h2>LOADOUT</h2><div id="buyCredits">¤ 800</div><div id="buyTimer"></div></div>
+    <div class="buyHead"><h2>LOADOUT</h2><div id="buyCredits">¤ 800</div><div id="buyTimer"></div><button id="buyClose" class="ghost">Close</button></div>
     <div class="buyCols">
       <div><h3>SIDEARMS</h3><div class="items" data-cat="secondary"></div></div>
       <div><h3>SMG &amp; SHOTGUN</h3><div class="items" data-cat="close"></div></div>
@@ -179,13 +180,14 @@
   <div id="loadout" class="screen dim" hidden>
     <div class="menuInner loadout">
       <div class="set-head"><h2>LOADOUT &amp; SKINS</h2><div id="loadoutLevel"></div><button class="big" id="loadoutDone">DONE</button></div>
+      <div class="loTabs seg"><button data-tab="skins" class="on">WEAPON SKINS</button><button data-tab="outfits">OUTFITS</button></div>
       <div class="lo-grid">
         <div id="loWeapons" class="lo-list"></div>
         <div>
           <canvas id="loPreview" width="640" height="300"></canvas>
           <div id="loName" class="lo-name"></div>
           <div id="loSkins" class="lo-skins"></div>
-          <p class="hint">Level up by playing matches to unlock more skins. Any unlocked skin works on every gun.</p>
+          <p class="hint" id="loHint">Level up by playing matches to unlock more skins. Any unlocked skin works on every gun.</p>
         </div>
       </div>
     </div>

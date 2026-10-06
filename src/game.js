@@ -24,6 +24,9 @@ import { buy, botBuy, gadgetCost } from './shop.js';
 import { updateFx, clearFx, smokePuff, tracer, impact, blood, muzzleSprite, ring, burstSphere, spark, bulletHole } from './fx.js';
 import { initAudio, sfx, setMuted, isMuted, updateListener, setVolume } from './audio.js';
 import { S, save as saveSettings, held, isAction, drawCrosshair, openSettings, onSettingsChange } from './settings.js';
+import { outfitFor, setOutfit } from './progress.js';
+import { OUTFIT_SLOTS, randomOutfit, cleanOutfit } from './outfits.js';
+import { buildCharacter, animateCharacter, setCharacterGun } from './characters.js';
 import { profile, levelInfo, unlockedSkins, skinFor, equip, startTracking, trackKill, trackRound, trackObjective, finishMatch, completeTutorial, categoryOf } from './progress.js';
 import { SKINS, SKIN_BY_KEY, applySkin } from './skins.js';
 import { net, setupNet, resetNet, hostTick, applyRemoteInput, sendSpawn, hostEvent, hostEventTo, clientTick, clientSnapshot, interpolate, unpackFighter, unpackCharge, rewindPos } from './net/netgame.js';
@@ -31,6 +34,7 @@ import { me, setPresence } from './net/backend.js';
 import { initOnlineUI, onlineMatchOver, leaveOnline } from './net/ui.js';
 import { buildGun, casingGeo, casingMat } from './guns.js';
 import { flashTexture } from './textures.js';
+import { IS_TOUCH, touch, initTouch, takeLook, enterFullscreen } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -43,6 +47,7 @@ const store = {
 // ---------------------------------------------------------------------------
 /** First launch: pick Low on weak GPUs (integrated Intel, phones, software rendering). */
 function detectQuality() {
+  if (IS_TOUCH) return 'low';           // phones/tablets: lightest settings
   try {
     const gl = document.createElement('canvas').getContext('webgl2') || document.createElement('canvas').getContext('webgl');
     const info = gl.getExtension('WEBGL_debug_renderer_info');
@@ -203,8 +208,11 @@ onSettingsChange(() => setVolume(S.volume));
 let swayX = 0, swayY = 0;
 let buyOpen = false;
 
-const locked = () => document.pointerLockElement === canvas;
-function lock() { try { const p = canvas.requestPointerLock({ unadjustedMovement: true }); p?.catch?.(() => canvas.requestPointerLock()); } catch { canvas.requestPointerLock(); } }
+// phones have no pointer lock: "locked" just means a match is running and not paused
+const locked = () => (IS_TOUCH ? !!game.player && !game.paused && !['menu', 'over'].includes(game.phase) : document.pointerLockElement === canvas);
+function lock() {
+  if (IS_TOUCH) { enterFullscreen(); setPaused(false); return; }
+  try { const p = canvas.requestPointerLock({ unadjustedMovement: true }); p?.catch?.(() => canvas.requestPointerLock()); } catch { canvas.requestPointerLock(); } }
 
 document.addEventListener('pointerlockchange', () => {
   if (locked()) { setPaused(false); return; }
@@ -261,6 +269,39 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.left = false; });
+
+/** Phones: swipe to look, plus a gentle aim assist (slow-down and pull toward a target near the crosshair). */
+const _aa = new THREE.Vector3(), _ae = new THREE.Vector3();
+function touchLook(p, dt) {
+  const [lx, ly] = takeLook();
+  const assistOn = !game.spectating && p.alive;
+  // look: about the same feel as the mouse at sensitivity 1
+  let s = S.sens * 0.0042 * (p.scoped ? 0.45 : aimK > 0.5 ? 0.6 : 1);
+  let best = null, bestErr = 0.12;
+  if (assistOn) {
+    p.eye(_ae);
+    const fwd = p.lookDir(_aa, false);
+    for (const e of game.fighters) {
+      if (!e.alive || e.team === p.team) continue;
+      const tx = e.pos.x - _ae.x, ty = e.pos.y + 1.2 - _ae.y, tz = e.pos.z - _ae.z, d = Math.hypot(tx, ty, tz);
+      if (d > 60 || d < 0.5) continue;
+      const err = Math.acos(Math.max(-1, Math.min(1, (tx * fwd.x + ty * fwd.y + tz * fwd.z) / d)));
+      if (err < bestErr && hasLOS(_ae, _aa.set(e.pos.x, e.pos.y + 1.2, e.pos.z))) { bestErr = err; best = e; }
+      p.lookDir(_aa, false);
+    }
+  }
+  if (best) s *= 0.55;                              // slow down over a target
+  p.yaw -= lx * s;
+  p.pitch = Math.max(-1.5, Math.min(1.5, p.pitch - ly * s * (S.invertY ? -1 : 1)));
+  swayX += lx * 0.00008; swayY += ly * 0.00008;
+  if (best && (mouse.left || aimK > 0.5)) {
+    const tx = best.pos.x - _ae.x, ty = best.pos.y + 1.2 - _ae.y, tz = best.pos.z - _ae.z;
+    const wantYaw = Math.atan2(-tx, -tz), wantPitch = Math.atan2(ty, Math.hypot(tx, tz));
+    const k = Math.min(1, dt * 3.2);
+    p.yaw += Math.atan2(Math.sin(wantYaw - p.yaw), Math.cos(wantYaw - p.yaw)) * k;
+    p.pitch += (wantPitch - p.pitch) * k;
+  }
+}
 
 function onRightClick() {
   const p = game.player;
@@ -326,7 +367,7 @@ function renderProfile() {
   $('modeHint').textContent = MODE_HINTS[choice.mode] || '';
 }
 
-$('touchWarn').hidden = !matchMedia('(pointer: coarse)').matches;
+$('touchWarn').hidden = true;
 $('lockIn').onclick = () => { initAudio(); startLocal({ ...choice }); lock(); };
 /** Quick Play: short 3v3 Uplink on a random map (Super Easy bots for brand-new players). */
 function quickPlay() {
@@ -336,6 +377,17 @@ function quickPlay() {
   lock();
 }
 $('quickPlay').onclick = quickPlay;
+$('buyClose').onclick = () => toggleBuy(false);
+initTouch({
+  active: () => locked(),
+  fire: (down) => { mouse.left = down; if (down) mouse.leftPressed = true; },
+  aim: () => { const p = game.player; if (p?.weapon().scope) onRightClick(); else touch.aimToggle = !touch.aimToggle; },
+  reload: () => { const p = game.player; if (!p?.alive) return; startReload(p); if (net.role === 'client') net.lobby.toHost({ t: 'reload' }); },
+  switchWeapon: () => { const p = game.player; if (!p?.alive) return; const slot = p.cur === 'primary' ? 'secondary' : 'primary'; switchWeapon(p, slot); if (net.role === 'client') net.lobby.toHost({ t: 'switch', slot }); },
+  gadget: (slot) => { if (game.player?.alive && !game.paused) playerAbility(slot); },
+  loadout: () => toggleBuy(),
+  pause: () => setPaused(true),
+});
 // first visit: offer to jump straight into a match
 if (profile.totals.matches === 0 && !store.get('welcomed', false)) $('welcome').hidden = false;
 const closeWelcome = () => { $('welcome').hidden = true; store.set('welcomed', true); };
@@ -366,6 +418,7 @@ function exitToLobby() {
 initOnlineUI({
   choice: () => choice,
   setAgent: (a) => { choice.agent = a; store.set('agent', a); },
+  outfitFor: (a) => outfitFor(a),
   startOnline: (lobby, msg) => startOnlineMatch(lobby, msg),
   exitToLobby,
   toMenu,
@@ -394,26 +447,34 @@ function openLoadout() {
     const key = new THREE.DirectionalLight(0xfff0dd, 2); key.position.set(1, 2, 2); sc.add(key);
     const rim = new THREE.DirectionalLight(0xbcd6ff, 1.5); rim.position.set(-2, 1, -2); sc.add(rim);
     const cam = new THREE.PerspectiveCamera(30, 640 / 300, 0.01, 10); cam.position.set(0, 0.04, 1.5);
-    lo = { r, sc, cam, holder: new THREE.Group(), weapon: 'raptor', t: 0 };
+    lo = { r, sc, cam, holder: new THREE.Group(), weapon: 'raptor', t: 0, tab: 'skins' };
     sc.add(lo.holder);
   }
   renderLoadout();
   const spin = () => {
     if ($('loadout').hidden) return;
     lo.t += 0.012;
-    lo.holder.rotation.y = Math.PI / 2 + Math.sin(lo.t) * 0.6;
+    if (lo.char) {
+      lo.holder.rotation.y = Math.PI + Math.sin(lo.t * 0.8) * 0.7;
+      animateCharacter(lo.char, { yaw: 0, pitch: 0, vel: OF_PREVIEW_V, onGround: true, kick: 0, reload: -1, crouch: 0 }, 1 / 60);
+    } else lo.holder.rotation.y = Math.PI / 2 + Math.sin(lo.t) * 0.6;
     lo.r.render(lo.sc, lo.cam);
     requestAnimationFrame(spin);
   };
   spin();
 }
+const OF_PREVIEW_V = new THREE.Vector3();
 function renderLoadout() {
+  if (lo.tab === 'outfits') return renderOutfits();
+  $('loHint').textContent = 'Level up by playing matches to unlock more skins. Any unlocked skin works on every gun.';
+  lo.cam.position.set(0, 0.04, 1.5); lo.cam.lookAt(0, 0.04, 0); lo.char = null;
   const L = levelInfo();
   $('loadoutLevel').textContent = `Level ${L.level} · ${unlockedSkins().length}/${SKINS.length} skins unlocked`;
   $('loWeapons').innerHTML = Object.values(WEAPONS).map((w) => `<button data-k="${w.key}" class="${w.key === lo.weapon ? 'on' : ''}">${w.name}<small>${SKIN_BY_KEY[skinFor(w.key)].name}</small></button>`).join('');
   $('loWeapons').querySelectorAll('button').forEach((b) => { b.onclick = () => { lo.weapon = b.dataset.k; renderLoadout(); }; });
   const cur = skinFor(lo.weapon);
   $('loName').textContent = `${WEAPONS[lo.weapon].name.toUpperCase()} · ${SKIN_BY_KEY[cur].name.toUpperCase()}`;
+  $('loSkins').className = 'lo-skins';
   $('loSkins').innerHTML = SKINS.map((sk) => {
     const locked = sk.level > L.level;
     return `<button class="skin${sk.key === cur ? ' on' : ''}${locked ? ' locked' : ''}" data-s="${sk.key}" ${locked ? 'disabled' : ''}>
@@ -430,6 +491,36 @@ function renderLoadout() {
   lo.holder.add(wrap);
 }
 $('loadoutDone').onclick = () => { $('loadout').hidden = true; renderMenu(); };
+document.querySelectorAll('.loTabs button').forEach((b) => {
+  b.onclick = () => { lo.tab = b.dataset.tab; document.querySelectorAll('.loTabs button').forEach((x) => x.classList.toggle('on', x === b)); renderLoadout(); };
+});
+
+/** Outfits tab: pick an operative, change each slot, see the character turn in the preview. */
+function renderOutfits() {
+  const L = levelInfo();
+  lo.ofAgent ??= choice.agent;
+  const ag = lo.ofAgent, cur = outfitFor(ag), saved = profile.outfits[ag] || {};
+  $('loadoutLevel').textContent = `Level ${L.level} · new outfit pieces unlock as you level up`;
+  $('loHint').textContent = 'Your outfit shows in every match, online too. Bots wear random outfits.';
+  $('loWeapons').innerHTML = Object.values(AGENTS).map((a) => `<button data-a="${a.key}" class="${a.key === ag ? 'on' : ''}" style="--acc:${a.color}"><span style="color:${a.color}">${a.name}</span><small>${a.role}</small></button>`).join('');
+  $('loWeapons').querySelectorAll('button').forEach((b) => { b.onclick = () => { lo.ofAgent = b.dataset.a; renderLoadout(); }; });
+  $('loName').textContent = `${AGENTS[ag].name} · OUTFIT`;
+  $('loSkins').className = '';
+  $('loSkins').innerHTML = OUTFIT_SLOTS.map((slot) => `<div class="of-row"><h4>${slot.name.toUpperCase()}</h4><div class="of-opts">${slot.options.map((o) => {
+    const locked = o.lv > L.level, on = (saved[slot.key] || 'def') === o.id && !locked;
+    const sw = o.hex != null ? `<i style="background:#${o.hex.toString(16).padStart(6, '0')}"></i>` : '';
+    return `<button data-slot="${slot.key}" data-id="${o.id}" class="${on ? 'on' : ''}${locked ? ' locked' : ''}" ${locked ? 'disabled' : ''}>${sw}${o.name}${locked ? ` <small>Lv ${o.lv}</small>` : ''}</button>`;
+  }).join('')}</div></div>`).join('');
+  $('loSkins').querySelectorAll('.of-opts button:not(.locked)').forEach((b) => { b.onclick = () => { setOutfit(ag, b.dataset.slot, b.dataset.id); renderLoadout(); }; });
+  // preview: the operative in this outfit, holding a rifle
+  if (lo.char) disposeCharacter(lo.char);
+  lo.holder.clear();
+  const ch = buildCharacter(TEAM_COLORS[0], AGENTS[ag], cur);
+  setCharacterGun(ch, 'raptor');
+  lo.char = ch;
+  lo.holder.add(ch);
+  lo.cam.position.set(0, 1.05, 3.6); lo.cam.lookAt(0, 0.95, 0);
+}
 
 function toMenu() {
   leaveOnline();
@@ -506,7 +597,7 @@ function startMatch(cfg, roster = null, mapId = null) {
         agent = (free.length ? free : agentKeys)[Math.floor(Math.random() * (free.length || agentKeys.length))];
         used.push(agent);
       }
-      const f = new Fighter({ id: id++, name: isPlayer ? 'You' : names.pop(), team, agent, isPlayer });
+      const f = new Fighter({ id: id++, name: isPlayer ? 'You' : names.pop(), team, agent, isPlayer, outfit: isPlayer ? outfitFor(agent) : randomOutfit() });
       if (!isPlayer) new BotBrain(f, cfg.difficulty);
       scene.add(f.mesh);
       game.fighters.push(f);
@@ -808,7 +899,7 @@ function startRange(tutorial) {
   game.time = 0; game.round = 1; game.score = [0, 0]; game.lossStreak = [0, 0]; game.noises = []; game.attackers = 0;
   Object.assign(rs2, { shots: 0, hits: 0, heads: 0, kills: 0, ttk: 0, ttkN: 0 });
   for (const k in tutFlags) delete tutFlags[k];
-  const p = new Fighter({ id: 0, name: 'You', team: 0, agent: choice.agent, isPlayer: true });
+  const p = new Fighter({ id: 0, name: 'You', team: 0, agent: choice.agent, isPlayer: true, outfit: outfitFor(choice.agent) });
   game.player = p; game.fighters.push(p); scene.add(p.mesh);
   RANGE_TARGETS.forEach((slot, i) => {
     const d = new Fighter({ id: i + 1, name: `Target ${i + 1}`, team: 1, agent: Object.keys(AGENTS)[i % 4] });
@@ -858,7 +949,8 @@ const TUT_STEPS = [
   { t: 'Throw a gadget', sub: () => `Buy one with ${keyLabel('buy')} (free here), then press ${keyLabel('ability1')} or ${keyLabel('ability2')}`, done: () => tutFlags.ability },
   { t: 'Land a headshot kill', sub: 'Aim for the head — it does much more damage', done: () => tutFlags.headKill },
 ];
-const keyLabel = (a) => `<kbd>${({ Space: 'Space', ShiftLeft: 'Shift' })[S.binds[a]] || S.binds[a].replace(/^Key|^Digit/, '')}</kbd>`;
+const TOUCH_LABELS = { forward: 'left stick', left: '', back: '', right: '', sprint: 'the stick pushed all the way up', crouch: 'CROUCH', jump: 'JUMP', buy: 'LOADOUT', ability1: 'the gadget', ability2: 'card', reload: 'R', use: 'USE' };
+const keyLabel = (a) => IS_TOUCH ? (TOUCH_LABELS[a] ? `<kbd>${TOUCH_LABELS[a]}</kbd>` : '') : `<kbd>${({ Space: 'Space', ShiftLeft: 'Shift' })[S.binds[a]] || S.binds[a].replace(/^Key|^Digit/, '')}</kbd>`;
 
 function renderTutorial() {
   const el = $('tutorial');
@@ -943,7 +1035,7 @@ function startOnlineMatch(lobby, msg) {
 function buildRosterFighters(cfg, roster, client) {
   for (const r of roster) {
     const isPlayer = r.owner === me.id;
-    const f = new Fighter({ id: r.fid, name: isPlayer ? `${r.name} (you)` : r.name, team: r.team, agent: r.agent, isPlayer });
+    const f = new Fighter({ id: r.fid, name: isPlayer ? `${r.name} (you)` : r.name, team: r.team, agent: r.agent, isPlayer, outfit: cleanOutfit(r.outfit) });
     if (r.owner && !isPlayer) f.netOwner = r.owner;          // a remote human
     if (!client && !r.owner) new BotBrain(f, cfg.difficulty);
     f.human = !!r.owner;
@@ -1268,11 +1360,11 @@ function showDeathCard(killer, opts) {
 // First-match hints (each shown once per browser)
 // ---------------------------------------------------------------------------
 const HINTS = [
-  { id: 'move', when: (p, t) => t > 1, text: () => `${keyLabel('forward')}${keyLabel('left')}${keyLabel('back')}${keyLabel('right')} move · mouse aims · click shoots · right-click aims closer` },
-  { id: 'sprint', when: (p, t) => t > 9, text: () => `Hold ${keyLabel('sprint')} to sprint · press ${keyLabel('crouch')} while sprinting to slide` },
+  { id: 'move', when: (p, t) => t > 1, text: () => IS_TOUCH ? 'Left thumb moves · swipe the right side to look · hold FIRE to shoot (drag on it to steer) · AIM zooms in' : `${keyLabel('forward')}${keyLabel('left')}${keyLabel('back')}${keyLabel('right')} move · mouse aims · click shoots · right-click aims closer` },
+  { id: 'sprint', when: (p, t) => t > 9, text: () => IS_TOUCH ? 'Push the stick all the way up to sprint · tap CROUCH while sprinting to slide' : `Hold ${keyLabel('sprint')} to sprint · press ${keyLabel('crouch')} while sprinting to slide` },
   { id: 'node', when: (p, t) => nodeMode() && t > 16, text: () => game.config.mode === 'dom' ? 'Three light beams mark the nodes · stand in a ring to capture it' : 'Follow the light beam to the Rift Node · stand in its ring to capture it' },
   { id: 'hold', when: (p) => (game.nodes || []).some((n) => n.owner === p.team && p.pos.distanceTo(n.pos) < UPLINK.radius), text: () => 'Your team owns the node — every second you hold it scores a point' },
-  { id: 'gadget', when: (p, t) => t > 28 && (p.abil.q.charges > 0 || p.abil.e.charges > 0), text: () => `Press ${keyLabel('ability1')} / ${keyLabel('ability2')} to throw your gadgets` },
+  { id: 'gadget', when: (p, t) => t > 28 && (p.abil.q.charges > 0 || p.abil.e.charges > 0), text: () => IS_TOUCH ? 'Tap the gadget cards (bottom right) to throw them' : `Press ${keyLabel('ability1')} / ${keyLabel('ability2')} to throw your gadgets` },
   { id: 'loadout', when: (p) => !p.alive, text: () => `Press ${keyLabel('buy')} to change your weapons — you get them when you respawn` },
   { id: 'moved', when: (p, t) => game.node && game.config.mode === 'uplink' && game.node.until - game.time < 8 && t > 40, text: () => 'The node moves soon — watch the timer under the score' },
 ];
@@ -1536,6 +1628,7 @@ function setText(id, v) { if (textCache.get(id) !== v) { textCache.set(id, v); $
 
 let msgUntil = 0;
 function flashMsg(main, sub = '', dur = 2, cls = '') {
+  if (IS_TOUCH) sub = sub.replace(/press B (for|to)/g, 'tap LOADOUT $1').replace(/press B/g, 'tap LOADOUT');
   $('msgMain').textContent = main; $('msgMain').className = cls;
   $('msgSub').textContent = sub;
   $('centerMsg').style.opacity = 1;
@@ -1660,7 +1753,7 @@ function updateHud(dt) {
   }
   if (!$('deathCard').hidden) {
     if (p.alive || game.phase === 'over') $('deathCard').hidden = true;
-    else if (p.respawnAt) setText('dcRespawn', `Back in ${Math.max(0, p.respawnAt - t).toFixed(1)}s · press ${S.binds.buy.replace(/^Key/, '')} to change loadout`);
+    else if (p.respawnAt) setText('dcRespawn', `Back in ${Math.max(0, p.respawnAt - t).toFixed(1)}s · ${IS_TOUCH ? 'tap LOADOUT' : 'press ' + S.binds.buy.replace(/^Key/, '')} to change loadout`);
   }
   const viewF = game.spectating && game.specTarget ? game.specTarget : p;
   // top bar
@@ -1789,20 +1882,23 @@ let stepT = 0, wasAirborne = false, airVel = 0, actionProgress = -1;
 function updatePlayer(dt) {
   const p = game.player;
   if (!p.alive) return;
-  let fx = 0, fz = 0;
+  let fx = 0, fz = 0, analog = 1;
   if (!buyOpen) {
-    const fwd = (held(keys, 'forward') ? 1 : 0) - (held(keys, 'back') ? 1 : 0);
-    const side = (held(keys, 'right') ? 1 : 0) - (held(keys, 'left') ? 1 : 0);
+    let fwd = (held(keys, 'forward') ? 1 : 0) - (held(keys, 'back') ? 1 : 0);
+    let side = (held(keys, 'right') ? 1 : 0) - (held(keys, 'left') ? 1 : 0);
+    if (IS_TOUCH && (touch.move.x || touch.move.y)) { fwd = touch.move.y; side = touch.move.x; analog = Math.min(1, Math.hypot(fwd, side) * 1.15); }
     const sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
     fx = -sy * fwd + cy * side; fz = -cy * fwd - sy * side;
     const l = Math.hypot(fx, fz); if (l > 0) { fx /= l; fz /= l; }
   }
+  if (IS_TOUCH) touchLook(p, dt);
   p.wish = { x: fx, z: fz };
-  const crouchKey = held(keys, 'crouch') && !buyOpen;
-  // sprint: hold the key while moving forward; aiming, reloading, crouching or firing stops it
-  const fwdHeld = !buyOpen && held(keys, 'forward') && !held(keys, 'back');
+  const crouchKey = (held(keys, 'crouch') || (IS_TOUCH && touch.crouch)) && !buyOpen;
+  // sprint: hold the key while moving forward (phones: push the stick all the way up);
+  // aiming, reloading, crouching or firing stops it
+  const fwdHeld = !buyOpen && ((held(keys, 'forward') && !held(keys, 'back')) || (IS_TOUCH && touch.move.y > 0.85));
   const wasSprinting = p.sprinting;
-  p.sprinting = fwdHeld && held(keys, 'sprint') && p.slideT <= 0 && !crouchKey && aimK < 0.3 && p.reloadT <= 0 && !mouse.left && !p.scoped;
+  p.sprinting = fwdHeld && (held(keys, 'sprint') || (IS_TOUCH && touch.move.y > 0.85)) && p.slideT <= 0 && !crouchKey && aimK < 0.3 && p.reloadT <= 0 && !mouse.left && !p.scoped;
   if (wasSprinting && !p.sprinting) p.sprintOutUntil = now() + 0.14;
   // slide: crouch while sprinting fast on the ground
   if (crouchKey && !prevCrouchKey && wasSprinting && p.onGround && Math.hypot(p.vel.x, p.vel.z) > MOVE.run) {
@@ -1811,9 +1907,9 @@ function updatePlayer(dt) {
   }
   prevCrouchKey = crouchKey;
   p.wantCrouch = crouchKey || p.slideT > 0;
-  const speed = (p.sprinting ? MOVE.sprint : p.crouch > 0.5 ? MOVE.crouch : MOVE.run) * p.speedMul * (aimK > 0.5 ? 0.8 : 1);
+  const speed = (p.sprinting ? MOVE.sprint : p.crouch > 0.5 ? MOVE.crouch : MOVE.run * analog) * p.speedMul * (aimK > 0.5 ? 0.8 : 1);
   if (!p.onGround) airVel = Math.min(airVel, p.vel.y);
-  moveFighter(p, fx, fz, speed, held(keys, 'jump') && !buyOpen, dt);
+  moveFighter(p, fx, fz, speed, (held(keys, 'jump') || (IS_TOUCH && touch.jump)) && !buyOpen, dt);
   if (p.onGround && wasAirborne && airVel < -3) { sfx('land', { vol: Math.min(1, -airVel / 8) }); landT = Math.min(1, -airVel / 9); }
   wasAirborne = !p.onGround;
   if (p.onGround) airVel = 0;
@@ -1888,7 +1984,7 @@ function updateCamera(dt) {
   const p = game.player;
   let fov = S.fov;
   const w = p.weapon();
-  const wantAim = (mouse.right && locked() || forceAim) && p.alive && !w.scope && p.reloadT <= 0 && !game.spectating;
+  const wantAim = (mouse.right && locked() || forceAim || (IS_TOUCH && touch.aimToggle)) && p.alive && !w.scope && p.reloadT <= 0 && !game.spectating;
   aimK += ((wantAim ? 1 : 0) - aimK) * Math.min(1, dt * 14);
   landT = Math.max(0, landT - dt * 4);
   game.thirdPerson = S.thirdPerson && p.alive && !p.scoped && !game.spectating && !debugCam;

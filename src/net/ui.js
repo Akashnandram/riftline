@@ -223,6 +223,8 @@ async function joinLobby(code) {
 }
 
 function wireLobby() {
+  // tell the host what this player looks like
+  setTimeout(() => lobby?.request('outfit', api.outfitFor(api.choice().agent)), 800);
   lobby.on('update', () => { if (!$('lobbyScreen')?.hidden) renderLobby(); });
   lobby.on('start', (msg) => { $('lobbyScreen').hidden = true; api.startOnline(lobby, msg); });
   lobby.on('lobby', () => { api.exitToLobby(); showLobby(); });
@@ -273,7 +275,7 @@ function renderLobby() {
   $('lbCopy').onclick = () => { navigator.clipboard?.writeText(link).then(() => toast('Invite link copied'), () => prompt('Invite link', link)); };
   $('lbLeave').onclick = () => { leaveLobby(true); s.hidden = true; };
   s.querySelectorAll('[data-team]').forEach((b) => { b.onclick = () => lobby.request('team', +b.dataset.team); });
-  s.querySelectorAll('[data-agent]').forEach((b) => { b.onclick = () => { lobby.request('agent', b.dataset.agent); api.setAgent(b.dataset.agent); }; });
+  s.querySelectorAll('[data-agent]').forEach((b) => { b.onclick = () => { lobby.request('agent', b.dataset.agent); lobby.request('outfit', api.outfitFor(b.dataset.agent)); api.setAgent(b.dataset.agent); }; });
   s.querySelectorAll('[data-set] button').forEach((b) => {
     b.onclick = () => { if (!lobby.isHost) return; const k = b.parentElement.dataset.set; lobby.setSetting(k, k === 'teamSize' ? +b.dataset.v : b.dataset.v); };
   });

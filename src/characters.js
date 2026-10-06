@@ -4,6 +4,7 @@ import { buildGun } from './guns.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { applySkin } from './skins.js';
+import { resolveOutfit, outfitKey } from './outfits.js';
 
 // Articulated soldier rig: a bone hierarchy (hips → spine → chest → neck → head, shoulders →
 // elbows → hands, thighs → knees → feet) animated procedurally, with two-bone IK keeping both hands
@@ -81,14 +82,17 @@ const OUTFIT = {
   aegis: { skin: 0x8d5a3b, hair: 0x15110e, top: 0x5f6b55, inner: 0xe8e4da, pants: 0x8a7b5e, shoe: 0x4a3a2a, sole: 0x221b14, style: 'shirt' },
   hawk:  { skin: 0xd9a37f, hair: 0x7a5534, top: 0x4f5a3c, inner: 0x7a2f2a, pants: 0x9c8a66, shoe: 0x5a4632, sole: 0x2a2018, style: 'jacket' },
 };
-function palette(teamColor, agent) {
+function palette(teamColor, agent, outfit) {
   const team = new THREE.Color(teamColor);
-  const o = OUTFIT[agent.key] || OUTFIT.volt;
+  const look = resolveOutfit(agent.key, outfit);
+  const base = OUTFIT[agent.key] || OUTFIT.volt;
+  const o = { ...base, top: look.top ?? base.top, pants: look.pants ?? base.pants, shoe: look.shoes ?? base.shoe, hair: look.hairColor ?? base.hair, hairStyle: look.hair, hat: look.hat };
   const tint = (hex, k) => new THREE.Color(hex).lerp(team, k).getHex();
   const skin = new THREE.Color(o.skin);
   return {
     o,
-    top: mat(tint(o.top, 0.22), 0.85), top2: mat(new THREE.Color(tint(o.top, 0.22)).multiplyScalar(0.8).getHex(), 0.85),
+    // a chosen jacket colour stays true; the default one leans a little toward the team colour
+    top: mat(tint(o.top, look.top != null ? 0.07 : 0.22), 0.85), top2: mat(new THREE.Color(tint(o.top, look.top != null ? 0.07 : 0.22)).multiplyScalar(0.8).getHex(), 0.85),
     inner: mat(o.inner, 0.9), pants: mat(o.pants, 0.9), pants2: mat(new THREE.Color(o.pants).multiplyScalar(0.85).getHex(), 0.9),
     shoe: mat(o.shoe, 0.6), sole: mat(o.sole, 0.9),
     team: mat(teamColor, 0.55),
@@ -122,40 +126,64 @@ function face(head, P) {
   }
 }
 
-/** Hair styles (part of the body mesh) and anything worn on the head (pops off on a headshot). */
+/** Hairstyles (part of the body mesh). Anything worn on the head is headgear (it pops off on a headshot). */
 function hair(head, agent, P) {
-  const k = agent.key;
-  if (k === 'hawk') return;                                     // under the cap
+  const st = P.o.hairStyle, hat = P.o.hat;
+  if (st === 'bald') { if (agent.key === 'aegis') beard(head, P); return; }
+  const capOn = hat === 'cap' || hat === 'beanie' || hat === 'helmet';
   // shared base: hair on top and back of the skull, leaving the forehead and ears clear
-  mesh(head, sphG(0.108, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.42), P.hair, 0, 0.122, 0.012, -0.18, 0, 0, 0.95, 1.05, 1.02);
-  mesh(head, sphG(0.1, 16, 10, 0, Math.PI * 2, Math.PI * 0.3, Math.PI * 0.35), P.hair, 0, 0.11, 0.025, 0, 0, 0, 0.98, 1.05, 1.02);
-  if (k === 'volt') {                                           // short textured quiff
-    for (let i = 0; i < 6; i++) mesh(head, sphG(0.032, 8, 6), P.hair, (i - 2.5) * 0.026, 0.215 - Math.abs(i - 2.5) * 0.006, -0.05 + (i % 2) * 0.02);
-  } else if (k === 'haze') {                                    // longer side-swept fringe
-    mesh(head, sphG(0.06, 12, 8), P.hair, 0.035, 0.19, -0.07, 0.3, 0, -0.4, 1.4, 0.55, 0.8);
-    mesh(head, sphG(0.05, 10, 8), P.hair, 0, 0.09, 0.075, 0, 0, 0, 1.6, 1.4, 0.7);
-  } else if (k === 'aegis') {                                   // close crop + short beard
-    mesh(head, sphG(0.052, 12, 8), P.hair, 0, 0.042, -0.048, 0, 0, 0, 1.25, 0.62, 0.9);
-    for (const s of [-1, 1]) mesh(head, sphG(0.034, 10, 8), P.hair, s * 0.06, 0.065, -0.035, 0, 0, 0, 0.6, 1.2, 0.9);
+  if (st !== 'crop' && st !== 'mohawk') {
+    mesh(head, sphG(0.108, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.42), P.hair, 0, 0.122, 0.012, -0.18, 0, 0, 0.95, 1.05, 1.02);
+    mesh(head, sphG(0.1, 16, 10, 0, Math.PI * 2, Math.PI * 0.3, Math.PI * 0.35), P.hair, 0, 0.11, 0.025, 0, 0, 0, 0.98, 1.05, 1.02);
   }
+  if (st === 'crop') {                                           // very short buzz cut
+    mesh(head, sphG(0.106, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.4), P.hair, 0, 0.118, 0.012, -0.22, 0, 0, 0.93, 1.03, 1.0);
+  } else if (st === 'quiff' && !capOn) {                         // short textured quiff
+    for (let i = 0; i < 6; i++) mesh(head, sphG(0.032, 8, 6), P.hair, (i - 2.5) * 0.026, 0.215 - Math.abs(i - 2.5) * 0.006, -0.05 + (i % 2) * 0.02);
+  } else if (st === 'fringe') {                                  // side-swept fringe
+    if (!capOn) mesh(head, sphG(0.06, 12, 8), P.hair, 0.035, 0.19, -0.07, 0.3, 0, -0.4, 1.4, 0.55, 0.8);
+    mesh(head, sphG(0.05, 10, 8), P.hair, 0, 0.09, 0.075, 0, 0, 0, 1.6, 1.4, 0.7);
+  } else if (st === 'long') {                                    // shoulder-length
+    mesh(head, sphG(0.09, 14, 10), P.hair, 0, 0.06, 0.05, 0, 0, 0, 1.25, 1.5, 0.75);
+    for (const sd of [-1, 1]) mesh(head, capG(0.03, 0.1), P.hair, sd * 0.088, 0.04, 0.02, 0, 0, sd * 0.12);
+  } else if (st === 'bun' && !capOn) {
+    mesh(head, sphG(0.042, 12, 8), P.hair, 0, 0.2, 0.08);
+  } else if (st === 'mohawk') {
+    mesh(head, sphG(0.104, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.4), P.skin2, 0, 0.118, 0.012, -0.22, 0, 0, 0.93, 1.02, 1.0);
+    if (!capOn) for (let i = 0; i < 6; i++) mesh(head, capG(0.016, 0.03), P.hair, 0, 0.21 - Math.abs(i - 1) * 0.01, -0.07 + i * 0.03, 0.2 * (i - 2));
+  }
+  if (agent.key === 'aegis') beard(head, P);
+}
+function beard(head, P) {
+  mesh(head, sphG(0.052, 12, 8), P.hair, 0, 0.042, -0.048, 0, 0, 0, 1.25, 0.62, 0.9);
+  for (const s of [-1, 1]) mesh(head, sphG(0.034, 10, 8), P.hair, s * 0.06, 0.065, -0.035, 0, 0, 0, 0.6, 1.2, 0.9);
 }
 
 function headgear(head, agent, P) {
   const hg = new THREE.Group(); head.add(hg);
-  if (agent.key === 'hawk') {                                   // baseball cap + headset
+  const hat = P.o.hat;
+  if (hat === 'cap') {                                           // baseball cap
     mesh(hg, sphG(0.112, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), P.top, 0, 0.14, 0.005, -0.08, 0, 0, 0.98, 0.95, 1.02);
     mesh(hg, rbG(0.15, 0.012, 0.09, 0.005), P.top, 0, 0.142, -0.115, 0.18);
     mesh(hg, rbG(0.03, 0.02, 0.02, 0.005), P.team, 0, 0.21, -0.055);
+  } else if (hat === 'beanie') {
+    mesh(hg, sphG(0.114, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), P.top2, 0, 0.13, 0.01, -0.1, 0, 0, 0.98, 1.05, 1.02);
+    mesh(hg, torG(0.104, 0.016), P.top2, 0, 0.135, 0.01, Math.PI / 2 - 0.1, 0, 0, 1, 1.08, 1);
+  } else if (hat === 'headband') {                               // headband in team colour
+    mesh(hg, torG(0.1, 0.012), P.team, 0, 0.16, 0.01, Math.PI / 2 - 0.18, 0, 0, 1.0, 1.08, 1);
+  } else if (hat === 'bandana') {
+    mesh(hg, sphG(0.11, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.45), P.team, 0, 0.135, 0.01, -0.18, 0, 0, 0.97, 1.02, 1.02);
+    mesh(hg, capG(0.012, 0.05), P.team, 0, 0.12, 0.11, 0.6, 0, 0);
+  } else if (hat === 'helmet') {                                 // light bump helmet
+    mesh(hg, sphG(0.125, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.52), P.gear, 0, 0.13, 0.01);
+    mesh(hg, rbG(0.04, 0.025, 0.03, 0.008), P.gear, 0, 0.245, -0.06);
+  }
+  if (hat === 'headset' || (agent.key === 'hawk' && hat === 'cap')) {   // over-ear headset with mic
     for (const s of [-1, 1]) mesh(hg, cylG(0.03, 0.03, 0.025), P.gear, s * 0.1, 0.1, 0.005, 0, 0, Math.PI / 2);
     mesh(hg, torG(0.104, 0.007), P.gear, 0, 0.115, 0.005, 0, Math.PI / 2, 0, 1, 1.2, 1);
-    mesh(hg, capG(0.004, 0.06), P.gear, 0.095, 0.075, -0.05, 1.1, 0, 0);                       // mic boom
-    return { group: hg, pops: true };
+    mesh(hg, capG(0.004, 0.06), P.gear, 0.095, 0.075, -0.05, 1.1, 0, 0);
   }
-  if (agent.key === 'aegis') {                                  // medic headband in team colour
-    mesh(hg, torG(0.1, 0.012), P.team, 0, 0.16, 0.01, Math.PI / 2 - 0.18, 0, 0, 1.0, 1.08, 1);
-    return { group: hg, pops: true };
-  }
-  return { group: hg, pops: false };
+  return { group: hg, pops: hat !== 'none' };
 }
 
 function torso(hips, spine, chest, agent, P) {
@@ -242,10 +270,10 @@ function bake(parts, boneIndex, skinned) {
 // Build
 // ---------------------------------------------------------------------------
 const rigCache = new Map();   // teamColor|agent → { body, head } baked geometries
-export function buildCharacter(teamColor, agent) {
-  const P = palette(teamColor, agent);
+export function buildCharacter(teamColor, agent, outfit = null) {
+  const P = palette(teamColor, agent, outfit);
   const root = new THREE.Group();
-  const key = teamColor + '|' + agent.key;
+  const key = teamColor + '|' + agent.key + '|' + outfitKey(outfit);
   const cached = rigCache.get(key);
   PARTS = [];
 

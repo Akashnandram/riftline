@@ -2,6 +2,8 @@
 import { WEAPONS } from './config.js';
 import { SKINS, SKIN_BY_KEY } from './skins.js';
 
+import { OUTFIT_SLOTS } from './outfits.js';
+
 const KEY = 'riftline.profile';
 
 export const XP = { kill: 100, headshot: 25, assist: 40, round: 150, win: 600, objective: 150, played: 200, tutorial: 500 };
@@ -37,7 +39,7 @@ function dailyFor(date) {
 function load() {
   let p = {};
   try { p = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { /* ignore */ }
-  p.xp ??= 0; p.equip ??= {}; p.totals ??= { matches: 0, wins: 0, kills: 0, headshots: 0 }; p.tutorialDone ??= false;
+  p.xp ??= 0; p.equip ??= {}; p.totals ??= { matches: 0, wins: 0, kills: 0, headshots: 0 }; p.tutorialDone ??= false; p.outfits ??= {};
   if (!p.daily || p.daily.date !== today()) p.daily = dailyFor(today());
   return p;
 }
@@ -116,4 +118,16 @@ export function completeTutorial() {
   profile.xp += XP.tutorial;
   saveProfile();
   return XP.tutorial;
+}
+
+/** Saved outfit for an operative (only options the player has unlocked). */
+export function outfitFor(agentKey) {
+  const o = profile.outfits?.[agentKey] || {};
+  const lv = levelInfo().level, out = {};
+  for (const s of OUTFIT_SLOTS) { const id = o[s.key]; const opt = id && s.options.find((x) => x.id === id); if (opt && opt.lv <= lv && id !== 'def') out[s.key] = id; }
+  return out;
+}
+export function setOutfit(agentKey, slot, id) {
+  profile.outfits[agentKey] = { ...(profile.outfits[agentKey] || {}), [slot]: id };
+  saveProfile();
 }

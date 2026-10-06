@@ -11,8 +11,9 @@ export const RADIUS = 0.35, HEIGHT = 1.8, EYE = 1.62;
 export const TEAM_COLORS = [0x3d8bff, 0xff8a1f];
 
 export class Fighter {
-  constructor({ id, name, team, agent, isPlayer = false }) {
+  constructor({ id, name, team, agent, isPlayer = false, outfit = null }) {
     Object.assign(this, { id, name, team, isPlayer });
+    this.outfit = outfit;
     this.agent = AGENTS[agent];
     this.pos = new THREE.Vector3();
     this.vel = new THREE.Vector3();
@@ -38,7 +39,7 @@ export class Fighter {
     this.sprinting = false; this.slideT = 0; this.slideDir = new THREE.Vector3(); this.sprintOutUntil = 0;
     this.crouch = 0; this.wantCrouch = false;
     this.burstLeft = 0; this.burstT = 0;
-    this.mesh = buildCharacter(TEAM_COLORS[team], this.agent);
+    this.mesh = buildCharacter(TEAM_COLORS[team], this.agent, this.outfit);
     this.resetAbilities();
   }
 
@@ -104,7 +105,7 @@ export function resetFighterMesh(f) {
   removeRagdoll(f.mesh, game.scene);
   game.scene.remove(f.mesh);
   disposeCharacter(f.mesh);
-  f.mesh = buildCharacter(TEAM_COLORS[f.team], f.agent);
+  f.mesh = buildCharacter(TEAM_COLORS[f.team], f.agent, f.outfit);
   game.scene.add(f.mesh);
   setGunLook(f);
 }

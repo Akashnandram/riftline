@@ -1,6 +1,7 @@
 // Lobbies: the host owns the lobby state; clients find it through a realtime channel
 // ('lobby:CODE'), connect to the host over WebRTC and then talk to it directly.
 import { randomMap } from '../maps/index.js';
+import { cleanOutfit, randomOutfit } from '../outfits.js';
 import { channel, me } from './backend.js';
 import { Peer } from './peer.js';
 import { MAX_PLAYERS } from './config.js';
@@ -70,6 +71,7 @@ export class Lobby {
         const full = this.members.filter((x) => x.team === m.value).length >= this.settings.teamSize;
         if (!full) mem.team = m.value;
       } else if (m.kind === 'agent' && AGENTS[m.value]) mem.agent = m.value;
+      else if (m.kind === 'outfit') mem.outfit = cleanOutfit(m.value);
       else if (m.kind === 'ready') mem.ready = !!m.value;
       else if (m.kind === 'chat') this._chat(mem.name, String(m.value).slice(0, 140));
       this.broadcastState();
@@ -108,9 +110,9 @@ export class Lobby {
     let fid = 0;
     for (const team of [0, 1]) {
       const humans = this.members.filter((m) => m.team === team);
-      for (const m of humans) roster.push({ fid: fid++, name: m.name, team, agent: m.agent, owner: m.id });
+      for (const m of humans) roster.push({ fid: fid++, name: m.name, team, agent: m.agent, owner: m.id, outfit: m.outfit || {} });
       for (let i = humans.length; i < this.settings.teamSize; i++) {
-        roster.push({ fid: fid++, name: names.pop(), team, agent: agentKeys[Math.floor(Math.random() * agentKeys.length)], owner: null });
+        roster.push({ fid: fid++, name: names.pop(), team, agent: agentKeys[Math.floor(Math.random() * agentKeys.length)], owner: null, outfit: randomOutfit() });
       }
     }
     // 'random' is resolved here so every player loads the same map
