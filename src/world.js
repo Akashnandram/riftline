@@ -519,29 +519,6 @@ export function buildWorld(scene, renderer, quality = 'medium') {
   }
   setSpawnColors(0x3d8bff, 0xff8a1f);
 
-  // plant sites: yellow boundary + big letter
-  const siteMat = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.55, depthWrite: false });
-  for (const [x0, z0, x1, z1] of SITE_RECTS) {
-    for (const [cx, cz, w, d] of [[(x0 + x1) / 2, z0, x1 - x0, 0.2], [(x0 + x1) / 2, z1, x1 - x0, 0.2], [x0, (z0 + z1) / 2, 0.2, z1 - z0], [x1, (z0 + z1) / 2, 0.2, z1 - z0]]) {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), siteMat);
-      m.rotation.x = -Math.PI / 2; m.position.set(cx, groundAt(cx, cz) + 0.026, cz);
-      root.add(m);
-    }
-  }
-  const labels = MAP.labels || [[MAP.sites.A.center.x, MAP.sites.A.center.z + 4.5, 'A', 4], [MAP.sites.B.center.x, MAP.sites.B.center.z - 4.5, 'B', 4], [0, -6.5, 'MID', 3.5]];
-  for (const [x, z, text, size] of labels) {
-    const c = document.createElement('canvas'); c.width = 256; c.height = 128;
-    const g = c.getContext('2d');
-    g.fillStyle = text === 'MID' ? 'rgba(255,255,255,0.6)' : 'rgba(255,214,63,0.75)'; g.font = 'bold 110px sans-serif'; g.textAlign = 'center';
-    g.fillText(text, 128, 108);
-    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(size, size / 2), new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.9 }));
-    p.rotation.x = -Math.PI / 2; p.position.set(x, groundAt(x, z) + 0.03, z);
-    if (z > 0) p.rotation.z = Math.PI;
-    p.receiveShadow = true;
-    root.add(p);
-  }
-
   // static map geometry is built into a temp group, then baked into one mesh per material:
   // hundreds of walls/crates/trims become ~20 draw calls (a big win on integrated GPUs)
   const staticGroup = new THREE.Group();

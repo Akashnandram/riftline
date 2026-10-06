@@ -4,7 +4,7 @@ const KEY = 'riftline.settings';
 
 export const DEFAULTS = {
   sens: 1, adsSens: 0.85, invertY: false,
-  fov: 75, showFps: false,
+  fov: 75, showFps: false, thirdPerson: true,
   volume: 0.7,
   crosshair: { color: '#6effc4', length: 6, thickness: 2, gap: 3, dot: true, outline: true, opacity: 1, dynamic: true },
   binds: {
@@ -17,7 +17,7 @@ export const DEFAULTS = {
 export const ACTION_LABELS = {
   forward: 'Move forward', back: 'Move back', left: 'Strafe left', right: 'Strafe right', jump: 'Jump',
   sprint: 'Sprint (hold)', crouch: 'Crouch (hold) · slide while sprinting', reload: 'Reload', primary: 'Primary weapon', secondary: 'Sidearm',
-  ability1: 'Gadget 1', ability2: 'Gadget 2', use: 'Plant / defuse (hold)',
+  ability1: 'Gadget 1', ability2: 'Gadget 2', use: 'Interact (hold)',
   buy: 'Buy menu', scoreboard: 'Scoreboard (hold)', mute: 'Mute',
 };
 
@@ -100,6 +100,7 @@ export function openSettings(root, { quality, setQuality, onClose }) {
       mouse: [
         slider('Sensitivity', S.sens, 0.1, 4, 0.05, (v) => v.toFixed(2), (v) => { S.sens = v; }),
         slider('Aim-down-sights multiplier', S.adsSens, 0.3, 1.5, 0.05, (v) => v.toFixed(2), (v) => { S.adsSens = v; }),
+        toggle('Third-person camera (over the shoulder)', S.thirdPerson, (v) => { S.thirdPerson = v; }),
         toggle('Invert vertical look', S.invertY, (v) => { S.invertY = v; }),
       ],
       video: [

@@ -18,7 +18,7 @@ const TEMPLATES = [
   { id: 'side', desc: 'Get 5 kills with sidearms', goal: 5, xp: 350, on: 'cat:secondary' },
   { id: 'heavy', desc: 'Get 5 kills with a DMR, LMG or sniper', goal: 5, xp: 350, on: 'cat:heavy' },
   { id: 'win', desc: 'Win 2 matches', goal: 2, xp: 500, on: 'win' },
-  { id: 'obj', desc: 'Plant or defuse the charge 3 times', goal: 3, xp: 400, on: 'objective' },
+  { id: 'obj', desc: 'Capture the Rift Node 3 times', goal: 3, xp: 400, on: 'objective' },
   { id: 'rounds', desc: 'Win 8 rounds', goal: 8, xp: 400, on: 'round' },
 ];
 
@@ -96,7 +96,7 @@ export function finishMatch({ won, assists = 0 }) {
   if (M.heads) lines.push([`${M.heads} headshot${M.heads > 1 ? 's' : ''}`, M.heads * XP.headshot]);
   if (assists) lines.push([`${assists} assist${assists > 1 ? 's' : ''}`, assists * XP.assist]);
   if (M.rounds) lines.push([`${M.rounds} round${M.rounds > 1 ? 's' : ''} won`, M.rounds * XP.round]);
-  if (M.objectives) lines.push([`${M.objectives} plant/defuse`, M.objectives * XP.objective]);
+  if (M.objectives) lines.push([`${M.objectives} node captures`, M.objectives * XP.objective]);
   if (won) { lines.push(['Victory', XP.win]); bump('win'); }
   for (const c of M.completed) lines.push([`Challenge: ${c.desc}`, c.xp]);
   const total = lines.reduce((s, l) => s + l[1], 0);

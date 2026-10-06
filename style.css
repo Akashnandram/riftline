@@ -90,7 +90,7 @@ button { font-family: inherit; cursor: pointer; }
 #abilities { display: flex; flex-direction: column; gap: 6px; }
 .abil { position: relative; width: 150px; padding: 5px 8px 5px 10px; background: rgba(14,17,22,0.72); border-left: 3px solid var(--acc, #666); display: flex; align-items: center; gap: 8px; }
 .abil .nm { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-.abil .ch { font-weight: 700; font-size: 12px; color: var(--acc); }
+.abil .ch { display: inline; font-weight: 700; font-size: 12px; color: var(--acc); padding: 0; }
 .abil.empty { opacity: 0.4; }
 @keyframes pulse { 50% { box-shadow: 0 0 4px var(--acc); } }
 

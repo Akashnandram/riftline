@@ -1,9 +1,10 @@
-# Riftline – squad shooter
+# Nodefall – third-person squad shooter
 
 Play: https://riftline-flame.vercel.app
 
-A browser 5v5 round-based squad shooter: pick an operative (each has a passive perk), buy weapons,
-armor and gadgets, sprint and slide around five maps and fight over the Rift Node. Three.js (from CDN), plain ES modules – no build step.
+A browser third-person squad shooter with non-stop respawn matches: pick an operative (each has a
+passive perk) and a free loadout of guns and gadgets, sprint and slide around five maps and fight over
+the Rift Node. (Repo and URL keep the old working name "riftline".) Three.js (from CDN), plain ES modules – no build step.
 
 ## Deploy
 
@@ -20,7 +21,8 @@ Open http://localhost:5180 in a desktop browser (needs pointer lock: keyboard + 
 ## Controls
 
 WASD move · Mouse aim/shoot · Shift sprint (gun lowered) · C crouch (hold), slide while sprinting · Space jump (slide-jump keeps speed) ·
-F hold to plant/defuse · RMB scope/zoom · R reload · 1/2 primary/sidearm · Q/E gadgets · B buy (buy phase) · Tab scoreboard · M mute · Esc pause
+RMB aim (tighter over-the-shoulder view) / scope · R reload · 1/2 primary/sidearm · Q/E gadgets · B loadout · Tab scoreboard · M mute · Esc pause.
+The camera is third-person by default (Settings → Third-person camera to switch to first person).
 
 ## Graphics & sound
 
@@ -56,21 +58,17 @@ for the mirrored half). Its `theme` sets sky, sun, fog, floor, wall materials, p
   sprint/slide, gadget, headshot). +500 XP the first time.
 - **Practice Range**: targets at 10–50 m (static, crouched, strafing) in the west spawn corridor, live accuracy /
   headshot % / time-to-kill, free weapons and gadgets (B), gadgets refill.
-- **Team Deathmatch**: 5-minute quick match, instant respawns with spawn protection, free loadout (B), first team
-  to 8 kills per player wins.
+- **Uplink** (default): non-stop, with respawns (3.5 s) and spawn protection. One Rift Node is live at a time
+  at North, Core or South (on the centre line, equally far from both spawns) and moves every 60 s. Stand in its
+  ring with no enemies to swing it to your team; while you own it you score a point per second. First to 150,
+  or the higher score after 8 minutes.
+- **Team Deathmatch**: 5-minute respawn match, free loadout (B), first team to 8 kills per player wins.
 
-- **Uplink** (default): each round a Rift Node switches on in the A lane, mid or the B lane (always on the
-  centre line, so it is equally far from both spawns). Stand in its ring with no enemies to swing it to your
-  team; while you own it you bank hold time. First to 20 s of hold time — or to wipe the other team — wins the
-  round. On time-out the team with more hold time wins.
-- **Plant / Defuse**: attackers spawn west and carry the Rift Charge; plant it on site A or B
-  (hold F, 4s, standing still). Defenders stop the plant, or defuse (hold F, 7s — progress is kept at the
-  halfway mark). The charge detonates 45s after planting. Teams swap sides and economies reset after round 4.
-- **Elimination**: wipe the other team. First to 5 rounds in both modes.
+Squads are 2v2, 4v4 or 6v6; empty slots are filled with bots.
 
 ## Progression & settings
 
-- XP for kills, headshots, assists, rounds, plants/defuses, wins and three daily challenges; levels unlock weapon
+- XP for kills, headshots, assists, node captures, wins and three daily challenges; levels unlock weapon
   skins (Arctic, Jungle, Tiger, Carbon, Crimson, Desert, Neon, Gold) equipped per gun in **Loadout & Skins**.
   Everything is stored in the browser (`localStorage`: `riftline.profile`, `riftline.settings`).
 - **Settings**: sensitivity, ADS multiplier, invert Y, FOV, FPS counter, graphics quality, volume, crosshair editor
@@ -138,8 +136,8 @@ Sonar Puck (pings enemies within 14 m through walls), Med-Kit, Deploy Cover (bul
 - `src/abilities.js` – gadgets (buying slots, throwing, effects), perks' regen, projectiles, smokes/gas/barriers
 - `src/uplink.js` – Uplink mode: Rift Node placement, capture/hold, visuals, bot goals, net sync
 - `src/bot.js` – bot AI (vision, reaction time, aim error, strafing, lanes, hunting, gadget use, sprinting)
-- `src/tactics.js` – team strategy for Plant mode, callouts, hold spots, corner checks
-- `src/objective.js` – plant sites, the Rift Charge (carry/drop/plant/defuse/detonate), zone names
+- `src/tactics.js` – (legacy round modes, not in the menus) team strategy, callouts, hold spots, corner checks
+- `src/objective.js` – (legacy, not in the menus) plant sites, the Rift Charge (carry/drop/plant/defuse/detonate), zone names
 - `src/shop.js` – buy logic for player and bots
 - `src/settings.js` – settings storage, crosshair drawing, settings screen with key rebinding
 - `src/progress.js` – XP/levels, daily challenges, skin unlocks + equipped skins
@@ -154,7 +152,7 @@ networked player can replace a `BotBrain` without touching the combat code.
 
 ## Originality
 
-Riftline is an original game: its own name, operatives and perks, gadgets, Uplink mode, weapons, maps, colour palette
+Nodefall is an original game: its own name, operatives and perks, gadgets, Uplink mode, weapons, maps, colour palette
 (blue vs orange on graphite) and procedural art and audio. It borrows only general genre conventions
-(rounds, a buy phase, grenades, an optional plant/defuse mode) that are shared by many shooters,
+(respawn matches, grenades, a capture point) that are shared by many shooters,
 and it uses no names, logos, artwork, sounds or text from any other game.

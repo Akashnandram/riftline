@@ -63,7 +63,7 @@ export class Fighter {
   }
 
   muzzle(out = new THREE.Vector3()) {
-    if (this.isPlayer && !game.spectating) {
+    if (this.isPlayer && !game.spectating && !game.thirdPerson) {
       const f = this.lookDir(new THREE.Vector3());
       const r = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
       return this.eye(out).addScaledVector(f, 0.7).addScaledVector(r, 0.18).add(new THREE.Vector3(0, -0.14, 0));
@@ -116,7 +116,7 @@ export function updateFighterMesh(f, dt, viewer) {
   m.position.copy(f.pos);
   if (f.stepOff) m.position.y += f.stepOff;
   m.rotation.y = f.yaw;
-  m.visible = !(f.isPlayer && !game.spectating);
+  m.visible = !(f.isPlayer && !game.spectating && !game.thirdPerson);
   if (!m.visible) return;
   // animation LOD: skip rigs that are off-screen, update far ones at half rate
   const u0 = m.userData;
@@ -396,7 +396,8 @@ const _pd = new THREE.Vector3(), _aim = new THREE.Vector3();
 function fireRound(f, w) {
   f.ammo[w.key]--;
   f.shotsInRow++;
-  f.eye(_o);
+  // third person: shots start on the camera ray, level with the player (so they go where the crosshair is)
+  if (f.isPlayer && game.thirdPerson && f.shotFrom) _o.copy(f.shotFrom); else f.eye(_o);
   f.lookDir(_aim);
   const spread = currentSpread(f);
   const pellets = w.pellets || 1;

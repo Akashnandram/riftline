@@ -36,6 +36,10 @@ function bodyMaterial() {
   return m;
 }
 const BODY_MAT = bodyMaterial();
+// cartoon outline: the same mesh drawn again, pushed out along its normals, back faces only
+const OUTLINE_MAT = new THREE.MeshBasicMaterial({ color: 0x0c0e12, side: THREE.BackSide });
+OUTLINE_MAT.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normal * 0.018;'); };
+OUTLINE_MAT.customProgramCacheKey = () => 'riftline-outline';
 
 /** A "material" here is just the per-vertex values that get baked in. */
 const mat = (color, rough = 0.85, metal = 0, glow = 0) => ({ color: new THREE.Color(color), rough, metal, glow });
@@ -66,13 +70,13 @@ function limb(j, r, len, m, taper = 0.85) {
 // team fatigues + agent flavour
 function palette(teamColor, agent) {
   const team = new THREE.Color(teamColor);
-  // muted fatigues (jacket a touch lighter than trousers); the team reads from vest, bands and stripes
-  const cloth = team.clone().lerp(new THREE.Color(0x4a4d50), 0.93).getHex();
-  const cloth2 = team.clone().lerp(new THREE.Color(0x34373a), 0.95).getHex();
+  // bold team-coloured suits (cartoon style): bright jacket, darker trousers, charcoal gear
+  const cloth = team.clone().lerp(new THREE.Color(0x2a2d33), 0.3).getHex();
+  const cloth2 = team.clone().lerp(new THREE.Color(0x1d2026), 0.62).getHex();
   const ac = new THREE.Color(agent.color).getHex();
   return {
     cloth: mat(cloth, 0.95), cloth2: mat(cloth2, 0.95),
-    vest: mat(team.clone().lerp(new THREE.Color(0x3b3f45), 0.62).getHex(), 0.8),
+    vest: mat(0x30343b, 0.75),
     webbing: mat(team.clone().lerp(new THREE.Color(0x2a2c30), 0.8).getHex(), 0.9),
     team: mat(teamColor, 0.6),
     gear: mat(0x26282c, 0.7, 0.1),
@@ -300,10 +304,15 @@ export function buildCharacter(teamColor, agent) {
   body.boundingSphere = new THREE.Sphere(V(0, 0.95, 0), 1.4);   // fixed bounds: no per-vertex skinning pass on the CPU
   root.add(body);
   body.bind(skeleton);
+  const outline = new THREE.SkinnedMesh(entry.body, OUTLINE_MAT);
+  outline.boundingSphere = body.boundingSphere;
+  root.add(outline);
+  outline.bind(skeleton, body.bindMatrix);
 
   const hg = new THREE.Group(); head.add(hg);
   const hgMesh = new THREE.Mesh(entry.head, BODY_MAT);
   hgMesh.castShadow = true; hg.add(hgMesh);
+  hg.add(new THREE.Mesh(entry.head, OUTLINE_MAT));
 
   // through-wall reveal silhouette + ally marker
   const ghost = new THREE.Group();
@@ -319,7 +328,7 @@ export function buildCharacter(teamColor, agent) {
   root.add(marker);
 
   root.userData = {
-    hips, spine, chest, neck, head, sh, el, hand, thigh, knee, foot, gunMount, body, skeleton,
+    hips, spine, chest, neck, head, sh, el, hand, thigh, knee, foot, gunMount, body, outline, skeleton,
     headgear: { group: hg, pops: entry.pops }, gun: null, gunKey: null, ghost, marker, phase: Math.random() * 6,
     flinch: V(), lean: 0, teamColor, ragdoll: null, land: 0, wasGround: true, lastYaw: 0, turnPhase: 0, animAcc: 0,
   };
@@ -554,7 +563,7 @@ export function startRagdoll(root, scene, vel, dir, head) {
     props.push(makeProp(h, push.clone().multiplyScalar(4).add(V(0, 3.5, 0)), 0.1));
   }
   root.visible = true;
-  if (u.body) u.body.frustumCulled = false;
+  if (u.body) { u.body.frustumCulled = false; if (u.outline) u.outline.frustumCulled = false; }
   u.ghost.visible = false; u.marker.visible = false;
   u.ragdoll = { pts, prev, rest, holder, t: 0, sleep: false };
   ragdolls.push(u.ragdoll);

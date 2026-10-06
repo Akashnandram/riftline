@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Riftline – Squad Shooter</title>
-  <meta name="description" content="5v5 squad shooter in your browser. Pick an operative, buy weapons and gadgets, sprint and slide, and capture the Rift Node." />
+  <title>Nodefall – Squad Shooter</title>
+  <meta name="description" content="Third-person squad shooter in your browser. Pick an operative, buy weapons and gadgets, sprint and slide, and capture the Rift Node." />
   <meta name="theme-color" content="#12161c" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="Riftline – 5v5 squad shooter in your browser" />
+  <meta property="og:title" content="Nodefall – squad shooter in your browser" />
   <meta property="og:description" content="Pick an operative, buy guns and gadgets, capture and hold the Rift Node. Free, no download." />
   <meta property="og:url" content="https://riftline-flame.vercel.app/" />
   <meta property="og:image" content="https://riftline-flame.vercel.app/og-image.jpg" />
@@ -82,16 +82,16 @@
 
   <!-- ===================== BUY MENU ===================== -->
   <div id="buyMenu" class="panel" hidden>
-    <div class="buyHead"><h2>ARMORY</h2><div id="buyCredits">¤ 800</div><div id="buyTimer"></div></div>
+    <div class="buyHead"><h2>LOADOUT</h2><div id="buyCredits">¤ 800</div><div id="buyTimer"></div></div>
     <div class="buyCols">
       <div><h3>SIDEARMS</h3><div class="items" data-cat="secondary"></div></div>
       <div><h3>SMG &amp; SHOTGUN</h3><div class="items" data-cat="close"></div></div>
       <div><h3>RIFLES</h3><div class="items" data-cat="rifle"></div></div>
       <div><h3>HEAVY &amp; SNIPER</h3><div class="items" data-cat="heavy"></div></div>
-      <div><h3>ARMOR</h3><div class="items" data-cat="armor"></div></div>
+      <div id="armorCol"><h3>ARMOR</h3><div class="items" data-cat="armor"></div></div>
       <div><h3>GADGETS</h3><div class="items" data-cat="gadget"></div></div>
     </div>
-    <p class="hint">Click or press the key shown to buy · buying again in the same slot refunds this round's purchase · <kbd>B</kbd> to close</p>
+    <p class="hint">Click or press the key shown · your picks apply now in spawn, otherwise on your next respawn · <kbd>B</kbd> to close</p>
   </div>
 
   <!-- ===================== SCOREBOARD ===================== -->
@@ -110,16 +110,16 @@
         </div>
       </div>
       <section class="mLeft">
-        <h1>RIFT<span>LINE</span></h1>
-        <p class="tag">Squad shooter · 5 maps · capture the Rift Node</p>
+        <h1>NODE<span>FALL</span></h1>
+        <p class="tag">Third-person squad shooter · 5 maps · capture the Rift Node</p>
         <div id="newHere" hidden>New here? <button id="btnTutorial2">Play the 2-minute tutorial</button> (+500 XP)</div>
         <div class="opts">
           <div class="opt"><h4>GAME MODE</h4><div class="seg" id="segMode">
-            <button data-v="uplink" class="on">Uplink</button><button data-v="plant">Plant / Defuse</button><button data-v="elim">Elimination</button><button data-v="tdm">Team Deathmatch</button>
+            <button data-v="uplink" class="on">Uplink</button><button data-v="tdm">Team Deathmatch</button>
           </div></div>
           <div class="opt"><h4>MAP</h4><div class="seg" id="segMap"></div></div>
           <div class="opt"><h4>SQUAD SIZE</h4><div class="seg" id="segSize">
-            <button data-v="1">1v1</button><button data-v="3">3v3</button><button data-v="5" class="on">5v5</button>
+            <button data-v="2">2v2</button><button data-v="4" class="on">4v4</button><button data-v="6">6v6</button>
           </div></div>
           <div class="opt"><h4>BOT DIFFICULTY</h4><div class="seg" id="segDiff">
             <button data-v="veryeasy">Super Easy</button><button data-v="easy">Easy</button><button data-v="normal" class="on">Normal</button><button data-v="hard">Hard</button>
@@ -127,7 +127,7 @@
         </div>
         <p id="modeHint" class="hint"></p>
         <div class="deployRow"><button id="lockIn" class="big">DEPLOY</button></div>
-        <p id="touchWarn" hidden>Riftline needs a keyboard and mouse — open it on a desktop browser.</p>
+        <p id="touchWarn" hidden>Nodefall needs a keyboard and mouse — open it on a desktop browser.</p>
       </section>
       <section class="mRight">
         <h3>OPERATIVE</h3>

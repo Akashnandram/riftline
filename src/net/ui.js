@@ -258,8 +258,8 @@ function renderLobby() {
       <div class="side">
         <section><h3>YOUR OPERATIVE</h3><div class="agents">${Object.values(AGENTS).map((a) => `<button data-agent="${a.key}" class="${mine?.agent === a.key ? 'on' : ''}" style="--acc:${a.color}">${a.name}</button>`).join('')}</div></section>
         <section><h3>MATCH ${lobby.isHost ? '' : '<small>(host decides)</small>'}</h3>
-          ${seg('mode', [['uplink', 'Uplink'], ['plant', 'Plant / Defuse'], ['elim', 'Elimination'], ['tdm', 'Team DM']])}
-          ${seg('teamSize', [[1, '1v1'], [2, '2v2'], [3, '3v3'], [5, '5v5']])}
+          ${seg('mode', [['uplink', 'Uplink'], ['tdm', 'Team DM']])}
+          ${seg('teamSize', [[2, '2v2'], [3, '3v3'], [4, '4v4'], [6, '6v6']])}
           ${seg('difficulty', [['veryeasy', 'Super easy bots'], ['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}
           ${seg('map', [['random', 'Random map'], ...MAP_LIST.map((m) => [m.id, m.name])])}</section>
         <section><h3>INVITE</h3><div id="lbInv"></div></section>

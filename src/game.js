@@ -11,7 +11,7 @@ import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surface
 import { MAP_LIST, MAPS, randomMap } from './maps/index.js';
 import { resetCharge, hideCharge, updateCharge, tickAction, canPlant, canDefuse, siteAt, applyChargeSnapshot } from './objective.js';
 import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
-import { resetNode, hideNode, updateNode, applyNodeSnapshot, UPLINK } from './uplink.js';
+import { resetNode, hideNode, updateNode, applyNodeSnapshot, UPLINK, NODE_NAMES } from './uplink.js';
 import {
   Fighter, TEAM_COLORS, EYE, updateFighterMesh, moveFighter, separateFighters, tryFire, startReload,
   updateWeapon, switchWeapon, setGunLook, emitSound, resetFighterMesh, remoteFire, playShotFx,
@@ -61,7 +61,7 @@ renderer.shadowMap.enabled = QUALITY !== 'low';
 renderer.shadowMap.type = QUALITY === 'high' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 1.1;
 renderer.autoClear = false;
 // shadows: the sun and the world are static, so on Medium the shadow map is refreshed every other frame
 renderer.shadowMap.autoUpdate = QUALITY === 'high';
@@ -88,7 +88,8 @@ const GradeShader = {
     void main(){
       vec3 c = texture2D(tDiffuse, vUv).rgb;
       float l = dot(c, vec3(0.299,0.587,0.114));
-      c = mix(vec3(l), c, 1.08);                                  // slight saturation
+      c = mix(vec3(l), c, 1.24);                                  // bright, saturated look
+      c = (c - 0.5) * 1.06 + 0.5;
       c = c * vec3(1.02, 1.0, 0.97) + vec3(-0.008, 0.0, 0.012) * (1.0 - l); // warm highs, cool shadows
       vec2 d = vUv - 0.5;
       c *= 1.0 - dot(d, d) * 0.55;                                // vignette
@@ -277,9 +278,10 @@ function playerAbility(slot) {
 // ---------------------------------------------------------------------------
 // Menu
 // ---------------------------------------------------------------------------
-let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 5), difficulty: store.get('difficulty', 'normal'), mode: store.get('mode', 'uplink'), map: store.get('map', 'random') };
+let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 4), difficulty: store.get('difficulty', 'normal'), mode: store.get('mode', 'uplink'), map: store.get('map', 'random') };
 // Uplink became the main mode: switch older saves over once
-if (!store.get('modeV2', false)) { choice.mode = 'uplink'; store.set('mode', 'uplink'); store.set('modeV2', true); }
+if (!['uplink', 'tdm'].includes(choice.mode)) { choice.mode = 'uplink'; store.set('mode', 'uplink'); }
+if (![2, 4, 6].includes(choice.teamSize)) { choice.teamSize = 4; store.set('teamSize', 4); }
 if (choice.map !== 'random' && !MAPS[choice.map]) choice.map = 'random';
 
 function renderMenu() {
@@ -307,10 +309,10 @@ function renderMenu() {
   $('fps').hidden = !S.showFps;
 }
 const MODE_HINTS = {
-  uplink: 'Each round a Rift Node switches on at A, B or mid. Stand in it to capture it, then hold it for 20 seconds — or wipe the other team. First to 5 rounds.',
+  uplink: 'Non-stop squad fight with respawns. The Rift Node moves between North, Core and South every minute — stand in it to capture it, hold it to score a point per second. First to 150.',
   plant: 'Attack: plant the Rift Charge on A or B. Defend: stop or defuse it. First to 5 rounds, sides swap at half.',
   elim: 'Round-based: wipe the other team. First to 5 rounds.',
-  tdm: 'Quick match: instant respawns, free loadout (press B). First team to the kill target in 5 minutes wins.',
+  tdm: 'Respawn deathmatch, pick your loadout with B. First team to the kill target in 5 minutes wins.',
 };
 
 function renderProfile() {
@@ -494,8 +496,9 @@ function startMatch(cfg, roster = null, mapId = null) {
       if (isPlayer) game.player = f;
     }
   }
-  if (cfg.mode === 'tdm') {
-    game.tdmTarget = cfg.teamSize * 8;
+  if (cfg.mode === 'tdm' || cfg.mode === 'uplink') {
+    game.tdmTarget = cfg.mode === 'tdm' ? cfg.teamSize * 8 : UPLINK.target;
+    game.uplinkPts = [0, 0];
     for (const f of game.fighters) f.loadout = f.isPlayer ? { primary: 'raptor', secondary: 'p9' } : botLoadout();
   }
   startTracking(cfg.mode);
@@ -616,16 +619,15 @@ function startRound() {
   }
   // west spawn zone shows the colour of whoever spawns there
   setSpawnColors(TEAM_COLORS[sideSign(0) < 0 ? 0 : 1], TEAM_COLORS[sideSign(0) < 0 ? 1 : 0]);
-  if (game.config.mode === 'tdm') {
+  if (game.config.mode === 'tdm' || game.config.mode === 'uplink') {
     for (const f of game.fighters) { giveLoadout(f); f.armor = 50; }
     hideCharge();
     game.phaseT = 5;
-    flashMsg('TEAM DEATHMATCH', `${MAP.name} · first to ${game.tdmTarget} kills · press B to change loadout (free)`, 4);
-  } else if (game.config.mode === 'uplink') {
-    hideCharge();
-    resetNode();
-    for (const f of game.fighters) if (f.brain) f.brain.plan = { side: 'uplink' };
-    flashMsg(game.round === 1 ? MAP.name.toUpperCase() : `ROUND ${game.round}`, `UPLINK — the Rift Node is in ${game.node.key === 'MID' ? 'MID' : game.node.key + ' lane'} · capture it and hold it · press B to buy`, 3.5);
+    if (game.config.mode === 'uplink') {
+      resetNode();
+      for (const f of game.fighters) if (f.brain) f.brain.plan = { side: 'uplink' };
+      flashMsg(MAP.name.toUpperCase(), `UPLINK · hold the Rift Node to score · first to ${game.tdmTarget} · press B for your loadout`, 4);
+    } else flashMsg('TEAM DEATHMATCH', `${MAP.name} · first to ${game.tdmTarget} kills · press B for your loadout`, 4);
   } else if (plantMode) {
     resetCharge();
     planTactics();
@@ -664,8 +666,9 @@ function matchOver() {
   if (net.role === 'host') hostEvent({ t: 'over', score: game.score });
   game.phase = 'over';
   const me = game.player.team, them = 1 - me;
-  const draw = game.config.mode === 'tdm' && game.score[me] === game.score[them];
-  const won = game.config.mode === 'tdm' ? game.score[me] > game.score[them] : game.score[me] >= MATCH.roundsToWin;
+  const scored = game.config.mode === 'tdm' || game.config.mode === 'uplink';
+  const draw = scored && game.score[me] === game.score[them];
+  const won = scored ? game.score[me] > game.score[them] : game.score[me] >= MATCH.roundsToWin;
   $('overTitle').textContent = draw ? 'DRAW' : won ? 'VICTORY' : 'DEFEAT';
   $('overTitle').className = draw ? '' : won ? 'win' : 'lose';
   renderXpSummary(finishMatch({ won, assists: game.player.assists }));
@@ -684,13 +687,14 @@ function matchOver() {
 function updatePhase(dt) {
   if (game.config.mode === 'range') return;
   game.phaseT -= dt;
-  if (game.config.mode === 'tdm' && game.phase === 'live') {
+  if ((game.config.mode === 'tdm' || game.config.mode === 'uplink') && game.phase === 'live') {
     if (Math.max(...game.score) >= game.tdmTarget || game.phaseT <= 0) matchOver();
     return;
   }
   if (game.phase === 'buy' && game.phaseT <= 0) {
     game.phase = 'live';
-    game.phaseT = game.config.mode === 'tdm' ? 300 : MATCH.roundTime;
+    game.phaseT = game.config.mode === 'tdm' ? 300 : game.config.mode === 'uplink' ? UPLINK.time : MATCH.roundTime;
+    if (game.node) game.node.until = game.time + UPLINK.rotate;
     // in TDM bots start hunting soon instead of walking lanes all match
     game.roundStartTime = game.config.mode === 'tdm' ? game.time - 25 : game.time;
     if (buyOpen) { toggleBuy(false); }
@@ -705,14 +709,6 @@ function updatePhase(dt) {
     else if (!aD) endRound(A, 'Defenders eliminated');
     else if (!aA && c.state !== 'planted') endRound(D, 'Attackers eliminated');
     else if (game.phaseT <= 0 && c.state !== 'planted') endRound(D, 'Time expired — no plant');
-  } else if (game.phase === 'live' && game.config.mode === 'uplink') {
-    const n = game.node, a0 = aliveCount(0), a1 = aliveCount(1);
-    if (!a0 || !a1) endRound(a0 ? 0 : 1, a0 ? 'Enemy team eliminated' : 'Your team was eliminated');
-    else if (n.hold[0] >= UPLINK.hold || n.hold[1] >= UPLINK.hold) endRound(n.hold[0] >= UPLINK.hold ? 0 : 1, 'Rift Node uplinked');
-    else if (game.phaseT <= 0) {
-      const w = n.hold[0] !== n.hold[1] ? (n.hold[0] > n.hold[1] ? 0 : 1) : n.owner >= 0 ? n.owner : a0 >= a1 ? 0 : 1;
-      endRound(w, 'Time expired — most uplink time wins');
-    }
   } else if (game.phase === 'live') {
     const a0 = aliveCount(0), a1 = aliveCount(1);
     if (!a0 || !a1) endRound(a0 ? 0 : 1, a0 ? 'Enemy team eliminated' : 'Your team was eliminated');
@@ -747,7 +743,7 @@ function tdmSpawnPoint(f) {
 function respawnFighter(f) {
   resetFighterMesh(f);
   Object.assign(f, {
-    alive: true, hp: 100, armor: game.config.mode === 'tdm' ? 50 : 0, respawnAt: 0,
+    alive: true, hp: 100, armor: respawnMode() && game.config.mode !== 'range' ? 50 : 0, respawnAt: 0,
     blindUntil: 0, revealedUntil: 0, spottedUntil: 0, overchargeUntil: 0, slowUntil: 0, furyUntil: 0, nearsightUntil: 0,
     furyShots: 0, healLeft: 0, dashT: 0, crouch: 0, wantCrouch: false, reloadT: 0, fireCD: 0.3, recoil: 0, recoilYaw: 0,
     protectUntil: now() + 1.5,
@@ -763,7 +759,7 @@ function respawnFighter(f) {
     f.yaw = sideSign(f.team) < 0 ? -Math.PI / 2 : Math.PI / 2; f.pitch = 0;
     giveLoadout(f);
   }
-  if (f.brain) f.brain.planRound();
+  if (f.brain) { f.brain.planRound(); if (game.config.mode === 'uplink') f.brain.plan = { side: 'uplink' }; }
   if (f.netOwner) sendSpawn(f);
   if (f === game.player) { game.spectating = false; setViewModel(f); }
   setGunLook(f);
@@ -848,7 +844,7 @@ function renderTutorial() {
   if (tut.i >= TUT_STEPS.length) {
     el.className = 'done';
     el.innerHTML = `<div class="step">TUTORIAL COMPLETE</div><div class="txt">You know the basics!</div>
-      <div class="sub">In matches you buy guns each round, plant the Rift Charge on A or B with <kbd>F</kbd>, or defend it.${tut.xp ? ` <b style="color:#ffd23f">+${tut.xp} XP</b>` : ''}</div>
+      <div class="sub">In Uplink you respawn all match: pick a loadout with <kbd>B</kbd>, then capture and hold the Rift Node to score.${tut.xp ? ` <b style="color:#ffd23f">+${tut.xp} XP</b>` : ''}</div>
       <button class="big" id="tutPlay">PLAY A MATCH</button><button class="ghost" id="tutStay">Keep practicing</button>`;
     $('tutPlay').onclick = () => { startLocal({ ...choice }); lock(); };
     $('tutStay').onclick = () => { tut = null; el.hidden = true; lock(); };
@@ -947,6 +943,7 @@ function startClientMatch(cfg, roster) {
   game.time = 0; game.round = 0; game.score = [0, 0]; game.lossStreak = [0, 0]; game.noises = [];
   buildRosterFighters(cfg, roster, true);
   if (cfg.mode === 'tdm') game.tdmTarget = cfg.teamSize * 8;
+  if (cfg.mode === 'uplink') game.tdmTarget = UPLINK.target;
   startTracking(cfg.mode);
   showMatchHud();
   game.phase = 'buy';
@@ -1030,7 +1027,7 @@ function clientRound(m) {
   else if (game.config.mode === 'plant') {
     const attacking = p.team === game.attackers;
     flashMsg(m.halftime ? 'SWITCHING SIDES' : `ROUND ${game.round}`, `${attacking ? 'ATTACK — plant the Rift Charge on A or B' : 'DEFEND — stop the plant or defuse it'} · press B to buy`, 3.5);
-  } else if (game.config.mode === 'uplink') flashMsg(`ROUND ${game.round}`, 'UPLINK — capture the Rift Node and hold it · press B to buy', 3.5);
+  } else if (game.config.mode === 'uplink') flashMsg(MAP.name.toUpperCase(), `UPLINK · hold the Rift Node to score · first to ${game.tdmTarget} · press B for your loadout`, 4);
   else flashMsg(`ROUND ${game.round}`, 'BUY PHASE — press B to open the armory', 3);
   sfx('round');
 }
@@ -1163,7 +1160,7 @@ game.onKill = (attacker, target, opts) => {
   }
   target.firstHitT = null;
   if (mode === 'tdm' && attacker && attacker.team !== target.team) game.score[attacker.team]++;
-  if (mode === 'tdm' || mode === 'range') target.respawnAt = now() + (mode === 'tdm' ? 3 : 1.5);
+  if (respawnMode()) target.respawnAt = now() + (mode === 'range' ? 1.5 : 3.5);
   const el = document.createElement('div');
   const mine = attacker === game.player || target === game.player;
   el.className = 'kf' + (mine ? ' mine' : '');
@@ -1175,12 +1172,12 @@ game.onKill = (attacker, target, opts) => {
   while ($('killfeed').children.length > 6) $('killfeed').lastChild.remove();
   if (attacker === game.player) sfx('kill');
   if (target === game.player) {
-    const respawning = mode === 'tdm' || mode === 'range';
-    flashMsg('ELIMINATED', (attacker ? `by ${attacker.name}` : '') + (respawning ? ' · respawning in 3' : ''), 2.2, 'lose');
+    const respawning = respawnMode();
+    flashMsg('ELIMINATED', (attacker ? `by ${attacker.name}` : '') + (respawning ? ` · back in ${mode === 'range' ? 1.5 : 3.5}s` : ''), 2.2, 'lose');
     game.specIndex = -1;
     if (!respawning) setTimeout(() => { if (!game.player.alive && game.phase !== 'over') { game.spectating = true; cycleSpectate(); } }, 1200);
   }
-  if (mode !== 'range' && mode !== 'tdm' && aliveCount(game.player.team) === 1 && game.player.alive && aliveCount(1 - game.player.team) > 1 && game.phase === 'live') {
+  if (!respawnMode() && aliveCount(game.player.team) === 1 && game.player.alive && aliveCount(1 - game.player.team) > 1 && game.phase === 'live') {
     flashMsg('LAST ALIVE', `1 v ${aliveCount(1 - game.player.team)}`, 1.5);
   }
 };
@@ -1251,6 +1248,12 @@ game.onPlayerDamaged = (attacker) => {
 let flashEnd = 0, flashDur = 1;
 game.onBlind = (dur) => { flashEnd = now() + dur; flashDur = dur; };
 game.onBlackout = () => {};
+game.onNodeMoved = (n) => { flashMsg('NODE MOVED', `The Rift Node is now at ${NODE_NAMES[n.key]}`, 2.2); sfx('round'); };
+game.onNodeCaptured = (team) => {
+  const ours = team === game.player.team;
+  comms(ours ? 'Rift Node captured — hold it!' : 'The enemy took the Rift Node', null, true);
+  if (ours && game.node && game.player.alive && game.player.pos.distanceTo(game.node.pos) < UPLINK.radius + 1) trackObjective();
+};
 
 // ---- first-person recoil: damped springs kicked on every shot ----
 const rs = { p: new THREE.Vector3(), vp: new THREE.Vector3(), r: new THREE.Vector3(), vr: new THREE.Vector3() };
@@ -1326,7 +1329,8 @@ const BUY_LIST = [
   { key: 'cover', cat: 'gadget', hot: 'k' },
 ];
 
-const freeLoadout = () => game.config.mode === 'tdm' || game.config.mode === 'range';
+const respawnMode = () => ['tdm', 'uplink', 'range'].includes(game.config?.mode);
+const freeLoadout = respawnMode;
 function toggleBuy(force) {
   const open = force ?? !buyOpen;
   if (open && !freeLoadout() && (game.phase !== 'buy' || !game.player.alive)) return;
@@ -1365,6 +1369,8 @@ function doBuy(key) {
 
 function renderBuy() {
   const p = game.player;
+  $('armorCol').hidden = game.config.mode !== 'range' && freeLoadout();
+  $('buyCredits').hidden = freeLoadout();
   $('buyCredits').textContent = `¤ ${p.credits}`;
   for (const box of document.querySelectorAll('#buyMenu .items')) box.innerHTML = '';
   for (const it of BUY_LIST) {
@@ -1516,7 +1522,7 @@ function updateHud(dt) {
   $('timer').classList.toggle('charge', planted && game.phase === 'live');
   const plantMode = game.config.mode === 'plant';
   const sideTxt = plantMode ? (p.team === game.attackers ? ' · ATTACK' : ' · DEFEND') : '';
-  if (game.config.mode === 'tdm') setText('roundLabel', game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget}`);
+  if (game.config.mode === 'tdm' || game.config.mode === 'uplink') setText('roundLabel', game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget}`);
   else setText('roundLabel', planted && game.phase === 'live' ? `CHARGE ON ${game.charge.site}` : game.phase === 'buy' ? 'BUY PHASE' + sideTxt : `ROUND ${game.round}${sideTxt}`);
   $('credits').hidden = freeLoadout();
   for (const f of game.fighters) f.pipEl?.classList.toggle('carrier', plantMode && game.charge?.carrier === f && f.team === p.team);
@@ -1546,10 +1552,11 @@ function updateHud(dt) {
   const node = game.node;
   $('uplinkBar').hidden = !(game.config.mode === 'uplink' && node);
   if (node && game.config.mode === 'uplink') {
-    $('ub0').style.width = `${Math.min(100, (node.hold[0] / UPLINK.hold) * 100)}%`;
-    $('ub1').style.width = `${Math.min(100, (node.hold[1] / UPLINK.hold) * 100)}%`;
-    const mine = p.team;
-    const st = node.contested ? 'CONTESTED' : node.owner === mine ? 'NODE HELD' : node.owner >= 0 ? 'ENEMY HOLDS' : Math.abs(node.c) > 0.02 ? `CAPTURING ${Math.round(Math.abs(node.c) * 100)}%` : `NODE ${node.key === 'MID' ? 'MID' : node.key + ' LANE'}`;
+    $('ub0').style.width = `${Math.min(100, (game.score[0] / game.tdmTarget) * 100)}%`;
+    $('ub1').style.width = `${Math.min(100, (game.score[1] / game.tdmTarget) * 100)}%`;
+    const mine = p.team, left = Math.max(0, Math.ceil(node.until - game.time));
+    const where = NODE_NAMES[node.key] || node.key;
+    const st = node.contested ? 'CONTESTED' : node.owner === mine ? `${where} · HELD` : node.owner >= 0 ? `${where} · ENEMY` : Math.abs(node.c) > 0.02 ? `CAPTURING ${Math.round(Math.abs(node.c) * 100)}%` : `${where} · ${left}s`;
     setText('uplinkTxt', st);
     $('uplinkTxt').style.color = node.contested ? '#fff' : node.owner >= 0 ? (node.owner ? '#ffb066' : '#7fb2ff') : '#e8eaed';
   }
@@ -1701,6 +1708,7 @@ function playerVision() {
 // Camera + first-person weapon animation
 // ---------------------------------------------------------------------------
 let forceAim = false; // test hook
+const _tf = new THREE.Vector3(), _tr = new THREE.Vector3(), _tp = new THREE.Vector3(), _tb = new THREE.Vector3(), _te = new THREE.Vector3();
 let bob = 0, aimK = 0, landT = 0, lastReloadStage = -1, sprintK = 0, prevCrouchKey = false;
 const _fwd = new THREE.Vector3();
 
@@ -1727,12 +1735,29 @@ function updateCamera(dt) {
   const wantAim = (mouse.right && locked() || forceAim) && p.alive && !w.scope && p.reloadT <= 0 && !game.spectating;
   aimK += ((wantAim ? 1 : 0) - aimK) * Math.min(1, dt * 14);
   landT = Math.max(0, landT - dt * 4);
+  game.thirdPerson = S.thirdPerson && p.alive && !p.scoped && !game.spectating && !debugCam;
   if (!game.spectating) {
     p.viewEye(camera.position);
     const hs = Math.hypot(p.vel.x, p.vel.z);
     bob += hs * dt * 1.6;
-    if (p.onGround && hs > 1) camera.position.y += Math.sin(bob * 2) * 0.022 * (1 - aimK * 0.7);
+    if (p.onGround && hs > 1) camera.position.y += Math.sin(bob * 2) * 0.022 * (1 - aimK * 0.7) * (game.thirdPerson ? 0.4 : 1);
     camera.position.y -= landT * 0.12;
+    if (game.thirdPerson) {
+      // over the right shoulder: pull back from a shoulder point, never through walls
+      const yw = p.yaw + p.recoilYaw, pt = p.pitch + p.recoil;
+      _tf.set(-Math.sin(yw) * Math.cos(pt), Math.sin(pt), -Math.cos(yw) * Math.cos(pt));
+      _tr.set(Math.cos(yw), 0, -Math.sin(yw));
+      const side = 0.65 - aimK * 0.12, up = 0.32 - aimK * 0.1, back = 3.1 - aimK * 1.5 - (p.crouch > 0.5 ? 0.25 : 0);
+      _tp.copy(camera.position).addScaledVector(_tr, 0);
+      const sideT = Math.min(side, raycastWorld(_tp, _tr, side + 0.3) - 0.3);
+      _tp.addScaledVector(_tr, Math.max(0, sideT)).y += up;
+      _tb.copy(_tf).negate();
+      const bt = Math.min(back, raycastWorld(_tp, _tb, back + 0.3) - 0.3);
+      camera.position.copy(_tp).addScaledVector(_tb, Math.max(0.2, bt));
+      // shot origin: the point on the crosshair ray that is level with the player's eye
+      p.eye(_te);
+      p.shotFrom = (p.shotFrom || new THREE.Vector3()).copy(camera.position).addScaledVector(_tf, Math.max(0, _te.sub(camera.position).dot(_tf)));
+    }
     // shake on every shot (decays fast), scaled per gun
     camShake *= Math.exp(-16 * dt);
     const shake = camShake * 0.0035 * (1 - aimK * 0.5);
@@ -1772,7 +1797,7 @@ function updateCamera(dt) {
   vmFlashLight.intensity *= Math.exp(-40 * dt);
 
   // view model
-  vmRoot.visible = p.alive && !game.spectating && !p.scoped;
+  vmRoot.visible = p.alive && !game.spectating && !p.scoped && !game.thirdPerson;
   updateCasings(dt);
   if (!vmRoot.visible || !vmGun) { if (vmRoot.visible) setViewModel(p); return; }
   setViewModel(p);
@@ -1881,8 +1906,10 @@ function step(dt) {
   updatePlayer(dt);
   for (const f of game.fighters) {
     if (client && !f.isPlayer) { updateAbilityState(f, dt); continue; }
+    // respawn modes: bring back anyone whose timer ran out (remote players too)
+    if (!f.alive && !client && f.respawnAt && game.time >= f.respawnAt && game.phase === 'live') respawnFighter(f);
     if (f.netOwner) { updateWeapon(f, dt); updateAbilityState(f, dt); continue; }
-    if (!f.alive) { if (!client && f.respawnAt && game.time >= f.respawnAt && game.phase === 'live') respawnFighter(f); continue; }
+    if (!f.alive) continue;
     if (f.brain) f.brain.think(dt);
     else if (f.dummy) updateDummy(f, dt);
     updateWeapon(f, dt);

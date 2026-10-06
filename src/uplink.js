@@ -3,10 +3,11 @@ import { game, now } from './state.js';
 import { MAP, snapWalkable, navHeight } from './world.js';
 import { sfx } from './audio.js';
 
-// Uplink: each round one Rift Node switches on at A, B or mid. Standing in its ring with nobody
-// from the other team swings it to your side; while your team owns it you bank hold time.
-// First team to bank UPLINK.hold seconds (or to wipe the other team) wins the round.
-export const UPLINK = { radius: 4.5, capture: 5, hold: 20 };
+// Uplink: a non-stop respawn mode. One Rift Node is live at a time (North, Core or South) and
+// moves every UPLINK.rotate seconds. Standing in its ring with nobody from the other team swings
+// it to your side; while your team owns it you score a point per second. First to UPLINK.target.
+export const UPLINK = { radius: 4.5, capture: 4, rotate: 60, target: 150, time: 480 };
+export const NODE_NAMES = { N: 'NORTH', C: 'CORE', S: 'SOUTH' };
 const TEAM_HEX = [0x3d8bff, 0xff8a1f], NEUTRAL = 0xe8eaed;
 
 /**
@@ -17,7 +18,7 @@ export function nodeSpots() {
   const lanes = MAP.lanes || [-20, 0, 20];
   return lanes.map((z) => {
     const p = snapWalkable({ x: 0, z: (MAP.nodes?.[z] ?? z) });
-    return { key: z < 0 ? 'A' : z > 0 ? 'B' : 'MID', x: p.x, z: p.z };
+    return { key: z < 0 ? 'N' : z > 0 ? 'S' : 'C', x: p.x, z: p.z };
   });
 }
 
@@ -46,7 +47,7 @@ export function resetNode(key = null) {
   const prev = game.node?.key;
   const spot = key ? spots.find((s) => s.key === key) : (() => { const c = spots.filter((s) => s.key !== prev); return c[Math.floor(Math.random() * c.length)]; })();
   const y = navHeight(spot.x, spot.z);
-  game.node = { key: spot.key, pos: new THREE.Vector3(spot.x, y, spot.z), c: 0, owner: -1, hold: [0, 0], contested: false, inside: [0, 0] };
+  game.node = { key: spot.key, pos: new THREE.Vector3(spot.x, y, spot.z), c: 0, owner: -1, contested: false, inside: [0, 0], until: game.time + UPLINK.rotate };
   const v = visuals();
   if (!v.root.parent) game.scene.add(v.root);
   v.root.position.copy(game.node.pos);
@@ -68,10 +69,11 @@ function paint() {
   v.fillMat.opacity = 0.08 + Math.abs(n.c) * 0.22;
 }
 
-/** Host/offline per-frame update. Returns the winning team when the round is decided by holding. */
+/** Host/offline per-frame update: capture, scoring (game.score) and moving the node. */
 export function updateNode(dt) {
-  const n = game.node;
+  let n = game.node;
   if (!n) return -1;
+  if (game.phase === 'live' && game.time >= n.until) { resetNode(); n = game.node; game.onNodeMoved?.(n); }
   const t = now();
   vis.core.rotation.y = t * 1.5; vis.core.position.y = 1.2 + Math.sin(t * 2) * 0.1;
   if (game.phase !== 'live') return -1;
@@ -90,24 +92,27 @@ export function updateNode(dt) {
     if (n.owner >= 0 && Math.sign(n.c) !== (n.owner ? 1 : -1)) n.owner = -1;     // knocked back to neutral
     if (n.c <= -1) n.owner = 0; else if (n.c >= 1) n.owner = 1;
   }
-  if (n.owner >= 0 && !n.contested) n.hold[n.owner] += dt;
+  if (n.owner >= 0 && !n.contested) {
+    game.uplinkPts[n.owner] += dt;
+    game.score[n.owner] = Math.floor(game.uplinkPts[n.owner]);
+  }
   if (before !== n.owner && n.owner >= 0) { game.onNodeCaptured?.(n.owner); sfx('capture', { vol: 0.8 }); }
   paint();
-  return n.hold[0] >= UPLINK.hold ? 0 : n.hold[1] >= UPLINK.hold ? 1 : -1;
+  return -1;
 }
 
 /** Clients: mirror the host's node state from a snapshot. */
 export function applyNodeSnapshot(s) {
   if (!s) { if (game.node) hideNode(); return; }
-  const [key, owner, c, h0, h1, contested] = s;
+  const [key, owner, c, until, contested] = s;
   if (!game.node || game.node.key !== key) resetNode(key);
   const n = game.node;
   if (n.owner !== owner && owner >= 0) sfx('capture', { vol: 0.8 });
-  Object.assign(n, { owner, c, contested: !!contested }); n.hold = [h0, h1];
+  Object.assign(n, { owner, c, until, contested: !!contested });
   paint();
   vis.core.rotation.y = now() * 1.5;
 }
-export const packNode = (n) => n && [n.key, n.owner, Math.round(n.c * 100) / 100, Math.round(n.hold[0] * 10) / 10, Math.round(n.hold[1] * 10) / 10, n.contested ? 1 : 0];
+export const packNode = (n) => n && [n.key, n.owner, Math.round(n.c * 100) / 100, Math.round(n.until * 10) / 10, n.contested ? 1 : 0];
 
 /** Bot goal in Uplink: a spot around the node (spread by id), looking outward. */
 export function uplinkGoal(f) {
