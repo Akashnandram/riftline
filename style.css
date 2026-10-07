@@ -597,3 +597,7 @@ body.touch .ch { font-size: 12px; padding: 2px 0; grid-template-columns: 1fr 60p
   body.touch #over .row { position: sticky; bottom: 0; padding: 6px 0; background: linear-gradient(transparent, rgba(10,12,16,0.95) 40%); justify-content: center; }
   body.touch #over .row .big { padding: 8px 22px; font-size: 15px; }
 }
+/* phones: no live blur of the 3D view behind panels (re-blurring every frame heats the GPU) */
+body.touch .panel, body.touch .screen.dim { backdrop-filter: none; -webkit-backdrop-filter: none; }
+body.touch .screen.dim { background: rgba(10, 16, 24, 0.9); }
+body.touch .panel { background: rgba(14, 17, 22, 0.94); }

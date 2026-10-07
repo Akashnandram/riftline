@@ -2185,9 +2185,25 @@ function dynamicResolution(raw) {
   if (resScale > top) resScale = top;
   if (resScale !== before) resize();
 }
+/**
+ * Frame cap (0 = none). Phones are capped at 60 (many screens run at 90-120 Hz, which doubles the
+ * work and heat for no visible gain); menus, results and pause only need a slow background.
+ */
+function frameCap() {
+  if (game.phase === 'menu' || game.phase === 'over') return $('loadout').hidden ? 30 : 10;
+  if (game.paused && !online()) return 15;
+  if (S.batterySaver) return 30;
+  return IS_TOUCH ? 60 : 0;
+}
+let due = 0;
 function frame(ts) {
   requestAnimationFrame(frame);
-  if (S.batterySaver && ts - last < 31) return;          // battery saver: about 30 FPS
+  const cap = frameCap();
+  if (cap) {
+    const iv = 1000 / cap;
+    if (ts < due - 2) return;
+    due = ts - due > iv ? ts + iv : due + iv;            // keep an even pace at any refresh rate
+  }
   const raw = (ts - last) / 1000;
   const dt = Math.min(0.05, raw);
   last = ts;
