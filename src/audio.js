@@ -446,6 +446,8 @@ function applyMusic() {
 let lastLine = 0, announcerOn = true;
 export function setAnnouncer(on) { announcerOn = on; }
 export function announce(text, important = false) {
+  // subtitles (shown by the game when switched on) get every line, even with the voice off
+  dispatchEvent(new CustomEvent('riftline:say', { detail: text }));
   if (!announcerOn || muted || !('speechSynthesis' in window)) return;
   const t = performance.now();
   if (!important && t - lastLine < 1400) return;

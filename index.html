@@ -6,6 +6,12 @@
   <title>Riftline – Squad Shooter</title>
   <meta name="description" content="First-person squad shooter in your browser. Pick an operative, buy weapons and gadgets, sprint and slide, and capture the Rift Node." />
   <meta name="theme-color" content="#12161c" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Riftline" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Riftline – squad shooter in your browser" />
   <meta property="og:description" content="Pick an operative, buy guns and gadgets, capture and hold the Rift Node. Free, no download." />
@@ -14,7 +20,7 @@
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
   <meta name="twitter:card" content="summary_large_image" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>" />
+  <link rel="icon" type="image/png" href="assets/icons/icon-192.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
@@ -59,6 +65,9 @@
     <div id="streakBox" hidden></div>
     <div id="hintBar" hidden></div>
     <div id="deathCard" hidden></div>
+    <div id="killcamTag" hidden></div>
+    <div id="pings"></div>
+    <div id="caption" hidden></div>
 
     <!-- vitals (bottom-centre): health and armor bars -->
     <div id="vitals">
@@ -112,16 +121,18 @@
           <button id="btnTutorial" class="ghost">Tutorial</button>
           <button id="btnRange" class="ghost">Practice Range</button>
           <button id="btnLoadout" class="ghost">Loadout &amp; Skins</button>
+          <button id="btnBoard" class="ghost">Leaderboard</button>
           <button id="btnSettings" class="ghost">Settings</button>
+          <button id="btnInstall" class="ghost install" hidden>Install app</button>
         </div>
       </div>
       <section class="mLeft">
         <h1>RIFT<span>LINE</span></h1>
-        <p class="tag">Squad shooter · 5 maps · 4 modes · capture the Rift Nodes</p>
+        <p class="tag">Squad shooter · 5 maps · 5 modes · capture the Rift Nodes</p>
         <div id="newHere" hidden>New here? <button id="btnTutorial2">Play the 2-minute tutorial</button> (+500 XP)</div>
         <div class="opts">
           <div class="opt"><h4>GAME MODE</h4><div class="seg" id="segMode">
-            <button data-v="uplink" class="on">Uplink</button><button data-v="dom">Domination</button><button data-v="tdm">Team Deathmatch</button><button data-v="kc">Kill Confirmed</button>
+            <button data-v="uplink" class="on">Uplink</button><button data-v="dom">Domination</button><button data-v="tdm">Team Deathmatch</button><button data-v="kc">Kill Confirmed</button><button data-v="ffa">Free-for-all</button>
           </div></div>
           <div class="opt"><h4>MAP</h4><div class="seg" id="segMap"></div></div>
           <div class="opt"><h4>SQUAD SIZE</h4><div class="seg" id="segSize">
@@ -133,7 +144,7 @@
         </div>
         <p id="modeHint" class="hint"></p>
         <div class="deployRow"><button id="quickPlay" class="big quick">QUICK PLAY</button><button id="lockIn" class="big">DEPLOY</button></div>
-        <p class="hint">Quick Play: a short 3v3 Uplink match on a random map. Deploy uses the options above.</p>
+        <p class="hint" id="quickHint">Quick Play: a short 3v3 match of the selected mode on a random map. Deploy uses all the options above.</p>
         <p id="touchWarn" hidden>Riftline needs a keyboard and mouse — open it on a desktop browser.</p>
       </section>
       <section class="mRight">

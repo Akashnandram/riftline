@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { game, now, enemiesOf } from './state.js';
+import { game, now, enemiesOf, TEAM_HEX } from './state.js';
 import { snapWalkable, groundAt } from './world.js';
 import { giveGadget } from './abilities.js';
 import { setGunLook, emitSound } from './entities.js';
@@ -49,12 +49,17 @@ let crateGeo = null, crateMat = null, lidMat = null, beaconMat = null;
 function crateMesh(team) {
   crateGeo ||= new THREE.BoxGeometry(1.0, 0.7, 1.0);
   crateMat ||= new THREE.MeshStandardMaterial({ color: 0x4a5a3a, roughness: 0.7, metalness: 0.3 });
-  lidMat ||= [new THREE.MeshStandardMaterial({ color: 0x3d8bff, emissive: 0x3d8bff, emissiveIntensity: 1.2 }), new THREE.MeshStandardMaterial({ color: 0xff8a1f, emissive: 0xff8a1f, emissiveIntensity: 1.2 })];
-  beaconMat ||= [new THREE.MeshBasicMaterial({ color: 0x3d8bff, transparent: true, opacity: 0.25, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0xff8a1f, transparent: true, opacity: 0.25, depthWrite: false })];
+  // team colours, and gold for neutral crates anyone can take (map event); rebuilt if the palette changes
+  const cols = [TEAM_HEX[0], TEAM_HEX[1], 0xffd23f];
+  if (!lidMat || lidMat.key !== cols.join()) {
+    lidMat = cols.map((c) => new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.2 })); lidMat.key = cols.join();
+    beaconMat = cols.map((c) => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.25, depthWrite: false }));
+  }
   const g = new THREE.Group();
   const box = new THREE.Mesh(crateGeo, crateMat); box.position.y = 0.35; box.castShadow = true;
-  const strip = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.1, 1.02), lidMat[team]); strip.position.y = 0.62;
-  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 14, 8, 1, true), beaconMat[team]); beacon.position.y = 7;
+  const c = team < 0 ? 2 : Math.min(1, team);   // free-for-all has more than two teams; -1 = anyone's
+  const strip = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.1, 1.02), lidMat[c]); strip.position.y = 0.62;
+  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 14, 8, 1, true), beaconMat[c]); beacon.position.y = 7;
   g.add(box, strip, beacon);
   return g;
 }
@@ -78,6 +83,23 @@ export function removeDrop(id) {
   game.drops.splice(i, 1);
 }
 
+/** Map event: a crate anyone can grab, dropped at pos. */
+export function spawnNeutralDrop(pos) {
+  const d = spawnDrop(++dropId, pos, -1);
+  game.onDropSpawned?.(d);
+  return d;
+}
+/** The nearest crate anyone can take, within maxDist (for bots). */
+export function nearestNeutralDrop(f, maxDist) {
+  let best = null, bd = maxDist;
+  for (const d of game.drops || []) {
+    if (d.team >= 0 || !d.landed) continue;
+    const dist = Math.hypot(d.pos.x - f.pos.x, d.pos.z - f.pos.z);
+    if (dist < bd) { bd = dist; best = d; }
+  }
+  return best;
+}
+
 export function clearDrops() { for (const d of [...(game.drops || [])]) removeDrop(d.id); }
 
 /** Per frame. host: true on the host/offline (decides pickups), false on clients (visuals only). */
@@ -96,7 +118,7 @@ export function updateDrops(dt, host) {
     if (now() > d.until) { removeDrop(d.id); game.onDropGone?.(d.id); continue; }
     // the bot that called it grabs it right away; anyone on the team can walk over it
     const owner = d.owner?.brain && d.owner.alive ? d.owner : null;
-    const taker = owner || game.fighters.find((f) => f.alive && f.team === d.team && Math.hypot(f.pos.x - d.pos.x, f.pos.z - d.pos.z) < DROP_R && Math.abs(f.pos.y - d.pos.y) < 2);
+    const taker = owner || game.fighters.find((f) => f.alive && (d.team < 0 || f.team === d.team) && Math.hypot(f.pos.x - d.pos.x, f.pos.z - d.pos.z) < DROP_R && Math.abs(f.pos.y - d.pos.y) < 2);
     if (taker) { lootDrop(taker); removeDrop(d.id); game.onDropGone?.(d.id, taker); }
   }
 }

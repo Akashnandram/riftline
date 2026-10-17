@@ -2,7 +2,7 @@
 // otherwise a local guest identity + BroadcastChannel so everything can be tested in two tabs.
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { LocalChannel, SupabaseChannel } from './signal.js';
-import { profile as localProfile, saveProfile } from '../progress.js';
+import { profile as localProfile, saveProfile, thisWeek } from '../progress.js';
 
 export const configured = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
 let sb = null;
@@ -93,9 +93,50 @@ function mergeProgress(row) {
   if (row.tutorial_done && !localProfile.tutorialDone) { localProfile.tutorialDone = true; changed = true; }
   if (changed) saveProfile();
 }
+// leaderboard columns (kills, wins, matches, week, week_xp) exist once supabase/schema.sql has been re-run
+let statsColumns = true;
 export async function pushProgress() {
   if (!sb || me.guest || !me.username) return;
-  await sb.from('profiles').update({ xp: localProfile.xp, equip: localProfile.equip, tutorial_done: localProfile.tutorialDone, updated_at: new Date().toISOString() }).eq('id', me.id);
+  const base = { xp: localProfile.xp, equip: localProfile.equip, tutorial_done: localProfile.tutorialDone, updated_at: new Date().toISOString() };
+  if (statsColumns) {
+    const T = localProfile.totals, wk = localProfile.week?.key === thisWeek() ? localProfile.week.xp : 0;
+    const { error } = await sb.from('profiles').update({ ...base, kills: T.kills, wins: T.wins, matches: T.matches, week: thisWeek(), week_xp: wk }).eq('id', me.id);
+    if (!error) return;
+    statsColumns = false;          // older database: keep syncing XP at least
+  }
+  await sb.from('profiles').update(base).eq('id', me.id);
+}
+// sync after every match (debounced)
+let pushT = 0;
+addEventListener('riftline:progress', () => { clearTimeout(pushT); pushT = setTimeout(() => pushProgress().catch(() => {}), 1500); });
+
+/**
+ * Leaderboard rows for kind = 'xp' | 'week' | 'kills' | 'wins', everyone or friends only.
+ * Returns { rows: [{ id, username, xp, value }], me: { rank, value } | null, needsUpdate?, offline? }.
+ */
+export async function leaderboard(kind, friendsOnly = false) {
+  if (!sb) return { rows: [], offline: true };
+  const col = { xp: 'xp', week: 'week_xp', kills: 'kills', wins: 'wins' }[kind] || 'xp';
+  let ids = null;
+  if (friendsOnly) {
+    if (me.guest) return { rows: [], needsAccount: true };
+    ids = [me.id, ...(await listFriends()).filter((f) => f.status === 'friend').map((f) => f.id)];
+  }
+  const run = (q) => { if (kind === 'week') q = q.eq('week', thisWeek()); if (ids) q = q.in('id', ids); return q; };
+  const { data, error } = await run(sb.from('profiles').select(`id, username, xp${col === 'xp' ? '' : ', ' + col}`)).order(col, { ascending: false }).limit(50);
+  if (error) return { rows: [], needsUpdate: col !== 'xp' };
+  const rows = data.map((r) => ({ id: r.id, username: r.username, xp: r.xp, value: r[col] }));
+  let mine = null;
+  if (!me.guest) {
+    const i = rows.findIndex((r) => r.id === me.id);
+    if (i >= 0) mine = { rank: i + 1, value: rows[i].value };
+    else {
+      const value = col === 'xp' ? localProfile.xp : col === 'week_xp' ? (localProfile.week?.key === thisWeek() ? localProfile.week.xp : 0) : localProfile.totals[col];
+      const { count } = await run(sb.from('profiles').select('id', { count: 'exact', head: true })).gt(col, value);
+      mine = { rank: (count ?? 0) + 1, value };
+    }
+  }
+  return { rows, me: mine };
 }
 
 // ---------------------------------------------------------------------------

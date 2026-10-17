@@ -1,6 +1,7 @@
 // Player settings: mouse, video, audio, crosshair and key bindings. Saved in localStorage.
 
 import { IS_TOUCH } from './touch.js';
+import { TEAM_PALETTES, setTeamPalette } from './state.js';
 
 const KEY = 'riftline.settings';
 
@@ -8,12 +9,13 @@ export const DEFAULTS = {
   sens: 1, adsSens: 0.85, invertY: false,
   fov: 75, showFps: false, thirdPerson: false,
   volume: 0.7, music: 0.5, musicInMatch: false, announcer: true,
-  vibration: true, tiltAim: false, tiltSens: 1, batterySaver: false,
+  vibration: true, tiltAim: false, tiltSens: 1, batterySaver: false, killcam: true,
+  teamColors: 'default', subtitles: false, reduceMotion: false,
   crosshair: { color: '#6effc4', length: 6, thickness: 2, gap: 3, dot: true, outline: true, opacity: 1, dynamic: true },
   binds: {
     forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', sprint: 'ShiftLeft', crouch: 'KeyC',
     reload: 'KeyR', primary: 'Digit1', secondary: 'Digit2', ability1: 'KeyQ', ability2: 'KeyE',
-    use: 'KeyF', buy: 'KeyB', scoreboard: 'Tab', mute: 'KeyM',
+    use: 'KeyF', buy: 'KeyB', scoreboard: 'Tab', mute: 'KeyM', ping: 'KeyZ',
   },
 };
 
@@ -21,7 +23,7 @@ export const ACTION_LABELS = {
   forward: 'Move forward', back: 'Move back', left: 'Strafe left', right: 'Strafe right', jump: 'Jump',
   sprint: 'Sprint (hold)', crouch: 'Crouch (hold) · slide while sprinting', reload: 'Reload', primary: 'Primary weapon', secondary: 'Sidearm',
   ability1: 'Gadget 1', ability2: 'Gadget 2', use: 'Interact (hold)',
-  buy: 'Buy menu', scoreboard: 'Scoreboard (hold)', mute: 'Mute',
+  buy: 'Buy menu', scoreboard: 'Scoreboard (hold)', mute: 'Mute', ping: 'Ping (mark enemy / spot) · also middle mouse',
 };
 
 const CROSSHAIR_PRESETS = ['#6effc4', '#ffffff', '#ffd23f', '#ff8a1f', '#3ee6d6', '#b18cff', '#00ff00', '#ff7bd5'];
@@ -41,6 +43,7 @@ function load() {
 }
 
 export const S = load();
+setTeamPalette(S.teamColors);
 const listeners = new Set();
 export function onSettingsChange(fn) { listeners.add(fn); }
 export function save() {
@@ -111,6 +114,7 @@ export function openSettings(root, { quality, setQuality, onClose, requestTilt, 
       video: [
         slider('Field of view', S.fov, 60, 100, 1, (v) => `${v}°`, (v) => { S.fov = v; }),
         toggle('Show FPS counter', S.showFps, (v) => { S.showFps = v; }),
+        toggle('Killcam (replay from your killer\'s view after you die)', S.killcam, (v) => { S.killcam = v; }),
       ],
       audio: [
         slider('Master volume', S.volume, 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`, (v) => { S.volume = v; }),
@@ -125,6 +129,10 @@ export function openSettings(root, { quality, setQuality, onClose, requestTilt, 
         toggle('Tilt to aim (motion sensor)', S.tiltAim, (v) => { S.tiltAim = v; if (v) requestTilt?.(); }),
         slider('Tilt sensitivity', S.tiltSens, 0.3, 2.5, 0.05, (v) => v.toFixed(2), (v) => { S.tiltSens = v; }),
         toggle('Battery saver (30 FPS, lower resolution)', S.batterySaver, (v) => { S.batterySaver = v; }),
+      ],
+      access: [
+        toggle('Subtitles for the announcer and match events', S.subtitles, (v) => { S.subtitles = v; }),
+        toggle('Reduce camera motion (less shake, head bob and flash glare)', S.reduceMotion, (v) => { S.reduceMotion = v; }),
       ],
       cross: [
         slider('Length', c.length, 0, 16, 1, (v) => v, (v) => { c.length = v; drawPreview(); }),
@@ -147,6 +155,11 @@ export function openSettings(root, { quality, setQuality, onClose, requestTilt, 
             ${['low', 'medium', 'high'].map((q) => `<button data-v="${q}" class="${q === quality ? 'on' : ''}">${q[0].toUpperCase() + q.slice(1)}</button>`).join('')}
           </div><p class="hint">Changing quality reloads the page.</p></section>
           ${section('AUDIO', rows.audio)}
+          <section><h3>ACCESSIBILITY</h3>
+            <div class="set-row set-col"><span>Team colours</span><div class="seg pal" id="setPalette">${Object.entries(TEAM_PALETTES).map(([k, p]) => `<button data-v="${k}" class="${k === S.teamColors ? 'on' : ''}" title="${p.name}"><i style="background:#${p.hex[0].toString(16).padStart(6, '0')}"></i><i style="background:#${p.hex[1].toString(16).padStart(6, '0')}"></i>${p.name.split(' — ')[0]}</button>`).join('')}</div>
+              <small>${(TEAM_PALETTES[S.teamColors] || TEAM_PALETTES.default).name.split(' — ')[1] || 'Standard colours'} · players change colour from your next match</small></div>
+            ${rows.access.map((r) => r.html).join('')}
+          </section>
           ${IS_TOUCH ? section('PHONE', rows.phone) : ''}
         </div>
         <div>
@@ -167,11 +180,13 @@ export function openSettings(root, { quality, setQuality, onClose, requestTilt, 
     drawPreview();
     root.querySelectorAll('.sw').forEach((b) => { b.onclick = () => { c.color = b.dataset.c; save(); render(); }; });
     root.querySelector('#xhCustom').oninput = (e) => { c.color = e.target.value; save(); drawPreview(); };
+    root.querySelectorAll('#setPalette button').forEach((b) => { b.onclick = () => { S.teamColors = b.dataset.v; setTeamPalette(S.teamColors); save(); render(); }; });
     root.querySelectorAll('#setQuality button').forEach((b) => { b.onclick = () => { if (b.dataset.v !== quality) setQuality(b.dataset.v); }; });
     root.querySelectorAll('.binds button').forEach((b) => { b.onclick = () => { rebinding = b.dataset.a; render(); }; });
     root.querySelector('#setDone').onclick = close;
     root.querySelector('#setReset').onclick = () => {
       Object.assign(S, JSON.parse(JSON.stringify(DEFAULTS)));
+      setTeamPalette(S.teamColors);
       save(); render();
     };
   }

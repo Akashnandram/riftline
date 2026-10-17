@@ -1,25 +1,25 @@
 import * as THREE from 'three';
-import { game, now } from './state.js';
+import { game, now, TEAM_HEX } from './state.js';
 import { sfx } from './audio.js';
 
 // Kill Confirmed: every death drops a tag where the player fell. The other team scores a point
 // by picking it up (CONFIRMED); the fallen player's own team can grab it first to deny it.
 // Tags are visual on every peer; pickups are decided by the host (or offline).
 export const KC = { perPlayer: 6, life: 30, radius: 1.4 };
-const TEAM_HEX = [0x3d8bff, 0xff8a1f];
 
 let geo = null, ringGeo = null;
 const mats = [];
 function tagMesh(team) {
   geo ||= new THREE.BoxGeometry(0.26, 0.17, 0.03);
   ringGeo ||= new THREE.RingGeometry(0.42, 0.5, 32);
-  mats[team] ||= {
-    tag: new THREE.MeshStandardMaterial({ color: TEAM_HEX[team], emissive: TEAM_HEX[team], emissiveIntensity: 1.4, metalness: 0.6, roughness: 0.3 }),
-    ring: new THREE.MeshBasicMaterial({ color: TEAM_HEX[team], transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }),
+  const hex = TEAM_HEX[Math.min(1, team)];
+  mats[hex] ||= {
+    tag: new THREE.MeshStandardMaterial({ color: hex, emissive: hex, emissiveIntensity: 1.4, metalness: 0.6, roughness: 0.3 }),
+    ring: new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }),
   };
   const g = new THREE.Group();
-  const t = new THREE.Mesh(geo, mats[team].tag); t.position.y = 0.75;
-  const r = new THREE.Mesh(ringGeo, mats[team].ring); r.rotation.x = -Math.PI / 2; r.position.y = 0.04;
+  const t = new THREE.Mesh(geo, mats[hex].tag); t.position.y = 0.75;
+  const r = new THREE.Mesh(ringGeo, mats[hex].ring); r.rotation.x = -Math.PI / 2; r.position.y = 0.04;
   g.add(t, r);
   return g;
 }

@@ -48,7 +48,7 @@ const BY_ID = Object.fromEntries([...TEMPLATES, ...WEEKLY].map((c) => [c.id, c])
 
 const today = () => new Date().toISOString().slice(0, 10);
 /** Monday (UTC) of this week, as YYYY-MM-DD. */
-const thisWeek = () => { const d = new Date(); d.setUTCHours(0, 0, 0, 0); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); };
+export const thisWeek = () => { const d = new Date(); d.setUTCHours(0, 0, 0, 0); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); };
 
 function seeded(key) {
   let seed = [...key].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
@@ -253,6 +253,8 @@ export function finishMatch({ won, assists = 0 }) {
   for (const c of M.completed) lines.push([`Challenge: ${c.desc}`, c.xp]);
   const total = lines.reduce((s, l) => s + l[1], 0);
   profile.xp += total;
+  if (profile.week?.key !== thisWeek()) profile.week = { key: thisWeek(), xp: 0 };
+  profile.week.xp += total;
   profile.totals.matches++; if (won) profile.totals.wins++;
   const T = profile.totals;
   T.kills += M.kills; T.headshots += M.heads; T.deaths += M.deaths; T.assists += assists; T.shots += M.shots; T.hits += M.hits;
@@ -265,6 +267,8 @@ export function finishMatch({ won, assists = 0 }) {
   const stats = { kills: M.kills, deaths: M.deaths, heads: M.heads, shots: M.shots, hits: M.hits, dmg: Math.round(M.dmg), longest: M.longest,
     best: best ? { weapon: best[0], kills: best[1] } : null, wlevels: M.wlevels };
   M = null;
+  // lets the online backend sync leaderboard stats
+  dispatchEvent(new Event('riftline:progress'));
   return { lines, total, before, after, unlocks, stats };
 }
 

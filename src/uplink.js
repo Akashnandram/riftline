@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { game, now } from './state.js';
+import { game, now, TEAM_HEX } from './state.js';
 import { MAP, snapWalkable, navHeight } from './world.js';
 import { sfx } from './audio.js';
 
@@ -14,7 +14,7 @@ export const DOM = { rate: 0.5, target: 200, time: 480 };
 /** Points a kill is worth in both node modes (on top of capture points). */
 export const KILL_PTS = 2;
 export const NODE_NAMES = { N: 'NORTH', C: 'CORE', S: 'SOUTH' };
-const TEAM_HEX = [0x3d8bff, 0xff8a1f], NEUTRAL = 0xe8eaed;
+const NEUTRAL = 0xe8eaed;
 export const nodeMode = () => game.config?.mode === 'uplink' || game.config?.mode === 'dom';
 
 /**

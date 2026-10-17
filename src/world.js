@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { TEAM_HEX } from './state.js';
 import { buildMaterials, TILE, softTexture, floorTextures } from './textures.js';
 import { buildProps, mergeByMaterial } from './props.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -517,7 +518,7 @@ export function buildWorld(scene, renderer, quality = 'medium') {
     root.add(z, line);
     spawnMats.push({ side, zoneMat, lineMat });
   }
-  setSpawnColors(0x3d8bff, 0xff8a1f);
+  setSpawnColors(TEAM_HEX[0], TEAM_HEX[1]);
 
   // static map geometry is built into a temp group, then baked into one mesh per material:
   // hundreds of walls/crates/trims become ~20 draw calls (a big win on integrated GPUs)

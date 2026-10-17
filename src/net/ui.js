@@ -5,8 +5,9 @@ import { AGENTS } from '../config.js';
 import {
   configured, me, initBackend, onAuthChange, signIn, signUp, signInGoogle, signOut, setUsername, pushProgress,
   listFriends, addFriend, acceptFriend, removeFriend, startPresence, setPresence, onlineUsers, onOnlineChange,
-  startInbox, onInbox, sendInvite,
+  startInbox, onInbox, sendInvite, leaderboard,
 } from './backend.js';
+import { levelInfo } from '../progress.js';
 import { Lobby } from './lobby.js';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
@@ -27,12 +28,49 @@ let pendingJoin = new URLSearchParams(location.search).get('join');
 function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }
 function screen(id) { let s = $(id); if (!s) { s = el(`<div id="${id}" class="screen dim" hidden></div>`); document.body.appendChild(s); } return s; }
 
+// ---------------------------------------------------------------------------
+// Leaderboards: all-time XP, this week's XP, kills, wins — everyone or friends
+// ---------------------------------------------------------------------------
+const BOARDS = [['xp', 'Level'], ['week', 'This week'], ['kills', 'Kills'], ['wins', 'Wins']];
+let board = { kind: 'xp', friends: false };
+async function openLeaderboard() {
+  const s = screen('leaderScreen');
+  s.hidden = false;
+  const tabs = (list, key) => list.map(([v, l]) => `<button data-${key}="${v}" class="${String(board[key === 'k' ? 'kind' : 'friends']) === String(v) ? 'on' : ''}">${l}</button>`).join('');
+  s.innerHTML = `<div class="menuInner settings lb-board">
+    <div class="set-head"><h2>LEADERBOARD</h2><button class="big" id="lbDone">DONE</button></div>
+    <div class="lb-tabs"><div class="seg">${tabs(BOARDS, 'k')}</div><div class="seg">${tabs([['false', 'Everyone'], ['true', 'Friends']], 'f')}</div></div>
+    <div id="lbBody"><p class="hint">Loading…</p></div></div>`;
+  $('lbDone').onclick = () => { s.hidden = true; };
+  s.querySelectorAll('[data-k]').forEach((b) => { b.onclick = () => { board.kind = b.dataset.k; openLeaderboard(); }; });
+  s.querySelectorAll('[data-f]').forEach((b) => { b.onclick = () => { board.friends = b.dataset.f === 'true'; openLeaderboard(); }; });
+  let res;
+  try { res = await leaderboard(board.kind, board.friends); } catch { res = { rows: [], failed: true }; }
+  if (s.hidden || !$('lbBody')) return;
+  const unit = { xp: 'XP', week: 'XP this week', kills: 'kills', wins: 'wins' }[board.kind];
+  let html = '';
+  if (res.offline) html = '<p class="hint">Leaderboards need the online service, which isn\'t set up in this copy of the game.</p>';
+  else if (res.needsAccount) html = '<p class="hint">Sign in to see how you rank against your friends.</p>';
+  else if (res.needsUpdate) html = '<p class="hint">This board is coming soon — the Level board works already.</p>';
+  else if (res.failed) html = '<p class="hint">Couldn\'t load the leaderboard. Check your connection and try again.</p>';
+  else if (!res.rows.length) html = `<p class="hint">Nobody here yet${board.friends ? ' — add friends from Play Online' : ''}. Play a match to get on the board!</p>`;
+  else {
+    html = `<table class="lb-table"><tr><th>#</th><th>PLAYER</th><th class="num">LEVEL</th><th class="num">${unit.toUpperCase()}</th></tr>
+      ${res.rows.map((r, i) => `<tr class="${r.id === me.id ? 'me' : ''}${i < 3 ? ' top' + (i + 1) : ''}"><td>${i + 1}</td><td>${esc(r.username)}</td>
+        <td class="num">${levelInfo(r.xp).level}</td><td class="num">${(r.value ?? 0).toLocaleString()}</td></tr>`).join('')}</table>`;
+  }
+  if (res.me && !res.rows.some((r) => r.id === me.id) && !res.offline) html += `<p class="lb-me">You: <b>#${res.me.rank}</b> · ${(res.me.value ?? 0).toLocaleString()} ${unit}</p>`;
+  if (me.guest && configured && !res.needsAccount) html += '<p class="hint">You\'re playing as a guest: sign in to put your name on the leaderboard (your progress comes with you).</p>';
+  $('lbBody').innerHTML = html;
+}
+
 export async function initOnlineUI(gameApi) {
   api = gameApi;
   // menu additions: account chip + PLAY ONLINE button
   $('profileBadge').insertAdjacentHTML('afterend', '<div id="account" class="account"></div>');
   $('lockIn').insertAdjacentHTML('afterend', ' <button id="playOnline" class="big online">PLAY ONLINE</button>');
   $('playOnline').onclick = () => openOnline();
+  $('btnBoard').onclick = () => openLeaderboard();
   document.body.appendChild(el('<div id="toasts"></div>'));
   onAuthChange(() => { renderAccount(); afterIdentity(); });
   await initBackend();

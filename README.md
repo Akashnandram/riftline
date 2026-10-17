@@ -182,6 +182,27 @@ Sonar Puck (pings enemies within 14 m through walls), Med-Kit, Deploy Cover (bul
 - `src/skins.js` – weapon skin catalogue and procedural patterns
 - `src/game.js` – match/round flow, TDM/range/tutorial, input, camera, HUD, minimap, loadout screen, main loop
 
+## Extras
+
+- **Free-for-all** (vs bots): everyone for themselves, spawns anywhere, first to 20 kills.
+- **Killcam**: after you die, the 2.4 s before it replay from your killer's eyes (toggle in Settings).
+- **Pings**: Z / middle mouse / PING on phones marks the enemy under your crosshair or the spot you look at;
+  bot teammates react, and pings go to your team online.
+- **Map events** (once per match): sandstorm on Dunes, blizzard on Frostpeak, mist on Temple, power cut on
+  Harbor, a supply crate anyone can grab on Old Town.
+- **Leaderboards**: level (XP), this week's XP, kills and wins, everyone or friends. Kills / wins / weekly
+  boards need the extra columns at the end of `supabase/schema.sql` (run it once in the Supabase SQL Editor).
+- **Accessibility**: colour-blind team palettes (blue/yellow, teal/pink), announcer subtitles, reduced camera motion.
+- **Install as an app**: web app manifest + service worker (`sw.js`, network first) so it can be added to the home
+  screen and play offline against bots after one visit. A banner offers a reload when a new version is deployed.
+
+## CrazyGames
+
+`sh tools/build-crazygames.sh` builds `dist/riftline-crazygames.zip` to upload on the CrazyGames developer portal.
+That build switches on their SDK (`src/portal.js`): gameplay start/stop, loading events, "happy time" on wins
+and a midgame ad between matches (at most every 3 minutes, game muted meanwhile). On any other site the SDK
+is never loaded.
+
 ## Multiplayer later
 
 All game state lives in `game` (`src/state.js`) and every fighter goes through the same

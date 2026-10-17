@@ -1,7 +1,8 @@
+import { TEAM_TEXT } from './state.js';
 // Share card: a 1200×630 image of a match result (Victory/Defeat, score, your stats) that can be
 // sent with the phone's share sheet, or downloaded on desktop. Drawn on a canvas, nothing uploaded.
 const URL_TEXT = 'riftline-flame.vercel.app';
-const MODE_NAMES = { uplink: 'UPLINK', dom: 'DOMINATION', tdm: 'TEAM DEATHMATCH', kc: 'KILL CONFIRMED' };
+const MODE_NAMES = { uplink: 'UPLINK', dom: 'DOMINATION', tdm: 'TEAM DEATHMATCH', kc: 'KILL CONFIRMED', ffa: 'FREE-FOR-ALL' };
 
 export function drawCard(r) {
   const c = document.createElement('canvas'); c.width = 1200; c.height = 630;
@@ -27,10 +28,10 @@ export function drawCard(r) {
   // result + score
   g.font = font(800, 120); g.fillStyle = accent; g.fillText(r.title, 58, 170);
   g.font = font(700, 64);
-  g.fillStyle = '#7fb2ff'; g.fillText(String(r.my), 64, 310);
+  g.fillStyle = TEAM_TEXT[0]; g.fillText(String(r.my), 64, 310);
   const w1 = g.measureText(String(r.my)).width;
   g.fillStyle = '#9aa3ad'; g.fillText(' – ', 64 + w1, 310);
-  g.fillStyle = '#ffb066'; g.fillText(String(r.their), 64 + w1 + g.measureText(' – ').width, 310);
+  g.fillStyle = TEAM_TEXT[1]; g.fillText(String(r.their), 64 + w1 + g.measureText(' – ').width, 310);
   // stat tiles
   const tiles = [['KILLS', r.kills], ['DEATHS', r.deaths], ['ASSISTS', r.assists], ['ACCURACY', r.acc], ['BEST GUN', r.best]];
   tiles.forEach(([k, v], i) => {

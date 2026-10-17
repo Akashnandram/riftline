@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { game, now, sideSign } from './state.js';
+import { game, now, sideSign, TEAM_HEX } from './state.js';
 import { WEAPONS, AGENTS, MOVE, ECON, MATCH, HIT_ZONES, PENETRATION } from './config.js';
 import { rayBox, rayBoxRange, boxNormalAt, raySphere, surfaceOf, boxesNear, boxesAlongRay, STEP_UP } from './world.js';
 import { tracer, blood, impact, bulletHole, muzzleSprite } from './fx.js';
@@ -8,7 +8,7 @@ import { buildCharacter, setCharacterGun, animateCharacter, startRagdoll, flinch
 import { skinFor } from './progress.js';
 
 export const RADIUS = 0.35, HEIGHT = 1.8, EYE = 1.62;
-export const TEAM_COLORS = [0x3d8bff, 0xff8a1f];
+export const TEAM_COLORS = TEAM_HEX;   // same array: Settings can switch the palette
 
 export class Fighter {
   constructor({ id, name, team, agent, isPlayer = false, outfit = null, attach = null }) {
@@ -41,7 +41,7 @@ export class Fighter {
     this.sprinting = false; this.slideT = 0; this.slideDir = new THREE.Vector3(); this.sprintOutUntil = 0;
     this.crouch = 0; this.wantCrouch = false;
     this.burstLeft = 0; this.burstT = 0;
-    this.mesh = buildCharacter(TEAM_COLORS[team], this.agent, this.outfit);
+    this.mesh = buildCharacter(TEAM_COLORS[Math.min(1, team)], this.agent, this.outfit);   // free-for-all: everyone else looks like the enemy
     this.resetAbilities();
   }
 
@@ -119,7 +119,7 @@ export function resetFighterMesh(f) {
   removeRagdoll(f.mesh, game.scene);
   game.scene.remove(f.mesh);
   disposeCharacter(f.mesh);
-  f.mesh = buildCharacter(TEAM_COLORS[f.team], f.agent, f.outfit);
+  f.mesh = buildCharacter(TEAM_COLORS[Math.min(1, f.team)], f.agent, f.outfit);
   game.scene.add(f.mesh);
   setGunLook(f);
 }
@@ -263,7 +263,11 @@ export function moveFighter(f, wishX, wishZ, speed, jump, dt) {
   if (f.stepOff) { f.stepOff *= Math.exp(-14 * dt); if (Math.abs(f.stepOff) < 0.002) f.stepOff = 0; }
 
   if (game.phase === 'buy') {
-    if (sideSign(f.team) < 0) f.pos.x = Math.min(f.pos.x, -31);
+    // get-ready: stay in your spawn (free-for-all: near your own spawn spot, there are no spawn zones)
+    if (game.config.mode === 'ffa') {
+      const a = f.spawnAnchor;
+      if (a) { const dx = f.pos.x - a.x, dz = f.pos.z - a.z, d = Math.hypot(dx, dz); if (d > 1.5) { f.pos.x = a.x + dx / d * 1.5; f.pos.z = a.z + dz / d * 1.5; } }
+    } else if (sideSign(f.team) < 0) f.pos.x = Math.min(f.pos.x, -31);
     else f.pos.x = Math.max(f.pos.x, 31);
   }
 }

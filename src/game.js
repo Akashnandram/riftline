@@ -5,14 +5,18 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { game, now, sideSign } from './state.js';
+import { game, now, sideSign, TEAM_TEXT, setTeamPalette } from './state.js';
 import { WEAPONS, ARMOR, AGENTS, ECON, MATCH, MOVE, BOT_NAMES, GADGETS } from './config.js';
-import { buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx, setSpawnColors, SITE_RECTS, isWalkable, loadMap, MAP } from './world.js';
+import { snapWalkable, navHeight, buildWorld, raycastWorld, drawMapBoxes, smokes, BOUNDS, hasLOS, surfaceUnder, updateWorldFx, setSpawnColors, SITE_RECTS, isWalkable, loadMap, MAP } from './world.js';
 import { MAP_LIST, MAPS, randomMap } from './maps/index.js';
 import { resetCharge, hideCharge, updateCharge, tickAction, canPlant, canDefuse, siteAt, applyChargeSnapshot } from './objective.js';
 import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
-import { grantStreak, nextStreak, updateDrops, clearDrops, spawnDrop, removeDrop, STREAKS } from './streaks.js';
+import { grantStreak, nextStreak, updateDrops, clearDrops, spawnDrop, removeDrop, STREAKS, spawnNeutralDrop } from './streaks.js';
+import { MAP_EVENTS, EVENT_LEN, setEventVisual, updateEventVisual, resetEventVisual } from './events.js';
 import { shareResult } from './share.js';
+import { pingTarget, addPing, clearPings, updatePings, activePings } from './pings.js';
+import { watchUpdates } from './update.js';
+import { portal, initPortal, gameplayStart, gameplayStop, loadingStart, loadingStop, happytime, betweenMatches } from './portal.js';
 import { spawnTag, removeTag, clearTags, updateTags, tagSound, KC } from './tags.js';
 import { resetNode, hideNode, updateNode, applyNodeSnapshot, setupDomination, UPLINK, DOM, NODE_NAMES, nodeMode, KILL_PTS } from './uplink.js';
 import {
@@ -163,8 +167,8 @@ resize();
 function setViewModel(f) {
   const key = f.weaponKey();
   const skin = skinFor(key);
-  const ck = key + f.team + skin;
-  if (!vmCache[ck]) vmCache[ck] = applySkin(buildGun(key, TEAM_COLORS[f.team]), skin);
+  const ck = key + TEAM_COLORS[Math.min(1, f.team)] + skin;
+  if (!vmCache[ck]) vmCache[ck] = applySkin(buildGun(key, TEAM_COLORS[Math.min(1, f.team)]), skin);
   if (vmGun === vmCache[ck]) return;
   if (vmGun) vmHolder.remove(vmGun);
   vmGun = vmCache[ck];
@@ -248,6 +252,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (!locked()) return;
   if (e.button === 0) { mouse.left = true; mouse.leftPressed = true; }
   if (e.button === 2) { mouse.right = true; onRightClick(); }
+  if (e.button === 1) { e.preventDefault(); playerPing(); }
 });
 addEventListener('mouseup', (e) => { if (e.button === 0) mouse.left = false; if (e.button === 2) mouse.right = false; });
 addEventListener('contextmenu', (e) => e.preventDefault());
@@ -278,6 +283,7 @@ addEventListener('keydown', (e) => {
     case 'ability1': playerAbility('q'); break;
     case 'ability2': playerAbility('e'); break;
     case 'mute': setMuted(!isMuted()); break;
+    case 'ping': playerPing(); break;
   }
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -336,7 +342,7 @@ function playerAbility(slot) {
 // ---------------------------------------------------------------------------
 let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 4), difficulty: store.get('difficulty', 'normal'), mode: store.get('mode', 'uplink'), map: store.get('map', 'random') };
 // Uplink became the main mode: switch older saves over once
-if (!['uplink', 'dom', 'tdm', 'kc'].includes(choice.mode)) { choice.mode = 'uplink'; store.set('mode', 'uplink'); }
+if (!['uplink', 'dom', 'tdm', 'kc', 'ffa'].includes(choice.mode)) { choice.mode = 'uplink'; store.set('mode', 'uplink'); }
 if (![2, 4, 6].includes(choice.teamSize)) { choice.teamSize = 4; store.set('teamSize', 4); }
 if (choice.map !== 'random' && !MAPS[choice.map]) choice.map = 'random';
 
@@ -370,6 +376,7 @@ const MODE_HINTS = {
   elim: 'Round-based: wipe the other team. First to 5 rounds.',
   dom: 'Three Rift Nodes at once — North, Core and South. Every node your team holds scores points, and kills are worth 2. Take them, hold them, retake them. First to 200.',
   tdm: 'Respawn deathmatch, pick your loadout with B. First team to the kill target in 5 minutes wins.',
+  ffa: 'Everyone for themselves against bots: no teams, spawn anywhere, first to 20 kills in 5 minutes wins.',
   kc: 'Every fallen player drops a tag. Grab enemy tags to score, grab your own team\'s to deny them. First to the target in 5 minutes wins.',
 };
 
@@ -407,18 +414,69 @@ function renderProfile() {
   for (const b of $('dailyBox').querySelectorAll('.reroll')) b.onclick = () => { if (rerollDaily(+b.dataset.i)) { sfx('buy'); renderProfile(); } };
   $('newHere').hidden = profile.tutorialDone;
   $('modeHint').textContent = MODE_HINTS[choice.mode] || '';
+  const modeName = { uplink: 'Uplink', dom: 'Domination', tdm: 'Team Deathmatch', kc: 'Kill Confirmed', ffa: 'Free-for-all' }[choice.mode] || 'Uplink';
+  $('quickHint').textContent = profile.totals.matches === 0
+    ? 'Quick Play: a short 3v3 Uplink match against easy bots — a good first game. Deploy uses all the options above.'
+    : `Quick Play: a short 3v3 ${modeName} match on a random map. Deploy uses all the options above.`;
 }
 
 $('touchWarn').hidden = true;
 $('lockIn').onclick = () => { initAudio(); startLocal({ ...choice }); lock(); };
-/** Quick Play: short 3v3 Uplink on a random map (Super Easy bots for brand-new players). */
+/** Quick Play: a short 3v3 of the selected mode on a random map (Uplink and Super Easy bots for brand-new players). */
 function quickPlay() {
   const first = profile.totals.matches === 0;
   initAudio();
-  startLocal({ ...choice, mode: 'uplink', teamSize: 3, map: 'random', difficulty: first ? 'veryeasy' : choice.difficulty, quick: true });
+  startLocal({ ...choice, mode: first ? 'uplink' : choice.mode, teamSize: 3, map: 'random', difficulty: first ? 'veryeasy' : choice.difficulty, quick: true });
   lock();
 }
 $('quickPlay').onclick = quickPlay;
+// Install as an app: offline support (service worker) and an "Install app" button where the
+// browser offers it (Android / desktop Chrome); iPhone gets a how-to instead (Share → Add to Home Screen).
+const embedded = window.top !== window.self;   // inside a game portal's iframe: leave it to the host page
+if ('serviceWorker' in navigator && !embedded && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+let installPrompt = null;
+const standalone = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone;
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; $('btnInstall').hidden = false; });
+addEventListener('appinstalled', () => { $('btnInstall').hidden = true; installPrompt = null; });
+const iOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+if (iOS && !standalone && !embedded) $('btnInstall').hidden = false;
+$('btnInstall').onclick = async () => {
+  if (installPrompt) { installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; $('btnInstall').hidden = true; return; }
+  notice('<b>Install Riftline:</b> in Safari tap <b>Share</b>, then <b>Add to Home Screen</b>. It opens full-screen like an app.', 9);
+};
+/** A small message bar at the top of the screen (works in menus too). */
+// subtitles: announcer lines and match events as captions
+let captionT = 0;
+addEventListener('riftline:say', (e) => {
+  if (!S.subtitles || game.phase === 'menu') return;
+  const el = $('caption');
+  el.textContent = String(e.detail);
+  el.hidden = false;
+  clearTimeout(captionT);
+  captionT = setTimeout(() => { el.hidden = true; }, 2600);
+});
+function notice(html, secs = 5) {
+  document.getElementById('noticeBar')?.remove();
+  const el = document.createElement('div');
+  el.id = 'noticeBar'; el.innerHTML = html;
+  el.onclick = () => el.remove();
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), secs * 1000);
+}
+
+initPortal();
+
+// a newer version was deployed: offer a reload (menus / results only)
+watchUpdates(() => ['menu', 'over'].includes(game.phase), () => {
+  const bar = document.createElement('div');
+  bar.id = 'updateBar';
+  bar.innerHTML = '<span>A new version of Riftline is out</span><button class="big">RELOAD</button><button class="ghost" aria-label="Later">Later</button>';
+  bar.querySelector('.big').onclick = () => location.reload();
+  bar.querySelector('.ghost').onclick = () => bar.remove();
+  document.body.appendChild(bar);
+});
 $('buyClose').onclick = () => toggleBuy(false);
 // phones: rearrange / resize the touch buttons from the pause menu
 $('pauseControls').hidden = !IS_TOUCH;
@@ -432,6 +490,7 @@ initTouch({
   switchWeapon: () => { const p = game.player; if (!p?.alive) return; const slot = p.cur === 'primary' ? 'secondary' : 'primary'; switchWeapon(p, slot); if (net.role === 'client') net.lobby.toHost({ t: 'switch', slot }); },
   gadget: (slot) => { if (game.player?.alive && !game.paused) playerAbility(slot); },
   loadout: () => toggleBuy(),
+  ping: () => playerPing(),
   pause: () => setPaused(true),
 });
 // first visit: offer to jump straight into a match
@@ -605,6 +664,10 @@ function setPaused(p) {
 // Match / rounds
 // ---------------------------------------------------------------------------
 function teardown() {
+  resetEventVisual(); game.mapEvent = null;
+  clearPings();
+  endKillcam(); kcFrames = [];
+  if (kcGhost) { scene.remove(kcGhost); disposeCharacter(kcGhost); kcGhost = null; }
   hideCharge();
   hideNode();
   clearDrops();
@@ -636,7 +699,8 @@ function startLocal(cfg) {
   $('loading').hidden = false;
   $('loadingName').textContent = MAPS[id].name.toUpperCase();
   $('loadingDesc').textContent = MAPS[id].desc;
-  setTimeout(() => { try { startMatch(cfg, null, id); } finally { $('loading').hidden = true; } }, 40);
+  loadingStart();
+  setTimeout(() => { try { startMatch(cfg, null, id); } finally { $('loading').hidden = true; loadingStop(); } }, 40);
 }
 
 function startMatch(cfg, roster = null, mapId = null) {
@@ -653,7 +717,18 @@ function startMatch(cfg, roster = null, mapId = null) {
   const agentKeys = Object.keys(AGENTS);
   let id = 0;
   if (roster) buildRosterFighters(cfg, roster, false);
-  else for (let team = 0; team < 2; team++) {
+  else if (cfg.mode === 'ffa') {
+    // free-for-all: everyone is their own team (you are team 0)
+    names.sort(() => Math.random() - 0.5);
+    for (let i = 0; i < cfg.teamSize * 2; i++) {
+      const isPlayer = i === 0, agent = isPlayer ? cfg.agent : agentKeys[Math.floor(Math.random() * agentKeys.length)];
+      const f = new Fighter({ id: id++, name: isPlayer ? 'You' : names.pop(), team: i, agent, isPlayer, outfit: isPlayer ? outfitFor(agent) : randomOutfit(), attach: isPlayer ? myAttachments() : null });
+      if (!isPlayer) new BotBrain(f, cfg.difficulty);
+      scene.add(f.mesh);
+      game.fighters.push(f);
+      if (isPlayer) game.player = f;
+    }
+  } else for (let team = 0; team < 2; team++) {
     const used = team === 0 ? [cfg.agent] : [];
     for (let i = 0; i < cfg.teamSize; i++) {
       const isPlayer = team === 0 && i === 0;
@@ -670,8 +745,8 @@ function startMatch(cfg, roster = null, mapId = null) {
       if (isPlayer) game.player = f;
     }
   }
-  if (cfg.mode === 'tdm' || cfg.mode === 'kc' || cfg.mode === 'uplink' || cfg.mode === 'dom') {
-    game.tdmTarget = cfg.mode === 'tdm' ? cfg.teamSize * 8 : cfg.mode === 'kc' ? cfg.teamSize * KC.perPlayer : cfg.mode === 'dom' ? DOM.target : cfg.quick ? 75 : UPLINK.target;
+  if (['tdm', 'kc', 'ffa', 'uplink', 'dom'].includes(cfg.mode)) {
+    game.tdmTarget = cfg.mode === 'ffa' ? (cfg.quick ? 15 : 20) : cfg.mode === 'tdm' ? cfg.teamSize * 8 : cfg.mode === 'kc' ? cfg.teamSize * KC.perPlayer : cfg.mode === 'dom' ? (cfg.quick ? 120 : DOM.target) : cfg.quick ? 75 : UPLINK.target;
     game.firstBlood = false;
     resetHints();
     game.uplinkPts = [0, 0];
@@ -767,7 +842,7 @@ function startRound() {
   clearFx();
   clearRagdolls(scene);
   for (const f of game.fighters) resetFighterMesh(f);
-  const counts = [0, 0];
+  const counts = [0, 0], placed = [];
   for (const f of game.fighters) {
     if (!f.alive || game.round === 1 || halftime) {
       f.primary = null; f.secondary = 'p9'; f.armor = 0;
@@ -779,9 +854,9 @@ function startRound() {
     for (const k of [f.primary, f.secondary]) if (k) f.ammo[k] = f.gun(k).mag;
     f.cur = f.primary ? 'primary' : 'secondary';
     f.reloadT = 0; f.fireCD = 0; f.bloom = 0; f.recoil = 0; f.recoilYaw = 0; f.scoped = false;
-    f.pos.copy(spawnPoint(f.team, counts[f.team]++));
-    f.vel.set(0, 0, 0);
-    f.yaw = sideSign(f.team) < 0 ? -Math.PI / 2 : Math.PI / 2; f.pitch = 0;
+    if (game.config.mode === 'ffa') { f.pos.copy(ffaSpawnPoint(f, placed)); placed.push(f); f.spawnAnchor = f.pos.clone(); f.yaw = Math.atan2(f.pos.x, f.pos.z); }
+    else { f.pos.copy(spawnPoint(f.team, counts[f.team]++)); f.yaw = sideSign(f.team) < 0 ? -Math.PI / 2 : Math.PI / 2; }
+    f.vel.set(0, 0, 0); f.pitch = 0;
     f.wantCrouch = false; f.crouch = 0;
     f.blindUntil = f.revealedUntil = f.spottedUntil = f.overchargeUntil = f.slowUntil = f.furyUntil = f.nearsightUntil = 0;
     f.furyShots = 0; f.healLeft = 0; f.dashT = 0;
@@ -806,7 +881,8 @@ function startRound() {
       flashMsg(MAP.name.toUpperCase(), game.config.mode === 'dom'
         ? `DOMINATION · hold North, Core and South to score, kills +${KILL_PTS} · first to ${game.tdmTarget} · press B for your loadout`
         : `UPLINK · hold the Rift Node to score, kills +${KILL_PTS} · first to ${game.tdmTarget} · press B for your loadout`, 4);
-    } else if (game.config.mode === 'kc') flashMsg('KILL CONFIRMED', `${MAP.name} · grab enemy tags to score, grab your team's to deny · first to ${game.tdmTarget} · press B for your loadout`, 4.5);
+    } else if (game.config.mode === 'ffa') flashMsg('FREE-FOR-ALL', `${MAP.name} · everyone for themselves · first to ${game.tdmTarget} kills · press B for your loadout`, 4);
+    else if (game.config.mode === 'kc') flashMsg('KILL CONFIRMED', `${MAP.name} · grab enemy tags to score, grab your team's to deny · first to ${game.tdmTarget} · press B for your loadout`, 4.5);
     else flashMsg('TEAM DEATHMATCH', `${MAP.name} · first to ${game.tdmTarget} kills · press B for your loadout`, 4);
   } else if (plantMode) {
     resetCharge();
@@ -850,6 +926,11 @@ function matchOver() {
   const draw = scored && game.score[me] === game.score[them];
   const won = scored ? game.score[me] > game.score[them] : game.score[me] >= MATCH.roundsToWin;
   $('overTitle').textContent = draw ? 'DRAW' : won ? 'VICTORY' : 'DEFEAT';
+  if (game.config.mode === 'ffa' && !won && !draw) {
+    // free-for-all: say where you finished
+    const rank = 1 + game.fighters.filter((f) => f !== game.player && f.kills > game.player.kills).length;
+    $('overTitle').textContent = `${rank}${['ST', 'ND', 'RD'][rank - 1] || 'TH'} PLACE`;
+  }
   announce(draw ? 'Draw' : won ? 'Victory' : 'Defeat', true);
   updateMusic();
   $('overTitle').className = draw ? '' : won ? 'win' : 'lose';
@@ -872,8 +953,11 @@ function matchOver() {
   $('overBoard').innerHTML = scoreboardHTML(true);
   // results buttons: offline defaults, or lobby controls for online matches
   $('again').textContent = 'PLAY AGAIN'; $('toMenu').textContent = 'Main menu';
-  $('again').onclick = () => { if (game.config.mode === 'range') startRange(game.config.tutorial); else startLocal(game.config); lock(); };
-  $('toMenu').onclick = () => toMenu();
+  if (won) happytime();
+  // on game portals an ad may play between matches (the game is muted meanwhile)
+  const adThen = (fn) => async () => { await betweenMatches((m) => setMuted(m)); fn(); };
+  $('again').onclick = adThen(() => { if (game.config.mode === 'range') startRange(game.config.tutorial); else startLocal(game.config); lock(); });
+  $('toMenu').onclick = adThen(() => toMenu());
   if (online()) onlineMatchOver();
   $('over').hidden = false; $('hud').hidden = true;
   $('scoreboard').hidden = true;
@@ -889,8 +973,11 @@ function updatePhase(dt) {
   }
   if (game.phase === 'buy' && game.phaseT <= 0) {
     game.phase = 'live';
-    game.phaseT = dmMode() ? 300 : game.config.mode === 'dom' ? DOM.time : game.config.mode === 'uplink' ? (game.config.quick ? 300 : UPLINK.time) : MATCH.roundTime;
+    game.phaseT = dmMode() ? 300 : game.config.mode === 'dom' ? (game.config.quick ? 300 : DOM.time) : game.config.mode === 'uplink' ? (game.config.quick ? 300 : UPLINK.time) : MATCH.roundTime;
     if (game.node) game.node.until = game.time + UPLINK.rotate;
+    // this map's event, about a third of the way into the match
+    game.mapEvent = MAP_EVENTS[MAP.id] && respawnMode() && game.config.mode !== 'range' && net.role !== 'client'
+      ? { at: game.time + Math.min(150, Math.max(60, game.phaseT * 0.35)), until: 0, on: false } : null;
     // in TDM bots start hunting soon instead of walking lanes all match
     game.roundStartTime = dmMode() ? game.time - 25 : game.time;
     if (buyOpen) { toggleBuy(false); }
@@ -923,7 +1010,27 @@ function updatePhase(dt) {
 // Respawn modes (Team Deathmatch, Practice Range)
 // ---------------------------------------------------------------------------
 /** Best of several random spawn spots on the team's side: the one furthest from any enemy. */
+/**
+ * Free-for-all: a random spot well away from everyone else (one of the best few, so it varies).
+ * others: who to keep away from (at match start only the fighters placed so far).
+ */
+function ffaSpawnPoint(f, others = game.fighters.filter((e) => e !== f && e.alive)) {
+  const cand = [];
+  for (let i = 0; i < 40; i++) {
+    const x = BOUNDS.minX + 4 + Math.random() * (BOUNDS.maxX - BOUNDS.minX - 8), z = BOUNDS.minZ + 4 + Math.random() * (BOUNDS.maxZ - BOUNDS.minZ - 8);
+    if (!isWalkable(x, z)) continue;
+    let d = 60;
+    for (const e of others) d = Math.min(d, Math.hypot(e.pos.x - x, e.pos.z - z));
+    cand.push({ d, x, z });
+  }
+  if (!cand.length) return spawnPoint(0, f.id % 5);
+  cand.sort((a, b) => b.d - a.d);
+  const c = cand[Math.floor(Math.random() * Math.min(4, cand.length))];
+  return new THREE.Vector3(c.x, 0, c.z);
+}
+
 function tdmSpawnPoint(f) {
+  if (game.config.mode === 'ffa') return ffaSpawnPoint(f);
   const s = sideSign(f.team);
   let best = null, bestD = -1;
   for (let i = 0; i < 14; i++) {
@@ -952,7 +1059,7 @@ function respawnFighter(f) {
     f.yaw = 0;
   } else {
     f.pos.copy(tdmSpawnPoint(f));
-    f.yaw = sideSign(f.team) < 0 ? -Math.PI / 2 : Math.PI / 2; f.pitch = 0;
+    f.yaw = game.config.mode === 'ffa' ? Math.atan2(f.pos.x, f.pos.z) : sideSign(f.team) < 0 ? -Math.PI / 2 : Math.PI / 2; f.pitch = 0;
     giveLoadout(f);
   }
   if (f.brain) { f.brain.planRound(); if (nodeMode()) f.brain.plan = { side: 'uplink' }; }
@@ -1200,6 +1307,7 @@ function clientMsg(m) {
     case 'streak': { const f = byFid(m.fid); const s = STREAKS.find((x) => x.key === m.k); if (f && s) game.onStreak(f, s); break; }
     case 'sdrop': spawnDrop(m.id, V3(m.p), m.team); break;
     case 'tag': spawnTag(m.id, V3(m.p), m.team); break;
+    case 'mapEvent': applyMapEvent(m.on); break;
     case 'tgone': { removeTag(m.id); if (m.by === game.player.id) tagTaken(m.kind); break; }
     case 'sgone': { removeDrop(m.id); if (m.by === game.player.id) { medal('SUPPLIES COLLECTED', 'LMG · armor · gadgets', '#6effc4'); trackDrop(); } break; }
     case 'hurt': { hurtT = 0.35; const a = byFid(m.a); if (a) game.onPlayerDamaged(a, m.d); sfx('hurt', { vol: 0.6 }); break; }
@@ -1225,6 +1333,7 @@ function clientMsg(m) {
       break;
     }
     case 'charge': { const f = byFid(m.by); game.onChargeEvent(m.kind, f); break; }
+    case 'ping': { const f = byFid(m.by); if (f && f !== game.player) onPing(f, { kind: m.kind, pos: V3(m.p), target: m.tid != null ? byFid(m.tid) : null, node: m.node }); break; }
     case 'callout': { const f = byFid(m.fid); if (f && f.team === game.player.team) comms(m.text, f.name); break; }
     case 'over': game.score = m.score; matchOver(); break;
     case 'drop': {  // a remote human left; the host replaced them with a bot
@@ -1338,6 +1447,13 @@ function hostMsg(m, peerId) {
     case 'buy': hostBuyFor(f, m.item); break;
     case 'switch': switchWeapon(f, m.slot); break;
     case 'reload': startReload(f); break;
+    case 'ping': {
+      if (!f.alive || now() - (f.lastPingT ?? -9) < 0.6) break;
+      f.lastPingT = now();
+      const tgt = m.tid != null ? game.fighters.find((x) => x.id === m.tid && x.team !== f.team) : null;
+      onPing(f, { kind: m.kind, pos: V3(m.p), target: tgt, node: m.node });
+      break;
+    }
   }
 }
 
@@ -1401,8 +1517,8 @@ game.onKill = (attacker, target, opts) => {
   const mine = attacker === game.player || target === game.player;
   el.className = 'kf' + (mine ? ' mine' : '');
   const wpn = opts.ability || (opts.weapon ? WEAPONS[opts.weapon].name : '');
-  const an = attacker && attacker !== target ? `<span class="t${attacker.team}">${attacker.name}</span>` : '';
-  el.innerHTML = `${an}<span class="w">${wpn}${opts.head ? ' ✦' : ''}</span><span class="t${target.team}">${target.name}</span>`;
+  const an = attacker && attacker !== target ? `<span class="${teamCls(attacker)}">${attacker.name}</span>` : '';
+  el.innerHTML = `${an}<span class="w">${wpn}${opts.head ? ' ✦' : ''}</span><span class="${teamCls(target)}">${target.name}</span>`;
   $('killfeed').prepend(el);
   setTimeout(() => el.remove(), 6000);
   while ($('killfeed').children.length > 6) $('killfeed').lastChild.remove();
@@ -1414,7 +1530,7 @@ game.onKill = (attacker, target, opts) => {
     target.streak = 0;
     vibe(140, 0);
     target.lastKiller = attacker && attacker !== target ? attacker : null;
-    if (respawning && mode !== 'range') showDeathCard(attacker, opts);
+    if (respawning && mode !== 'range') { showDeathCard(attacker, opts); startKillcam(attacker); }
     else flashMsg('ELIMINATED', (attacker ? `by ${attacker.name}` : '') + (respawning ? ` · back in ${mode === 'range' ? 1.5 : 3.5}s` : ''), 2.2, 'lose');
     game.specIndex = -1;
     if (!respawning) setTimeout(() => { if (!game.player.alive && game.phase !== 'over') { game.spectating = true; cycleSpectate(); } }, 1200);
@@ -1442,7 +1558,7 @@ function killMedals(p, target, opts) {
   const firstBloodBefore = game.firstBlood;
   p.multi = t - (p.lastKillT ?? -99) < 4 ? (p.multi || 1) + 1 : 1;
   p.lastKillT = t;
-  medal(`ELIMINATED ${target.name.toUpperCase()}`, nodeMode() ? `+${KILL_PTS} team points · +100 XP` : dmMode() && game.config.mode === 'tdm' ? '+1 team kill · +100 XP' : '+100 XP', '#ffffff');
+  medal(`ELIMINATED ${target.name.toUpperCase()}`, nodeMode() ? `+${KILL_PTS} team points · +100 XP` : game.config.mode === 'tdm' ? '+1 team kill · +100 XP' : game.config.mode === 'ffa' ? '+1 kill · +100 XP' : '+100 XP', '#ffffff');
   if (!game.firstBlood) { game.firstBlood = true; medal('FIRST BLOOD', '+50', '#ff8a1f'); }
   if (opts.head) medal('HEADSHOT', '+25', '#ffd23f');
   const dist = p.pos.distanceTo(target.pos);
@@ -1458,13 +1574,134 @@ function killMedals(p, target, opts) {
   if (nodeMode() && (game.nodes || []).some((n) => target.pos.distanceTo(n.pos) < UPLINK.radius + 3)) medal('NODE DEFENDER', '+25', '#6effc4');
 }
 
+// ---------------------------------------------------------------------------
+// Pings (see pings.js): mark an enemy or a spot for your team; bot teammates react
+// ---------------------------------------------------------------------------
+let lastPingT = -9;
+function playerPing() {
+  const p = game.player;
+  if (!p?.alive || !['live', 'buy'].includes(game.phase) || game.config.mode === 'range' || now() - lastPingT < 0.6) return;
+  lastPingT = now();
+  const tg = pingTarget(p);
+  if (net.role === 'client') {
+    net.lobby.toHost({ t: 'ping', kind: tg.kind, p: A3(tg.pos), tid: tg.target ? tg.target.id : null, node: tg.node || null });
+    onPing(p, tg, true);
+  } else onPing(p, tg);
+}
+/** Someone pinged: show it to their team; the host also tells bots and other players. */
+function onPing(by, tg, localOnly = false) {
+  if (net.role === 'host' && !localOnly) hostEvent({ t: 'ping', by: by.id, kind: tg.kind, p: A3(tg.pos), tid: tg.target ? tg.target.id : null, node: tg.node || null });
+  if (net.role !== 'client') {
+    for (const a of game.fighters) {
+      if (!a.brain || a.team !== by.team || !a.alive) continue;
+      if (tg.kind === 'enemy' && tg.target) { tg.target.spottedUntil = Math.max(tg.target.spottedUntil, now() + 5); a.brain.intel(tg.target); }
+      else if (a.pos.distanceTo(tg.pos) < 45 && !a.brain.visible) { a.brain.intelPos = tg.pos.clone(); a.brain.intelT = now(); }
+    }
+  }
+  if (by.team !== game.player.team) return;
+  addPing(by, tg.kind, tg.pos, tg.target, tg.node);
+  sfx('ping', { vol: 0.5 });
+  if (by !== game.player) comms(tg.kind === 'enemy' ? 'Enemy here!' : tg.kind === 'node' ? 'Going for the node' : 'Over here', by.name);
+}
+
+// ---------------------------------------------------------------------------
+// Killcam: everyone's pose is recorded for the last few seconds; after you die the 2.5 s before
+// your death replay from your killer's eyes (you appear as a stand-in figure).
+// ---------------------------------------------------------------------------
+const KC_KEEP = 4, KC_LEN = 2.4, KC_DELAY = 0.6, KC_STRIDE = 9;   // kill moment plays ~3 s after death (respawn is 3.5 s)
+let kcFrames = [], killcam = null, kcGhost = null;
+const _kv = new THREE.Vector3();
+function recordKillcam() {
+  const t = now(), fs = game.fighters, d = new Float32Array(fs.length * KC_STRIDE);
+  for (let i = 0; i < fs.length; i++) {
+    const f = fs[i], o = i * KC_STRIDE;
+    d[o] = f.pos.x; d[o + 1] = f.pos.y; d[o + 2] = f.pos.z; d[o + 3] = f.yaw; d[o + 4] = f.pitch;
+    d[o + 5] = f.alive ? 1 : 0; d[o + 6] = f.crouch; d[o + 7] = Math.hypot(f.vel.x, f.vel.z); d[o + 8] = f.onGround ? 1 : 0;
+  }
+  kcFrames.push({ t, d });
+  while (kcFrames.length && t - kcFrames[0].t > KC_KEEP) kcFrames.shift();
+}
+function startKillcam(killer) {
+  const p = game.player;
+  if (!S.killcam || !killer || killer === p || !respawnMode() || game.config.mode === 'range' || kcFrames.length < 10) return;
+  const t = now();
+  killcam = { killer, ki: game.fighters.indexOf(killer), pi: game.fighters.indexOf(p), deathT: t, startAt: t + KC_DELAY, from: t - KC_LEN, frames: kcFrames.slice() };
+}
+function endKillcam() {
+  if (!killcam) return;
+  killcam = null;
+  if (kcGhost) kcGhost.visible = false;
+  $('killcamTag').hidden = true;
+  $('crosshair').style.visibility = '';
+  $('deathCard').classList.remove('kc');
+  document.body.classList.remove('killcam');
+}
+/** Pose of fighter i at recorded time t: [x, y, z, yaw, pitch, alive, crouch, speed, onGround]. */
+function kcSample(frames, i, t) {
+  let a = frames[0], b = frames[frames.length - 1];
+  for (let k = 1; k < frames.length; k++) if (frames[k].t >= t) { a = frames[k - 1]; b = frames[k]; break; }
+  const o = i * KC_STRIDE, k = b.t > a.t ? Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t))) : 0;
+  if (o + KC_STRIDE > a.d.length || o + KC_STRIDE > b.d.length) return null;
+  const L = (j) => a.d[o + j] + (b.d[o + j] - a.d[o + j]) * k;
+  const yaw = a.d[o + 3] + Math.atan2(Math.sin(b.d[o + 3] - a.d[o + 3]), Math.cos(b.d[o + 3] - a.d[o + 3])) * k;
+  return [L(0), L(1), L(2), yaw, L(4), (k < 0.5 ? a : b).d[o + 5], L(6), L(7), (k < 0.5 ? a : b).d[o + 8]];
+}
+/** Called after the normal camera update: when a killcam is playing, take over the view. */
+function updateKillcam(dt) {
+  const p = game.player;
+  if (!killcam) return;
+  if (p.alive || game.phase !== 'live' || !game.fighters[killcam.ki]) { endKillcam(); return; }
+  const t = now();
+  if (t < killcam.startAt) return;
+  const rt = killcam.from + (t - killcam.startAt);
+  if (rt > killcam.deathT + 0.35) { endKillcam(); return; }
+  const fr = killcam.frames, ks = kcSample(fr, killcam.ki, rt);
+  if (!ks) { endKillcam(); return; }
+  // camera: the killer's eyes
+  camera.position.set(ks[0], ks[1] + EYE - MOVE.crouchDrop * ks[6], ks[2]);
+  camera.rotation.set(ks[4], ks[3], 0);
+  vmRoot.visible = false;
+  $('killcamTag').hidden = false;
+  $('killcamTag').innerHTML = `<b>KILLCAM</b> ${killcam.killer.name}`;
+  $('crosshair').style.visibility = 'hidden';
+  $('deathCard').classList.add('kc');
+  document.body.classList.add('killcam');
+  // everyone else where they were then
+  game.fighters.forEach((f, i) => {
+    if (f === p) return;
+    const m = f.mesh;
+    if (i === killcam.ki) { m.visible = false; return; }
+    if (!f.alive || m.userData.ragdoll) return;
+    const s = kcSample(fr, i, rt);
+    if (!s || !s[5]) return;
+    m.position.set(s[0], s[1], s[2]); m.rotation.y = s[3]; m.visible = true;
+    animateCharacter(m, { yaw: s[3], pitch: s[4], vel: _kv.set(-Math.sin(s[3]) * s[7], 0, -Math.cos(s[3]) * s[7]), onGround: !!s[8], kick: 0, reload: -1, crouch: s[6] }, dt);
+  });
+  // you, alive until the moment you died (your real body is the ragdoll after that)
+  const ps = kcSample(fr, killcam.pi, rt);
+  if (!kcGhost || kcGhost.userData.forFighter !== p) {
+    if (kcGhost) { scene.remove(kcGhost); disposeCharacter(kcGhost); }
+    kcGhost = buildCharacter(TEAM_COLORS[Math.min(1, p.team)], p.agent, p.outfit);
+    kcGhost.userData.forFighter = p;
+    setCharacterGun(kcGhost, p.weaponKey(), skinFor(p.weaponKey()));
+    scene.add(kcGhost);
+  }
+  const before = rt < killcam.deathT && ps;
+  kcGhost.visible = !!before;
+  p.mesh.visible = !before;
+  if (before) {
+    kcGhost.position.set(ps[0], ps[1], ps[2]); kcGhost.rotation.y = ps[3];
+    animateCharacter(kcGhost, { yaw: ps[3], pitch: ps[4], vel: _kv.set(-Math.sin(ps[3]) * ps[7], 0, -Math.cos(ps[3]) * ps[7]), onGround: !!ps[8], kick: 0, reload: -1, crouch: ps[6] }, dt);
+  }
+}
+
 function showDeathCard(killer, opts) {
   const p = game.player, el = $('deathCard');
   if (!killer || killer === p) {
     el.innerHTML = '<small>YOU WERE ELIMINATED</small><h3>WATCH YOUR STEP</h3><div class="respawn" id="dcRespawn"></div>';
   } else {
     const wpn = opts.ability || (opts.weapon ? WEAPONS[opts.weapon].name : '—');
-    el.innerHTML = `<small>KILLED BY</small><h3 style="color:${killer.team === p.team ? '#7fb2ff' : '#ffb066'}">${killer.name}</h3>
+    el.innerHTML = `<small>KILLED BY</small><h3 style="color:${killer.team === p.team ? TEAM_TEXT[0] : TEAM_TEXT[1]}">${killer.name}</h3>
       <div class="dcs"><span>${killer.agent.name}</span><span><b>${wpn}</b>${opts.head ? ' · headshot' : ''}</span>
       <span><b>${Math.ceil(killer.hp)}</b> HP left</span><span><b>${Math.round(p.pos.distanceTo(killer.pos))}</b> m</span></div>
       <div class="respawn" id="dcRespawn"></div>`;
@@ -1591,6 +1828,24 @@ onWeaponLevelUp((w, lv) => {
   medal(`${WEAPONS[w].name.toUpperCase()} LEVEL ${lv}`, un ? `${un.name} unlocked` : camo ? `${camo.name} camo unlocked` : '', '#ffd23f');
 });
 onChallengeDone((c) => { medal('CHALLENGE COMPLETE', `${c.desc} · +${c.xp} XP`, '#6effc4'); sfx('capture', { vol: 0.6 }); });
+/** Host / offline: start or end this map's event, and tell everyone. */
+function mapEvent(on) {
+  if (net.role === 'host') hostEvent({ t: 'mapEvent', on });
+  const d = MAP_EVENTS[MAP.id];
+  if (on && d?.kind === 'airdrop') {
+    const s = snapWalkable({ x: (Math.random() - 0.5) * 6, z: (Math.random() - 0.5) * 6 });
+    spawnNeutralDrop(new THREE.Vector3(s.x, navHeight(s.x, s.z), s.z));
+  }
+  applyMapEvent(on);
+}
+/** Every peer: the event's look and announcement. */
+function applyMapEvent(on) {
+  const d = MAP_EVENTS[MAP.id];
+  if (!d) return;
+  setEventVisual(MAP.id, on);
+  if (on) { flashMsg(d.name, d.sub, 3.5); announce(d.name.toLowerCase(), true); comms(d.name + ': ' + d.sub, null, true); sfx('round', { vol: 0.5 }); }
+  else if (d.kind !== 'airdrop') comms(`${d.name} is clearing`, null, true);
+}
 let tagId = 0;
 /** Kill Confirmed: the player picked up a tag. */
 function tagTaken(kind) {
@@ -1629,8 +1884,9 @@ function kickViewModel(w) {
   rs.vr.y += (Math.random() - 0.5) * 2 * v.yaw * W;
   rs.vr.z += (Math.random() - 0.5) * 2 * v.roll * W;
   shotT = 0;
-  fovKick = Math.max(fovKick, v.shake * 0.45);
-  camShake = Math.max(camShake, v.shake);
+  const motion = S.reduceMotion ? 0 : 1;   // accessibility: reduce camera motion
+  fovKick = Math.max(fovKick, v.shake * 0.45 * motion);
+  camShake = Math.max(camShake, v.shake * motion);
   if (w.key === 'magnum') cylAngle += Math.PI / 3;
 }
 function stepSprings(dt) {
@@ -1691,9 +1947,9 @@ const BUY_LIST = [
   { key: 'cover', cat: 'gadget', hot: 'k' },
 ];
 
-const respawnMode = () => ['tdm', 'kc', 'uplink', 'dom', 'range'].includes(game.config?.mode);
+const respawnMode = () => ['tdm', 'kc', 'ffa', 'uplink', 'dom', 'range'].includes(game.config?.mode);
 /** Team Deathmatch-style modes (kills / tags, no objective). */
-const dmMode = () => ['tdm', 'kc'].includes(game.config?.mode);
+const dmMode = () => ['tdm', 'kc', 'ffa'].includes(game.config?.mode);
 const freeLoadout = respawnMode;
 function toggleBuy(force) {
   const open = force ?? !buyOpen;
@@ -1783,6 +2039,8 @@ function setupAbilityHud() {
 }
 
 function buildPips() {
+  // free-for-all: no squads to show
+  document.querySelector('.mp-pips').hidden = game.config.mode === 'ffa';
   for (const team of [0, 1]) {
     const el = $('pips' + team);
     el.innerHTML = '';
@@ -1801,13 +2059,17 @@ function buildPips() {
   }
 }
 
+/** Kill-feed / scoreboard colour class: your team blue, the rest orange (in free-for-all that's everyone else). */
+const teamCls = (f) => 't' + (game.config.mode === 'ffa' ? (f === game.player ? 0 : 1) : f.team);
+
 function scoreboardHTML(final = false) {
   const rows = [];
-  for (const team of [0, 1]) {
-    const list = game.fighters.filter((f) => f.team === team).sort((a, b) => b.kills - a.kills || b.damage - a.damage);
+  const ffa = game.config.mode === 'ffa';
+  for (const team of ffa ? [0] : [0, 1]) {
+    const list = game.fighters.filter((f) => ffa || f.team === team).sort((a, b) => b.kills - a.kills || b.damage - a.damage);
     for (const f of list) {
       const acs = Math.round(f.damage / Math.max(1, game.round));
-      rows.push(`<tr class="t${team}${f.isPlayer ? ' me' : ''}${!f.alive && !final ? ' dead' : ''}">
+      rows.push(`<tr class="${teamCls(f)}${f.isPlayer ? ' me' : ''}${!f.alive && !final ? ' dead' : ''}">
         <td><span class="agentTag" style="color:${f.agent.color}">${f.agent.name}</span></td><td>${f.name}</td>
         <td class="num">${f.kills}</td><td class="num">${f.deaths}</td><td class="num">${f.assists}</td><td class="num">${acs}</td>
         <td class="num">${team === game.player.team && !final ? '¤ ' + f.credits : ''}</td></tr>`);
@@ -1840,7 +2102,7 @@ function drawMinimap() {
   drawMapBoxes(mg, toPx);
   if (nodeMode()) for (const n of game.nodes || []) {
     const [x, y] = toPx(n.pos.x, n.pos.z);
-    mg.strokeStyle = n.owner >= 0 ? (n.owner ? '#ffb066' : '#7fb2ff') : '#ffffff'; mg.lineWidth = 2;
+    mg.strokeStyle = n.owner >= 0 ? TEAM_TEXT[n.owner] : '#ffffff'; mg.lineWidth = 2;
     mg.beginPath(); mg.arc(x, y, UPLINK.radius * MM_S, 0, Math.PI * 2); mg.stroke();
     mg.fillStyle = mg.strokeStyle; mg.font = 'bold 10px "Chakra Petch", sans-serif'; mg.textAlign = 'center';
     mg.fillText(n.key, x, y + 4);
@@ -1848,15 +2110,21 @@ function drawMinimap() {
   // Kill Confirmed tags: enemy ones (score) in their colour, your team's (deny) hollow
   for (const tg of game.tags || []) {
     const [x, y] = toPx(tg.pos.x, tg.pos.z);
-    mg.strokeStyle = mg.fillStyle = tg.team ? '#ffb066' : '#7fb2ff'; mg.lineWidth = 1.5;
+    mg.strokeStyle = mg.fillStyle = TEAM_TEXT[Math.min(1, tg.team)]; mg.lineWidth = 1.5;
     mg.beginPath(); mg.moveTo(x, y - 4); mg.lineTo(x + 4, y); mg.lineTo(x, y + 4); mg.lineTo(x - 4, y); mg.closePath();
     if (tg.team !== p.team) mg.fill(); else mg.stroke();
   }
+  // your team's pings
+  for (const pg of activePings()) {
+    const [x, y] = toPx(pg.pos.x, pg.pos.z);
+    mg.fillStyle = pg.kind === 'enemy' ? '#ff4d5e' : '#ffd23f';
+    mg.beginPath(); mg.moveTo(x, y - 6); mg.lineTo(x + 5, y); mg.lineTo(x, y + 6); mg.lineTo(x - 5, y); mg.closePath(); mg.fill();
+  }
   // supply drops waiting to be picked up
   for (const d of game.drops || []) {
-    if (d.team !== p.team) continue;
+    if (d.team >= 0 && d.team !== p.team) continue;
     const [x, y] = toPx(d.pos.x, d.pos.z);
-    mg.fillStyle = '#6effc4'; mg.fillRect(x - 3.5, y - 3.5, 7, 7);
+    mg.fillStyle = d.team < 0 ? '#ffd23f' : '#6effc4'; mg.fillRect(x - 3.5, y - 3.5, 7, 7);
   }
   const c = game.charge;
   if (game.config.mode === 'plant' && c && (c.state === 'planted' || c.state === 'dropped') && (p.team === game.attackers || c.state === 'planted')) {
@@ -1884,7 +2152,7 @@ function drawMinimap() {
       mg.beginPath(); mg.moveTo(x, y);
       mg.arc(x, y, 34, -f.yaw - Math.PI / 2 - 0.6, -f.yaw - Math.PI / 2 + 0.6); mg.closePath(); mg.fill();
     }
-    mg.fillStyle = f.isPlayer ? '#ffffff' : ally ? '#3d8bff' : '#ff8a1f';
+    mg.fillStyle = f.isPlayer ? '#ffffff' : ally ? TEAM_TEXT[0] : TEAM_TEXT[1];
     mg.beginPath(); mg.arc(x, y, f.isPlayer ? 4.5 : 4, 0, Math.PI * 2); mg.fill();
     mg.strokeStyle = f.agent.color; mg.lineWidth = 1.5; mg.stroke();
   }
@@ -1916,8 +2184,8 @@ function updateHud(dt) {
   const sideTxt = plantMode ? (p.team === game.attackers ? ' · ATTACK' : ' · DEFEND') : '';
   // say what the team score counts: kills (TDM), tags (Kill Confirmed) or capture points (Uplink / Domination)
   if (dmMode() || nodeMode()) {
-    const m = game.config.mode, name = { tdm: 'TEAM DM', kc: 'KILL CONFIRMED', uplink: 'UPLINK', dom: 'DOMINATION' }[m];
-    setText('roundLabel', `${name} · ${game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget} ${m === 'tdm' ? 'KILLS' : m === 'kc' ? 'TAGS' : 'PTS'}`}`);
+    const m = game.config.mode, name = { tdm: 'TEAM DM', kc: 'KILL CONFIRMED', ffa: 'FREE-FOR-ALL', uplink: 'UPLINK', dom: 'DOMINATION' }[m];
+    setText('roundLabel', `${name} · ${game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget} ${m === 'tdm' || m === 'ffa' ? 'KILLS' : m === 'kc' ? 'TAGS' : 'PTS'}`}`);
   }
   else setText('roundLabel', planted && game.phase === 'live' ? `CHARGE ON ${game.charge.site}` : game.phase === 'buy' ? 'BUY PHASE' + sideTxt : `ROUND ${game.round}${sideTxt}`);
   $('credits').hidden = freeLoadout();
@@ -1937,6 +2205,8 @@ function updateHud(dt) {
     $('actionBar').classList.toggle('defuse', planted);
     $('actionBar').firstChild.style.width = `${Math.min(100, actionProgress * 100)}%`;
   }
+  // free-for-all: left = your kills, right = the leader among everyone else
+  if (game.config.mode === 'ffa' && net.role !== 'client') game.score = [p.kills, Math.max(0, ...game.fighters.filter((f) => f !== p).map((f) => f.kills))];
   setText('score0', String(game.score[0])); setText('score1', String(game.score[1]));
   $('score0').classList.toggle('mine', p.team === 0); $('score1').classList.toggle('mine', p.team === 1);
   // your own kills / deaths / assists under the team score
@@ -1953,7 +2223,7 @@ function updateHud(dt) {
   if (game.config.mode === 'dom' && game.nodes?.length) {
     $('ub0').style.width = `${Math.min(100, (game.score[0] / game.tdmTarget) * 100)}%`;
     $('ub1').style.width = `${Math.min(100, (game.score[1] / game.tdmTarget) * 100)}%`;
-    const html = game.nodes.map((n) => `<span style="color:${n.contested ? '#fff' : n.owner < 0 ? '#8a8f96' : n.owner ? '#ffb066' : '#7fb2ff'}">${n.contested ? '◆' : '●'}${n.key}</span>`).join(' ');
+    const html = game.nodes.map((n) => `<span style="color:${n.contested ? '#fff' : n.owner < 0 ? '#8a8f96' : TEAM_TEXT[n.owner]}">${n.contested ? '◆' : '●'}${n.key}</span>`).join(' ');
     if (textCache.get('uplinkTxt') !== html) { textCache.set('uplinkTxt', html); $('uplinkTxt').innerHTML = html; }
     $('uplinkTxt').style.color = '';
   } else if (node && game.config.mode === 'uplink') {
@@ -1963,7 +2233,7 @@ function updateHud(dt) {
     const where = NODE_NAMES[node.key] || node.key;
     const st = node.contested ? 'CONTESTED' : node.owner === mine ? `${where} · HELD` : node.owner >= 0 ? `${where} · ENEMY` : Math.abs(node.c) > 0.02 ? `CAPTURING ${Math.round(Math.abs(node.c) * 100)}%` : `${where} · ${left}s`;
     setText('uplinkTxt', st);
-    $('uplinkTxt').style.color = node.contested ? '#fff' : node.owner >= 0 ? (node.owner ? '#ffb066' : '#7fb2ff') : '#e8eaed';
+    $('uplinkTxt').style.color = node.contested ? '#fff' : node.owner >= 0 ? TEAM_TEXT[node.owner] : '#e8eaed';
   }
   $('hpVal').classList.toggle('low', viewF.hp <= 30);
   setText('armorVal', String(Math.ceil(viewF.armor)));
@@ -2000,7 +2270,7 @@ function updateHud(dt) {
 
   // overlays
   $('centerMsg').style.opacity = t < msgUntil ? 1 : 0;
-  $('flash').style.opacity = p.alive && t < flashEnd ? Math.min(1, (flashEnd - t) / Math.min(0.6, flashDur)) : 0;
+  $('flash').style.opacity = p.alive && t < flashEnd ? Math.min(S.reduceMotion ? 0.65 : 1, (flashEnd - t) / Math.min(0.6, flashDur)) : 0;
   $('blackout').style.opacity = p.alive && t < (p.nearsightUntil || 0) ? Math.min(1, (p.nearsightUntil - t) / 0.5) : 0;
   hurtT = Math.max(0, hurtT - dt);
   $('vignette').style.opacity = Math.max(hurtT / 0.35, p.alive && p.hp < 30 ? 0.35 : 0);
@@ -2153,8 +2423,9 @@ function updateCamera(dt) {
     p.viewEye(camera.position);
     const hs = Math.hypot(p.vel.x, p.vel.z);
     bob += hs * dt * 1.6;
-    if (p.onGround && hs > 1) camera.position.y += Math.sin(bob * 2) * 0.022 * (1 - aimK * 0.7) * (game.thirdPerson ? 0.4 : 1);
-    camera.position.y -= landT * 0.12;
+    const motion = S.reduceMotion ? 0 : 1;
+    if (p.onGround && hs > 1) camera.position.y += Math.sin(bob * 2) * 0.022 * (1 - aimK * 0.7) * (game.thirdPerson ? 0.4 : 1) * motion;
+    camera.position.y -= landT * 0.12 * motion;
     if (game.thirdPerson) {
       // over the right shoulder: pull back from a shoulder point, never through walls
       const yw = p.yaw + p.recoilYaw, pt = p.pitch + p.recoil;
@@ -2177,7 +2448,7 @@ function updateCamera(dt) {
     camera.rotation.set(p.pitch + p.recoil + (Math.random() - 0.5) * shake, p.yaw + p.recoilYaw + (Math.random() - 0.5) * shake, 0);
     // lean into strafes + a little roll from the kick
     const side = Math.cos(p.yaw) * p.vel.x - Math.sin(p.yaw) * p.vel.z;
-    camera.rotation.z = -side * 0.0025 + rs.r.z * 0.08;
+    camera.rotation.z = (-side * 0.0025 + rs.r.z * 0.08) * motion;
     if (!p.alive) {
       // death cam: pull back from your body, then turn to face whoever got you
       const body = p.mesh.userData.ragdoll ? p.mesh.userData.ragdoll.pts[0] : p.pos;
@@ -2314,6 +2585,8 @@ function frameCap() {
 let due = 0;
 function frame(ts) {
   requestAnimationFrame(frame);
+  // game portals want to know when someone is actually playing
+  if (portal.active) { if (['buy', 'live', 'end'].includes(game.phase) && !game.paused && document.visibilityState === 'visible') gameplayStart(); else gameplayStop(); }
   const cap = frameCap();
   if (cap) {
     const iv = 1000 / cap;
@@ -2356,9 +2629,16 @@ function step(dt) {
   if (!client) separateFighters();
   playerVision();
   noiseFootsteps(dt);
+  if (respawnMode() && game.config.mode !== 'range') recordKillcam();
   updateAbilities(dt);
   updateDrops(dt, !client);
   if (game.config.mode === 'kc') updateTags(dt, !client);
+  const ev = game.mapEvent;
+  if (ev && !client && game.phase === 'live') {
+    if (!ev.on && !ev.done && game.time >= ev.at) { ev.on = true; ev.until = game.time + EVENT_LEN; mapEvent(true); }
+    else if (ev.on && game.time >= ev.until) { ev.on = false; ev.done = true; mapEvent(false); }
+  }
+  updateEventVisual(dt);
   if (game.config.mode === 'plant') { updateCharge(dt); if (!client) updateTactics(); }
   if (nodeMode() && !client) updateNode(dt);
   updateFx(dt);
@@ -2367,6 +2647,8 @@ function step(dt) {
   for (const f of game.fighters) updateFighterMesh(f, dt, game.player);
   if (game.config.mode === 'range') updateRange(dt);
   updateCamera(dt);
+  updateKillcam(dt);
+  updatePings(camera, game.player);
   if (debugCam) { camera.position.copy(debugCam.pos); camera.lookAt(debugCam.look); vmRoot.visible = false; }
   updateHud(dt);
 }

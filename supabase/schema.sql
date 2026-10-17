@@ -36,3 +36,15 @@ drop policy if exists "accept requests" on public.friendships;
 create policy "accept requests" on public.friendships for update using (auth.uid() = addressee) with check (status = 'accepted');
 drop policy if exists "remove friendships" on public.friendships;
 create policy "remove friendships" on public.friendships for delete using (auth.uid() in (requester, addressee));
+
+-- Leaderboards (added later — safe to re-run): lifetime kills / wins / matches and this week's XP,
+-- written by each player's own client after every match.
+alter table public.profiles add column if not exists kills integer not null default 0 check (kills >= 0);
+alter table public.profiles add column if not exists wins integer not null default 0 check (wins >= 0);
+alter table public.profiles add column if not exists matches integer not null default 0 check (matches >= 0);
+alter table public.profiles add column if not exists week text;
+alter table public.profiles add column if not exists week_xp integer not null default 0 check (week_xp >= 0);
+create index if not exists profiles_xp_idx on public.profiles (xp desc);
+create index if not exists profiles_kills_idx on public.profiles (kills desc);
+create index if not exists profiles_wins_idx on public.profiles (wins desc);
+create index if not exists profiles_week_idx on public.profiles (week, week_xp desc);
