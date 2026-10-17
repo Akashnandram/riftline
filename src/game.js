@@ -1909,7 +1909,8 @@ function updateHud(dt) {
   $('timer').classList.toggle('charge', planted && game.phase === 'live');
   const plantMode = game.config.mode === 'plant';
   const sideTxt = plantMode ? (p.team === game.attackers ? ' · ATTACK' : ' · DEFEND') : '';
-  if (dmMode() || nodeMode()) setText('roundLabel', game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget}`);
+  // say what the team score counts: kills (TDM), tags (Kill Confirmed) or capture points (Uplink / Domination)
+  if (dmMode() || nodeMode()) setText('roundLabel', game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget} ${game.config.mode === 'tdm' ? 'KILLS' : game.config.mode === 'kc' ? 'TAGS' : 'POINTS'}`);
   else setText('roundLabel', planted && game.phase === 'live' ? `CHARGE ON ${game.charge.site}` : game.phase === 'buy' ? 'BUY PHASE' + sideTxt : `ROUND ${game.round}${sideTxt}`);
   $('credits').hidden = freeLoadout();
   for (const f of game.fighters) f.pipEl?.classList.toggle('carrier', plantMode && game.charge?.carrier === f && f.team === p.team);
@@ -1929,6 +1930,9 @@ function updateHud(dt) {
     $('actionBar').firstChild.style.width = `${Math.min(100, actionProgress * 100)}%`;
   }
   setText('score0', String(game.score[0])); setText('score1', String(game.score[1]));
+  $('score0').classList.toggle('mine', p.team === 0); $('score1').classList.toggle('mine', p.team === 1);
+  // your own kills / deaths / assists under the team score
+  if (game.config.mode !== 'range') setText('mpMe', `YOU   ${p.kills} K  ·  ${p.deaths} D  ·  ${p.assists} A`);
   for (const f of game.fighters) f.pipEl?.classList.toggle('dead', !f.alive);
 
   // vitals
