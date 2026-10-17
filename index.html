@@ -106,7 +106,7 @@
   <div id="menu" class="screen">
     <div class="menuInner menuGrid">
       <div class="menuTop">
-        <div id="profileBadge" class="badge"></div>
+        <button id="profileBadge" class="badge" title="Your profile and stats"></button>
         <div class="navBtns">
           <button id="btnTutorial" class="ghost">Tutorial</button>
           <button id="btnRange" class="ghost">Practice Range</button>
@@ -120,7 +120,7 @@
         <div id="newHere" hidden>New here? <button id="btnTutorial2">Play the 2-minute tutorial</button> (+500 XP)</div>
         <div class="opts">
           <div class="opt"><h4>GAME MODE</h4><div class="seg" id="segMode">
-            <button data-v="uplink" class="on">Uplink</button><button data-v="dom">Domination</button><button data-v="tdm">Team Deathmatch</button>
+            <button data-v="uplink" class="on">Uplink</button><button data-v="dom">Domination</button><button data-v="tdm">Team Deathmatch</button><button data-v="kc">Kill Confirmed</button>
           </div></div>
           <div class="opt"><h4>MAP</h4><div class="seg" id="segMap"></div></div>
           <div class="opt"><h4>SQUAD SIZE</h4><div class="seg" id="segSize">
@@ -162,6 +162,7 @@
       <div class="row">
         <button id="again" class="big">PLAY AGAIN</button>
         <button id="toMenu" class="ghost">Main menu</button>
+        <button id="shareRes" class="ghost">Share result</button>
       </div>
     </div>
   </div>
@@ -178,6 +179,14 @@
     </div>
   </div>
   <div id="settings" class="screen dim" hidden></div>
+  <div id="profile" class="screen dim" hidden>
+    <div class="menuInner settings">
+      <div class="set-head"><h2>PROFILE</h2><div id="pfLevel"></div><button class="big" id="pfDone">DONE</button></div>
+      <div id="pfStats" class="pf-stats"></div>
+      <h3 class="pf-h">WEAPONS</h3>
+      <div id="pfWeapons"></div>
+    </div>
+  </div>
   <div id="loadout" class="screen dim" hidden>
     <div class="menuInner loadout">
       <div class="set-head"><h2>LOADOUT &amp; SKINS</h2><div id="loadoutLevel"></div><button class="big" id="loadoutDone">DONE</button></div>

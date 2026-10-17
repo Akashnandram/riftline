@@ -12,6 +12,8 @@ import { MAP_LIST, MAPS, randomMap } from './maps/index.js';
 import { resetCharge, hideCharge, updateCharge, tickAction, canPlant, canDefuse, siteAt, applyChargeSnapshot } from './objective.js';
 import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
 import { grantStreak, nextStreak, updateDrops, clearDrops, spawnDrop, removeDrop, STREAKS } from './streaks.js';
+import { shareResult } from './share.js';
+import { spawnTag, removeTag, clearTags, updateTags, tagSound, KC } from './tags.js';
 import { resetNode, hideNode, updateNode, applyNodeSnapshot, setupDomination, UPLINK, DOM, NODE_NAMES, nodeMode } from './uplink.js';
 import {
   Fighter, TEAM_COLORS, EYE, updateFighterMesh, moveFighter, separateFighters, tryFire, startReload,
@@ -24,7 +26,7 @@ import { buy, botBuy, gadgetCost } from './shop.js';
 import { updateFx, clearFx, smokePuff, tracer, impact, blood, muzzleSprite, ring, burstSphere, spark, bulletHole } from './fx.js';
 import { initAudio, sfx, setMuted, isMuted, updateListener, setVolume, music, setMusicVolume, announce, setAnnouncer } from './audio.js';
 import { S, save as saveSettings, held, isAction, drawCrosshair, openSettings, onSettingsChange } from './settings.js';
-import { outfitFor, setOutfit } from './progress.js';
+import { outfitFor, setOutfit, myAttachments, cleanAttachments, ATTACHMENTS, attachmentsFor, toggleAttachment, weaponLevelInfo, weaponStats, skinUnlocked, trackShot, trackHit, trackDeath, trackConfirm, onWeaponLevelUp, WEAPON_MAX } from './progress.js';
 import { OUTFIT_SLOTS, randomOutfit, cleanOutfit } from './outfits.js';
 import { buildCharacter, animateCharacter, setCharacterGun } from './characters.js';
 import { profile, levelInfo, unlockedSkins, skinFor, equip, startTracking, trackKill, trackRound, trackObjective, trackStreak, trackDrop, onChallengeDone, rerollDaily, resetsIn, finishMatch, completeTutorial, categoryOf } from './progress.js';
@@ -334,7 +336,7 @@ function playerAbility(slot) {
 // ---------------------------------------------------------------------------
 let choice = { agent: store.get('agent', 'volt'), teamSize: store.get('teamSize', 4), difficulty: store.get('difficulty', 'normal'), mode: store.get('mode', 'uplink'), map: store.get('map', 'random') };
 // Uplink became the main mode: switch older saves over once
-if (!['uplink', 'dom', 'tdm'].includes(choice.mode)) { choice.mode = 'uplink'; store.set('mode', 'uplink'); }
+if (!['uplink', 'dom', 'tdm', 'kc'].includes(choice.mode)) { choice.mode = 'uplink'; store.set('mode', 'uplink'); }
 if (![2, 4, 6].includes(choice.teamSize)) { choice.teamSize = 4; store.set('teamSize', 4); }
 if (choice.map !== 'random' && !MAPS[choice.map]) choice.map = 'random';
 
@@ -368,11 +370,36 @@ const MODE_HINTS = {
   elim: 'Round-based: wipe the other team. First to 5 rounds.',
   dom: 'Three Rift Nodes at once — North, Core and South. Every node your team holds scores points; take them, hold them, retake them. First to 200.',
   tdm: 'Respawn deathmatch, pick your loadout with B. First team to the kill target in 5 minutes wins.',
+  kc: 'Every fallen player drops a tag. Grab enemy tags to score, grab your own team\'s to deny them. First to the target in 5 minutes wins.',
 };
+
+/** Profile screen: lifetime stats and per-weapon levels. */
+function openProfile() {
+  const T = profile.totals, L = levelInfo();
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '—');
+  const hrs = Math.floor(T.seconds / 3600), mins = Math.floor((T.seconds % 3600) / 60);
+  $('pfLevel').textContent = `Level ${L.level} · ${profile.xp.toLocaleString()} XP total`;
+  const tiles = [
+    ['Matches', T.matches], ['Wins', `${T.wins} <small>${pct(T.wins, T.matches)}</small>`], ['Kills', T.kills], ['Deaths', T.deaths],
+    ['K/D', T.deaths ? (T.kills / T.deaths).toFixed(2) : T.kills ? T.kills.toFixed(2) : '—'], ['Assists', T.assists],
+    ['Headshots', `${T.headshots} <small>${pct(T.headshots, T.kills)}</small>`], ['Accuracy', pct(T.hits, T.shots)],
+    ['Damage', T.damage.toLocaleString()], ['Longest kill', T.longest ? `${T.longest} m` : '—'], ['Tags collected', T.confirms],
+    ['Time played', hrs ? `${hrs}h ${mins}m` : `${mins}m`],
+  ];
+  $('pfStats').innerHTML = tiles.map(([k, v]) => `<div class="pf-tile"><b>${v}</b><span>${k}</span></div>`).join('');
+  const rows = Object.values(WEAPONS).map((w) => ({ w, st: weaponStats(w.key), wl: weaponLevelInfo(w.key) }))
+    .sort((a, b) => b.st.xp - a.st.xp);
+  $('pfWeapons').innerHTML = `<table class="pf-table"><tr><th>WEAPON</th><th>LEVEL</th><th class="num">KILLS</th><th class="num">HEADSHOT %</th><th class="num">ACCURACY</th><th class="num">DAMAGE</th></tr>
+    ${rows.map(({ w, st, wl }) => `<tr><td>${w.name}</td><td><div class="pf-lv"><b>${wl.max ? 'MAX' : wl.level}</b><div class="bar"><i style="width:${wl.max ? 100 : (wl.into / wl.need) * 100}%"></i></div></div></td>
+      <td class="num">${st.kills}</td><td class="num">${pct(st.heads, st.kills)}</td><td class="num">${pct(st.hits, st.shots)}</td><td class="num">${Math.round(st.dmg).toLocaleString()}</td></tr>`).join('')}</table>`;
+  $('profile').hidden = false;
+}
+$('profileBadge').onclick = openProfile;
+$('pfDone').onclick = () => { $('profile').hidden = true; };
 
 function renderProfile() {
   const L = levelInfo();
-  $('profileBadge').innerHTML = `<span class="lv">${L.level}</span><div><div>LEVEL ${L.level}</div><div class="bar"><i style="width:${(L.into / L.need) * 100}%"></i></div><small>${L.into} / ${L.need} XP</small></div>`;
+  $('profileBadge').innerHTML = `<span class="lv">${L.level}</span><div><div>LEVEL ${L.level} <em>· PROFILE ›</em></div><div class="bar"><i style="width:${(L.into / L.need) * 100}%"></i></div><small>${L.into} / ${L.need} XP</small></div>`;
   const row = (c, i, daily) => `<div class="ch${c.done ? ' done' : ''}"><span>${c.done ? '✓ ' : ''}${c.desc}<small>${c.prog} / ${c.goal}</small></span>
     <div class="bar"><i style="width:${(c.prog / c.goal) * 100}%"></i></div><em>+${c.xp}</em>${daily && !c.done && !profile.daily.rerolled ? `<button class="reroll" data-i="${i}" title="Swap this challenge (once a day)">↻</button>` : '<i></i>'}</div>`;
   $('dailyBox').innerHTML = `<h4>DAILY CHALLENGES <small>· new in ${resetsIn('daily')}${profile.daily.rerolled ? '' : ' · ↻ swaps one (once a day)'}</small></h4>${profile.daily.list.map((c, i) => row(c, i, true)).join('')}
@@ -438,6 +465,7 @@ initOnlineUI({
   choice: () => choice,
   setAgent: (a) => { choice.agent = a; store.set('agent', a); },
   outfitFor: (a) => outfitFor(a),
+  attachments: () => myAttachments(),
   startOnline: (lobby, msg) => startOnlineMatch(lobby, msg),
   exitToLobby,
   toMenu,
@@ -487,19 +515,30 @@ function openLoadout() {
 const OF_PREVIEW_V = new THREE.Vector3();
 function renderLoadout() {
   if (lo.tab === 'outfits') return renderOutfits();
-  $('loHint').textContent = 'Level up by playing matches to unlock more skins. Any unlocked skin works on every gun.';
+  $('loHint').textContent = 'Player level unlocks skins for every gun. Kills with a gun level it up: attachments and mastery camos for that gun.';
   lo.cam.position.set(0, 0.04, 1.5); lo.cam.lookAt(0, 0.04, 0); lo.char = null;
   const L = levelInfo();
-  $('loadoutLevel').textContent = `Level ${L.level} · ${unlockedSkins().length}/${SKINS.length} skins unlocked`;
-  $('loWeapons').innerHTML = Object.values(WEAPONS).map((w) => `<button data-k="${w.key}" class="${w.key === lo.weapon ? 'on' : ''}">${w.name}<small>${SKIN_BY_KEY[skinFor(w.key)].name}</small></button>`).join('');
+  $('loadoutLevel').textContent = `Level ${L.level} · ${unlockedSkins().length}/${SKINS.filter((x) => !x.wlevel).length} skins unlocked`;
+  $('loWeapons').innerHTML = Object.values(WEAPONS).map((w) => {
+    const wl = weaponLevelInfo(w.key);
+    return `<button data-k="${w.key}" class="${w.key === lo.weapon ? 'on' : ''}">${w.name}<small>${wl.max ? 'MAX' : 'Lv ' + wl.level} · ${SKIN_BY_KEY[skinFor(w.key)].name}</small></button>`;
+  }).join('');
   $('loWeapons').querySelectorAll('button').forEach((b) => { b.onclick = () => { lo.weapon = b.dataset.k; renderLoadout(); }; });
-  const cur = skinFor(lo.weapon);
-  $('loName').textContent = `${WEAPONS[lo.weapon].name.toUpperCase()} · ${SKIN_BY_KEY[cur].name.toUpperCase()}`;
+  const cur = skinFor(lo.weapon), wl = weaponLevelInfo(lo.weapon), st = weaponStats(lo.weapon), on = attachmentsFor(lo.weapon);
+  $('loName').innerHTML = `${WEAPONS[lo.weapon].name.toUpperCase()} · ${SKIN_BY_KEY[cur].name.toUpperCase()}
+    <div class="wl"><b>${wl.max ? 'MASTERED' : 'LEVEL ' + wl.level}</b><div class="bar"><i style="width:${wl.max ? 100 : (wl.into / wl.need) * 100}%"></i></div>
+    <small>${wl.max ? `${WEAPON_MAX}/${WEAPON_MAX}` : `${wl.into} / ${wl.need} XP`} · ${st.kills} kills · ${st.shots ? Math.round((st.hits / st.shots) * 100) : 0}% accuracy</small></div>
+    <div class="att">${ATTACHMENTS.map((a) => {
+      const locked = a.lv > wl.level, active = on.includes(a.key);
+      return `<button class="${active ? 'on' : ''}${locked ? ' locked' : ''}" data-a="${a.key}" ${locked ? 'disabled' : ''} title="${a.desc}">${a.name}<small>${locked ? `Gun level ${a.lv}` : active ? a.desc : 'Off · tap to use'}</small></button>`;
+    }).join('')}</div>`;
+  $('loName').querySelectorAll('.att button:not(.locked)').forEach((b) => { b.onclick = () => { toggleAttachment(lo.weapon, b.dataset.a); renderLoadout(); }; });
   $('loSkins').className = 'lo-skins';
   $('loSkins').innerHTML = SKINS.map((sk) => {
-    const locked = sk.level > L.level;
-    return `<button class="skin${sk.key === cur ? ' on' : ''}${locked ? ' locked' : ''}" data-s="${sk.key}" ${locked ? 'disabled' : ''}>
-      <div class="sw2" style="background:${sk.swatch}"></div>${sk.name}<small>${locked ? `Unlocks at level ${sk.level}` : sk.key === cur ? 'Equipped' : 'Click to equip'}</small></button>`;
+    const locked = !skinUnlocked(lo.weapon, sk.key);
+    const need = sk.wlevel ? `${WEAPONS[lo.weapon].name} level ${sk.wlevel}` : `Unlocks at level ${sk.level}`;
+    return `<button class="skin${sk.key === cur ? ' on' : ''}${locked ? ' locked' : ''}${sk.wlevel ? ' mastery' : ''}" data-s="${sk.key}" ${locked ? 'disabled' : ''}>
+      <div class="sw2" style="background:${sk.swatch}"></div>${sk.name}<small>${locked ? need : sk.key === cur ? 'Equipped' : sk.wlevel ? 'Mastery camo' : 'Click to equip'}</small></button>`;
   }).join('');
   $('loSkins').querySelectorAll('.skin:not(.locked)').forEach((b) => { b.onclick = () => { equip(lo.weapon, b.dataset.s); renderLoadout(); }; });
   // preview model, centred and scaled to fit
@@ -569,6 +608,7 @@ function teardown() {
   hideCharge();
   hideNode();
   clearDrops();
+  clearTags();
   game.tac = null;
   clearAbilities();
   clearRagdolls(scene);
@@ -581,6 +621,10 @@ function switchMap(id) {
   if (!loadMap(id)) return;
   buildWorld(scene, renderer, QUALITY);
   renderer.shadowMap.needsUpdate = true;
+  // the old map's reflection map was just disposed: point the gun view (and loadout preview) at the new one,
+  // otherwise every metal part there (gun steel, ejected brass) reflects black
+  vmScene.environment = scene.environment;
+  if (lo) lo.sc.environment = scene.environment;
 }
 /** 'random' (or nothing) → a random map id, avoiding the one just played. */
 const resolveMap = (m) => (m && m !== 'random' && MAPS[m] ? m : randomMap(MAP?.id));
@@ -619,15 +663,15 @@ function startMatch(cfg, roster = null, mapId = null) {
         agent = (free.length ? free : agentKeys)[Math.floor(Math.random() * (free.length || agentKeys.length))];
         used.push(agent);
       }
-      const f = new Fighter({ id: id++, name: isPlayer ? 'You' : names.pop(), team, agent, isPlayer, outfit: isPlayer ? outfitFor(agent) : randomOutfit() });
+      const f = new Fighter({ id: id++, name: isPlayer ? 'You' : names.pop(), team, agent, isPlayer, outfit: isPlayer ? outfitFor(agent) : randomOutfit(), attach: isPlayer ? myAttachments() : null });
       if (!isPlayer) new BotBrain(f, cfg.difficulty);
       scene.add(f.mesh);
       game.fighters.push(f);
       if (isPlayer) game.player = f;
     }
   }
-  if (cfg.mode === 'tdm' || cfg.mode === 'uplink' || cfg.mode === 'dom') {
-    game.tdmTarget = cfg.mode === 'tdm' ? cfg.teamSize * 8 : cfg.mode === 'dom' ? DOM.target : cfg.quick ? 75 : UPLINK.target;
+  if (cfg.mode === 'tdm' || cfg.mode === 'kc' || cfg.mode === 'uplink' || cfg.mode === 'dom') {
+    game.tdmTarget = cfg.mode === 'tdm' ? cfg.teamSize * 8 : cfg.mode === 'kc' ? cfg.teamSize * KC.perPlayer : cfg.mode === 'dom' ? DOM.target : cfg.quick ? 75 : UPLINK.target;
     game.firstBlood = false;
     resetHints();
     game.uplinkPts = [0, 0];
@@ -727,12 +771,12 @@ function startRound() {
   for (const f of game.fighters) {
     if (!f.alive || game.round === 1 || halftime) {
       f.primary = null; f.secondary = 'p9'; f.armor = 0;
-      f.ammo = { p9: WEAPONS.p9.mag };
+      f.ammo = { p9: f.gun('p9').mag };
       f.resetAbilities();          // gadgets are lost on death
     }
     if (game.round === 1 || halftime) f.credits = ECON.start;
     f.alive = true; f.hp = 100;
-    for (const k of [f.primary, f.secondary]) if (k) f.ammo[k] = WEAPONS[k].mag;
+    for (const k of [f.primary, f.secondary]) if (k) f.ammo[k] = f.gun(k).mag;
     f.cur = f.primary ? 'primary' : 'secondary';
     f.reloadT = 0; f.fireCD = 0; f.bloom = 0; f.recoil = 0; f.recoilYaw = 0; f.scoped = false;
     f.pos.copy(spawnPoint(f.team, counts[f.team]++));
@@ -752,7 +796,7 @@ function startRound() {
   }
   // west spawn zone shows the colour of whoever spawns there
   setSpawnColors(TEAM_COLORS[sideSign(0) < 0 ? 0 : 1], TEAM_COLORS[sideSign(0) < 0 ? 1 : 0]);
-  if (game.config.mode === 'tdm' || nodeMode()) {
+  if (dmMode() || nodeMode()) {
     for (const f of game.fighters) { giveLoadout(f); f.armor = 50; f.streak = 0; }
     hideCharge();
     game.phaseT = 5;
@@ -762,7 +806,8 @@ function startRound() {
       flashMsg(MAP.name.toUpperCase(), game.config.mode === 'dom'
         ? `DOMINATION · hold North, Core and South to score · first to ${game.tdmTarget} · press B for your loadout`
         : `UPLINK · hold the Rift Node to score · first to ${game.tdmTarget} · press B for your loadout`, 4);
-    } else flashMsg('TEAM DEATHMATCH', `${MAP.name} · first to ${game.tdmTarget} kills · press B for your loadout`, 4);
+    } else if (game.config.mode === 'kc') flashMsg('KILL CONFIRMED', `${MAP.name} · grab enemy tags to score, grab your team's to deny · first to ${game.tdmTarget} · press B for your loadout`, 4.5);
+    else flashMsg('TEAM DEATHMATCH', `${MAP.name} · first to ${game.tdmTarget} kills · press B for your loadout`, 4);
   } else if (plantMode) {
     resetCharge();
     planTactics();
@@ -801,14 +846,28 @@ function matchOver() {
   if (net.role === 'host') hostEvent({ t: 'over', score: game.score });
   game.phase = 'over';
   const me = game.player.team, them = 1 - me;
-  const scored = game.config.mode === 'tdm' || nodeMode();
+  const scored = dmMode() || nodeMode();
   const draw = scored && game.score[me] === game.score[them];
   const won = scored ? game.score[me] > game.score[them] : game.score[me] >= MATCH.roundsToWin;
   $('overTitle').textContent = draw ? 'DRAW' : won ? 'VICTORY' : 'DEFEAT';
   announce(draw ? 'Draw' : won ? 'Victory' : 'Defeat', true);
   updateMusic();
   $('overTitle').className = draw ? '' : won ? 'win' : 'lose';
-  renderXpSummary(finishMatch({ won, assists: game.player.assists }));
+  const sum = finishMatch({ won, assists: game.player.assists });
+  renderXpSummary(sum);
+  // share card (not for the practice range)
+  const st = sum?.stats, p = game.player;
+  $('shareRes').hidden = game.config.mode === 'range';
+  $('shareRes').textContent = 'Share result';
+  $('shareRes').onclick = async () => {
+    $('shareRes').textContent = '…';
+    const res = await shareResult({
+      title: $('overTitle').textContent, my: game.score[me], their: game.score[them], mode: game.config.mode, map: MAP.name,
+      kills: p.kills, deaths: p.deaths, assists: p.assists, level: levelInfo().level,
+      acc: st?.shots ? Math.round((st.hits / st.shots) * 100) + '%' : '—', best: st?.best ? WEAPONS[st.best.weapon].name : '—',
+    });
+    $('shareRes').textContent = res === 'downloaded' ? 'Saved image · text copied' : res === 'shared' ? 'Shared!' : 'Share result';
+  };
   $('overScore').textContent = `${game.score[0]} – ${game.score[1]}`;
   $('overBoard').innerHTML = scoreboardHTML(true);
   // results buttons: offline defaults, or lobby controls for online matches
@@ -824,16 +883,16 @@ function matchOver() {
 function updatePhase(dt) {
   if (game.config.mode === 'range') return;
   game.phaseT -= dt;
-  if ((game.config.mode === 'tdm' || nodeMode()) && game.phase === 'live') {
+  if ((dmMode() || nodeMode()) && game.phase === 'live') {
     if (Math.max(...game.score) >= game.tdmTarget || game.phaseT <= 0) matchOver();
     return;
   }
   if (game.phase === 'buy' && game.phaseT <= 0) {
     game.phase = 'live';
-    game.phaseT = game.config.mode === 'tdm' ? 300 : game.config.mode === 'dom' ? DOM.time : game.config.mode === 'uplink' ? (game.config.quick ? 300 : UPLINK.time) : MATCH.roundTime;
+    game.phaseT = dmMode() ? 300 : game.config.mode === 'dom' ? DOM.time : game.config.mode === 'uplink' ? (game.config.quick ? 300 : UPLINK.time) : MATCH.roundTime;
     if (game.node) game.node.until = game.time + UPLINK.rotate;
     // in TDM bots start hunting soon instead of walking lanes all match
-    game.roundStartTime = game.config.mode === 'tdm' ? game.time - 25 : game.time;
+    game.roundStartTime = dmMode() ? game.time - 25 : game.time;
     if (buyOpen) { toggleBuy(false); }
     flashMsg('FIGHT', '', 1.2);
     sfx('round');
@@ -924,7 +983,7 @@ function startRange(tutorial) {
   game.time = 0; game.round = 1; game.score = [0, 0]; game.lossStreak = [0, 0]; game.noises = []; game.attackers = 0;
   Object.assign(rs2, { shots: 0, hits: 0, heads: 0, kills: 0, ttk: 0, ttkN: 0 });
   for (const k in tutFlags) delete tutFlags[k];
-  const p = new Fighter({ id: 0, name: 'You', team: 0, agent: choice.agent, isPlayer: true, outfit: outfitFor(choice.agent) });
+  const p = new Fighter({ id: 0, name: 'You', team: 0, agent: choice.agent, isPlayer: true, outfit: outfitFor(choice.agent), attach: myAttachments() });
   game.player = p; game.fighters.push(p); scene.add(p.mesh);
   RANGE_TARGETS.forEach((slot, i) => {
     const d = new Fighter({ id: i + 1, name: `Target ${i + 1}`, team: 1, agent: Object.keys(AGENTS)[i % 4] });
@@ -1028,7 +1087,17 @@ function renderXpSummary(sum) {
   if (!sum) { el.innerHTML = ''; return; }
   const { before, after } = sum;
   const pct = (L) => (L.into / L.need) * 100;
-  el.innerHTML = `${sum.lines.map(([l, x]) => `<div class="xp-line"><span>${l}</span><em>+${x}</em></div>`).join('')}
+  const S2 = sum.stats;
+  const hl = S2 ? [
+    ['K / D', `${S2.kills} / ${S2.deaths}`],
+    ['Accuracy', S2.shots ? Math.round((S2.hits / S2.shots) * 100) + '%' : '—'],
+    ['Damage', S2.dmg.toLocaleString()],
+    ['Longest kill', S2.longest ? `${S2.longest} m` : '—'],
+    ['Best weapon', S2.best ? `${WEAPONS[S2.best.weapon].name} <small>${S2.best.kills} kills</small>` : '—'],
+  ] : [];
+  const hlHtml = hl.length ? `<div class="hl">${hl.map(([k, v]) => `<div><b>${v}</b><span>${k}</span></div>`).join('')}</div>
+    ${(S2.wlevels || []).map(([w, lv]) => `<div class="unlock">${WEAPONS[w].name} reached level ${lv}${ATTACHMENTS.find((a) => a.lv === lv) ? ` — ${ATTACHMENTS.find((a) => a.lv === lv).name} unlocked` : SKINS.find((x) => x.wlevel === lv) ? ` — ${SKINS.find((x) => x.wlevel === lv).name} camo unlocked` : ''}</div>`).join('')}` : '';
+  el.innerHTML = hlHtml + `${sum.lines.map(([l, x]) => `<div class="xp-line"><span>${l}</span><em>+${x}</em></div>`).join('')}
     <div class="xp-line xp-total"><span>Total</span><em>+${sum.total} XP</em></div>
     <div class="xp-line"><span>Level ${after.level}${after.level > before.level ? ' — LEVEL UP!' : ''}</span><span>${after.into} / ${after.need}</span></div>
     <div class="xp-bar"><i style="width:${after.level > before.level ? 0 : pct(before)}%"></i></div>
@@ -1061,7 +1130,7 @@ function startOnlineMatch(lobby, msg) {
 function buildRosterFighters(cfg, roster, client) {
   for (const r of roster) {
     const isPlayer = r.owner === me.id;
-    const f = new Fighter({ id: r.fid, name: isPlayer ? `${r.name} (you)` : r.name, team: r.team, agent: r.agent, isPlayer, outfit: cleanOutfit(r.outfit) });
+    const f = new Fighter({ id: r.fid, name: isPlayer ? `${r.name} (you)` : r.name, team: r.team, agent: r.agent, isPlayer, outfit: cleanOutfit(r.outfit), attach: cleanAttachments(r.attach) });
     if (r.owner && !isPlayer) f.netOwner = r.owner;          // a remote human
     if (!client && !r.owner) new BotBrain(f, cfg.difficulty);
     f.human = !!r.owner;
@@ -1082,6 +1151,7 @@ function startClientMatch(cfg, roster) {
   game.time = 0; game.round = 0; game.score = [0, 0]; game.lossStreak = [0, 0]; game.noises = [];
   buildRosterFighters(cfg, roster, true);
   if (cfg.mode === 'tdm') game.tdmTarget = cfg.teamSize * 8;
+  if (cfg.mode === 'kc') game.tdmTarget = cfg.teamSize * KC.perPlayer;
   if (cfg.mode === 'uplink') game.tdmTarget = cfg.quick ? 75 : UPLINK.target;
   if (cfg.mode === 'dom') game.tdmTarget = DOM.target;
   game.firstBlood = false;
@@ -1129,6 +1199,8 @@ function clientMsg(m) {
     case 'hit': { const t = byFid(m.v); if (t) game.onPlayerHit(t, m.d, m.h, m.k); break; }
     case 'streak': { const f = byFid(m.fid); const s = STREAKS.find((x) => x.key === m.k); if (f && s) game.onStreak(f, s); break; }
     case 'sdrop': spawnDrop(m.id, V3(m.p), m.team); break;
+    case 'tag': spawnTag(m.id, V3(m.p), m.team); break;
+    case 'tgone': { removeTag(m.id); if (m.by === game.player.id) tagTaken(m.kind); break; }
     case 'sgone': { removeDrop(m.id); if (m.by === game.player.id) { medal('SUPPLIES COLLECTED', 'LMG · armor · gadgets', '#6effc4'); trackDrop(); } break; }
     case 'hurt': { hurtT = 0.35; const a = byFid(m.a); if (a) game.onPlayerDamaged(a, m.d); sfx('hurt', { vol: 0.6 }); break; }
     case 'spawn': {
@@ -1138,7 +1210,7 @@ function clientMsg(m) {
       if (!p.alive) { p.alive = true; resetFighterMesh(p); }
       p.pos.set(...m.p); p.vel.set(0, 0, 0); p.yaw = m.yaw; p.pitch = 0;
       p.reloadT = 0; p.crouch = 0;
-      for (const k of [p.primary, p.secondary]) if (k) p.ammo[k] = WEAPONS[k].mag;
+      for (const k of [p.primary, p.secondary]) if (k) p.ammo[k] = p.gun(k).mag;
       game.spectating = false;
       setViewModel(p);
       break;
@@ -1171,6 +1243,7 @@ function clientRound(m) {
   const p = game.player;
   p.blindUntil = p.nearsightUntil = 0;
   if (game.config.mode === 'tdm') flashMsg('TEAM DEATHMATCH', `First to ${game.tdmTarget} kills · press B to change loadout (free)`, 4);
+  else if (game.config.mode === 'kc') flashMsg('KILL CONFIRMED', `Grab enemy tags to score · first to ${game.tdmTarget} · press B to change loadout (free)`, 4);
   else if (game.config.mode === 'plant') {
     const attacking = p.team === game.attackers;
     flashMsg(m.halftime ? 'SWITCHING SIDES' : `ROUND ${game.round}`, `${attacking ? 'ATTACK — plant the Rift Charge on A or B' : 'DEFEND — stop the plant or defuse it'} · press B to buy`, 3.5);
@@ -1313,8 +1386,11 @@ game.onKill = (attacker, target, opts) => {
     if (net.role !== 'client' && respawnMode() && mode !== 'range') grantStreak(attacker, attacker.streak);
   }
   target.streak = 0;
+  if (target === game.player) trackDeath();
   // clients take the team score from the host's snapshots (counting here too made it jump)
   if (mode === 'tdm' && net.role !== 'client' && attacker && attacker.team !== target.team) game.score[attacker.team]++;
+  // Kill Confirmed: every death drops a tag (the host decides who picks it up)
+  if (mode === 'kc' && net.role !== 'client' && game.phase === 'live') { const tag = spawnTag(++tagId, target.pos, target.team); if (net.role === 'host') hostEvent({ t: 'tag', id: tag.id, p: A3(tag.pos), team: tag.team }); }
   if (respawnMode()) target.respawnAt = now() + (mode === 'range' ? 1.5 : 3.5);
   const el = document.createElement('div');
   const mine = attacker === game.player || target === game.player;
@@ -1454,6 +1530,8 @@ game.onChargeEvent = (kind, f) => {
 
 let hitT = 0;
 game.onPlayerHit = (target, dmg, head, killed) => {
+  // gun hits only (gadget damage comes in without a recent shot)
+  if (target.team !== game.player.team && now() - (game.player.lastShotT ?? -9) < 0.6) trackHit(game.player.weaponKey(), dmg);
   if (target.mesh?.userData) target.mesh.userData.hitFlash = 1;
   if (!killed) vibe(head ? 18 : 10);
   if (game.config.mode === 'range') {
@@ -1503,7 +1581,23 @@ game.onStreak = (f, s) => {
   else comms(`Enemy ${s.name}!`, null, true);
 };
 game.onDropSpawned = (d) => { if (net.role === 'host') hostEvent({ t: 'sdrop', id: d.id, p: A3(d.pos), team: d.team }); };
+onWeaponLevelUp((w, lv) => {
+  const un = ATTACHMENTS.find((a) => a.lv === lv), camo = SKINS.find((s) => s.wlevel === lv);
+  medal(`${WEAPONS[w].name.toUpperCase()} LEVEL ${lv}`, un ? `${un.name} unlocked` : camo ? `${camo.name} camo unlocked` : '', '#ffd23f');
+});
 onChallengeDone((c) => { medal('CHALLENGE COMPLETE', `${c.desc} · +${c.xp} XP`, '#6effc4'); sfx('capture', { vol: 0.6 }); });
+let tagId = 0;
+/** Kill Confirmed: the player picked up a tag. */
+function tagTaken(kind) {
+  tagSound(kind);
+  trackConfirm();
+  if (kind === 'confirm') medal('KILL CONFIRMED', '+1 for your team', '#6effc4');
+  else medal('KILL DENIED', 'they don\'t get that point', '#7fb2ff');
+}
+game.onTagGone = (id, taker, kind) => {
+  if (net.role === 'host') hostEvent({ t: 'tgone', id, by: taker ? taker.id : -1, kind });
+  if (taker && taker === game.player) tagTaken(kind);
+};
 game.onDropGone = (id, taker) => {
   if (net.role === 'host') hostEvent({ t: 'sgone', id, by: taker ? taker.id : -1 });
   if (taker === game.player) { medal('SUPPLIES COLLECTED', 'LMG · armor · gadgets', '#6effc4'); setViewModel(taker); trackDrop(); }
@@ -1546,6 +1640,7 @@ function stepSprings(dt) {
 }
 const _muz = new THREE.Vector3();
 game.onPlayerShot = (p, w) => {
+  trackShot(w.key);
   if (game.config.mode === 'range') rs2.shots++;
   kickViewModel(w);
   smokePuff(p.muzzle(_muz), w.slot === 'primary' ? 1 : 0.7);
@@ -1591,7 +1686,9 @@ const BUY_LIST = [
   { key: 'cover', cat: 'gadget', hot: 'k' },
 ];
 
-const respawnMode = () => ['tdm', 'uplink', 'dom', 'range'].includes(game.config?.mode);
+const respawnMode = () => ['tdm', 'kc', 'uplink', 'dom', 'range'].includes(game.config?.mode);
+/** Team Deathmatch-style modes (kills / tags, no objective). */
+const dmMode = () => ['tdm', 'kc'].includes(game.config?.mode);
 const freeLoadout = respawnMode;
 function toggleBuy(force) {
   const open = force ?? !buyOpen;
@@ -1711,7 +1808,7 @@ function scoreboardHTML(final = false) {
         <td class="num">${team === game.player.team && !final ? '¤ ' + f.credits : ''}</td></tr>`);
     }
   }
-  return `<table><tr><th>OPERATIVE</th><th>PLAYER</th><th class="num">K</th><th class="num">D</th><th class="num">A</th><th class="num">${game.config.mode === 'tdm' ? 'DMG' : 'ADR'}</th><th class="num">CREDITS</th></tr>${rows.join('')}</table>`;
+  return `<table><tr><th>OPERATIVE</th><th>PLAYER</th><th class="num">K</th><th class="num">D</th><th class="num">A</th><th class="num">${dmMode() ? 'DMG' : 'ADR'}</th><th class="num">CREDITS</th></tr>${rows.join('')}</table>`;
 }
 
 const mm = $('minimap'), mg = mm.getContext('2d');
@@ -1742,6 +1839,13 @@ function drawMinimap() {
     mg.beginPath(); mg.arc(x, y, UPLINK.radius * MM_S, 0, Math.PI * 2); mg.stroke();
     mg.fillStyle = mg.strokeStyle; mg.font = 'bold 10px "Chakra Petch", sans-serif'; mg.textAlign = 'center';
     mg.fillText(n.key, x, y + 4);
+  }
+  // Kill Confirmed tags: enemy ones (score) in their colour, your team's (deny) hollow
+  for (const tg of game.tags || []) {
+    const [x, y] = toPx(tg.pos.x, tg.pos.z);
+    mg.strokeStyle = mg.fillStyle = tg.team ? '#ffb066' : '#7fb2ff'; mg.lineWidth = 1.5;
+    mg.beginPath(); mg.moveTo(x, y - 4); mg.lineTo(x + 4, y); mg.lineTo(x, y + 4); mg.lineTo(x - 4, y); mg.closePath();
+    if (tg.team !== p.team) mg.fill(); else mg.stroke();
   }
   // supply drops waiting to be picked up
   for (const d of game.drops || []) {
@@ -1805,7 +1909,7 @@ function updateHud(dt) {
   $('timer').classList.toggle('charge', planted && game.phase === 'live');
   const plantMode = game.config.mode === 'plant';
   const sideTxt = plantMode ? (p.team === game.attackers ? ' · ATTACK' : ' · DEFEND') : '';
-  if (game.config.mode === 'tdm' || nodeMode()) setText('roundLabel', game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget}`);
+  if (dmMode() || nodeMode()) setText('roundLabel', game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget}`);
   else setText('roundLabel', planted && game.phase === 'live' ? `CHARGE ON ${game.charge.site}` : game.phase === 'buy' ? 'BUY PHASE' + sideTxt : `ROUND ${game.round}${sideTxt}`);
   $('credits').hidden = freeLoadout();
   for (const f of game.fighters) f.pipEl?.classList.toggle('carrier', plantMode && game.charge?.carrier === f && f.team === p.team);
@@ -2242,6 +2346,7 @@ function step(dt) {
   noiseFootsteps(dt);
   updateAbilities(dt);
   updateDrops(dt, !client);
+  if (game.config.mode === 'kc') updateTags(dt, !client);
   if (game.config.mode === 'plant') { updateCharge(dt); if (!client) updateTactics(); }
   if (nodeMode() && !client) updateNode(dt);
   updateFx(dt);

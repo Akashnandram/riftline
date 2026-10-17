@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { game, now, enemiesOf } from './state.js';
 import { snapWalkable, groundAt } from './world.js';
-import { WEAPONS } from './config.js';
 import { giveGadget } from './abilities.js';
 import { setGunLook, emitSound } from './entities.js';
 import { smokePuff } from './fx.js';
@@ -104,7 +103,7 @@ export function updateDrops(dt, host) {
 
 function lootDrop(f) {
   f.give('hammer');
-  f.ammo.hammer = WEAPONS.hammer.mag;
+  f.ammo.hammer = f.gun('hammer').mag;
   f.cur = 'primary';
   f.armor = 100;
   for (const k of f.agent.picks) giveGadget(f, k);

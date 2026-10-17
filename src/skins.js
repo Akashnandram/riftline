@@ -59,6 +59,30 @@ const neonLines = () => patternTex((g, s) => {
 
 const std = (o) => new THREE.MeshStandardMaterial(o);
 
+// mastery camo patterns
+const digital = (cols, seed) => patternTex((g, s) => {
+  const r = rnd(seed), n = 32, cs = s / n;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { g.fillStyle = cols[Math.floor(r() * cols.length)]; g.fillRect(x * cs, y * cs, cs, cs); }
+  // clumps so it reads as camo rather than noise
+  for (let i = 0; i < 40; i++) { g.fillStyle = cols[i % cols.length]; const x = Math.floor(r() * n) * cs, y = Math.floor(r() * n) * cs; g.fillRect(x, y, cs * (2 + Math.floor(r() * 4)), cs * (1 + Math.floor(r() * 3))); }
+});
+const damascus = () => patternTex((g, s) => {
+  g.fillStyle = '#5d636b'; g.fillRect(0, 0, s, s);
+  for (let i = 0; i < 46; i++) {
+    g.strokeStyle = i % 2 ? 'rgba(30,33,38,0.85)' : 'rgba(190,196,204,0.7)'; g.lineWidth = 2.5;
+    g.beginPath();
+    for (let x = 0; x <= s; x += 4) { const y = (i / 46) * s * 1.2 - s * 0.1 + Math.sin(x * 0.045 + i * 0.6) * 10 + Math.sin(x * 0.11 + i) * 4; x ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.stroke();
+  }
+});
+const prism = () => patternTex((g, s) => {
+  const grd = g.createLinearGradient(0, 0, s, s);
+  ['#ff3e6c', '#ffb43e', '#f6ff3e', '#3effa0', '#3ec8ff', '#a03eff', '#ff3e6c'].forEach((c, i, a) => grd.addColorStop(i / (a.length - 1), c));
+  g.fillStyle = grd; g.fillRect(0, 0, s, s);
+  g.fillStyle = 'rgba(255,255,255,0.18)';
+  for (let i = 0; i < 12; i++) { g.beginPath(); g.moveTo(i * s / 6 - s / 2, 0); g.lineTo(i * s / 6 - s / 2 + 18, 0); g.lineTo(i * s / 6 + 18, s); g.lineTo(i * s / 6, s); g.fill(); }
+});
+
 // level = player level that unlocks it
 export const SKINS = [
   { key: 'default', name: 'Factory', level: 1, swatch: '#8a7d62' },
@@ -70,6 +94,12 @@ export const SKINS = [
   { key: 'desert', name: 'Desert', level: 7, swatch: '#c7a36b', make: () => ({ accent: std({ map: camo(['#c9ab78', '#a88a5a', '#e0caa0', '#7d6544'], 23), roughness: 0.8 }), polymer: std({ color: 0x8a7350, roughness: 0.8 }) }) },
   { key: 'neon', name: 'Neon', level: 8, swatch: '#3ee6d6', make: () => ({ accent: std({ color: 0x15181d, emissive: 0x3ee6d6, emissiveMap: neonLines(), emissiveIntensity: 1.6, roughness: 0.4, metalness: 0.4 }), polymer: std({ color: 0x15181d, roughness: 0.5 }) }) },
   { key: 'gold', name: 'Gold', level: 10, swatch: '#d4af37', make: () => ({ accent: std({ color: 0x1b1c20, roughness: 0.4, metalness: 0.5 }), metal: std({ color: 0xd4af37, roughness: 0.22, metalness: 1 }), dark: std({ color: 0x9c7a22, roughness: 0.3, metalness: 1 }) }) },
+  // mastery camos: per gun, unlocked by that gun's level (wlevel)
+  { key: 'woodland', name: 'Woodland', level: 1, wlevel: 2, swatch: '#55603e', make: () => ({ accent: std({ map: camo(['#4f5a37', '#2f3522', '#6d6040', '#1d2016'], 31), roughness: 0.75 }) }) },
+  { key: 'urban', name: 'Urban', level: 1, wlevel: 4, swatch: '#7d8288', make: () => ({ accent: std({ map: camo(['#8a9097', '#5d636b', '#b9bfc5', '#2f3338'], 41), roughness: 0.7 }), polymer: std({ color: 0x3a3e44, roughness: 0.7 }) }) },
+  { key: 'digital', name: 'Digital', level: 1, wlevel: 6, swatch: '#3b5a7a', make: () => ({ accent: std({ map: digital(['#2b4157', '#3f6283', '#1a2633', '#5b7d9c'], 53), roughness: 0.65 }), polymer: std({ map: digital(['#22262c', '#33383f', '#16191d'], 59), roughness: 0.7 }) }) },
+  { key: 'damascus', name: 'Damascus', level: 1, wlevel: 8, swatch: '#5d636b', make: () => ({ accent: std({ map: damascus(), roughness: 0.3, metalness: 0.8 }), metal: std({ map: damascus(), roughness: 0.28, metalness: 0.9 }) }) },
+  { key: 'prism', name: 'Prism', level: 1, wlevel: 10, swatch: 'linear-gradient(135deg,#ff3e6c,#f6ff3e,#3ec8ff,#a03eff)', make: () => ({ accent: std({ map: prism(), emissive: 0xffffff, emissiveMap: prism(), emissiveIntensity: 0.35, roughness: 0.2, metalness: 0.6 }), metal: std({ color: 0x1b1c20, roughness: 0.25, metalness: 0.9 }) }) },
 ];
 export const SKIN_BY_KEY = Object.fromEntries(SKINS.map((s) => [s.key, s]));
 

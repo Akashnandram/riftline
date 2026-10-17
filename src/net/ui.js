@@ -93,6 +93,8 @@ function openLogin() {
   $('aGuest').onclick = () => { s.hidden = true; };
 }
 
+const canShareSheet = () => !!navigator.share && matchMedia('(pointer: coarse)').matches;
+
 function askUsername(then) {
   const s = screen('nameScreen');
   s.hidden = false;
@@ -204,7 +206,8 @@ async function createLobby() {
 let joinAttempt = 0;
 async function joinLobby(code) {
   if (!code || code.length < 6) { const e = $('olErr'); if (e) e.textContent = 'Enter the 6-character code'; return; }
-  if (!(await needName())) { pendingJoin = code; return; }
+  // first visit from an invite link: pick a name, then carry on joining
+  if (!(await needName(() => joinLobby(code)))) return;
   if (lobby) leaveLobby(false);
   const e = $('olErr'); if (e) e.textContent = 'Connecting…';
   const attempt = ++joinAttempt;
@@ -226,7 +229,7 @@ async function joinLobby(code) {
 
 function wireLobby() {
   // tell the host what this player looks like
-  setTimeout(() => lobby?.request('outfit', api.outfitFor(api.choice().agent)), 800);
+  setTimeout(() => { lobby?.request('outfit', api.outfitFor(api.choice().agent)); lobby?.request('attach', api.attachments()); }, 800);
   lobby.on('update', () => { if (!$('lobbyScreen')?.hidden) renderLobby(); });
   lobby.on('start', (msg) => { $('lobbyScreen').hidden = true; api.startOnline(lobby, msg); });
   lobby.on('lobby', () => { api.exitToLobby(); showLobby(); });
@@ -256,13 +259,13 @@ function renderLobby() {
   const seg = (k, opts) => `<div class="seg" data-set="${k}">${opts.map(([v, l]) => `<button data-v="${v}" class="${String(st[k]) === String(v) ? 'on' : ''}" ${lobby.isHost ? '' : 'disabled'}>${l}</button>`).join('')}</div>`;
   s.innerHTML = `<div class="menuInner lobby">
     <div class="set-head"><h2>LOBBY <span class="code">${lobby.code}</span></h2>
-      <button class="ghost" id="lbCopy">Copy invite link</button><button class="ghost" id="lbLeave">Leave</button></div>
+      <button class="ghost" id="lbCopy">${canShareSheet() ? 'Share invite' : 'Copy invite link'}</button><button class="ghost" id="lbLeave">Leave</button></div>
     <div class="lb-grid">
       <div class="teams">${team(0)}${team(1)}</div>
       <div class="side">
         <section><h3>YOUR OPERATIVE</h3><div class="agents">${Object.values(AGENTS).map((a) => `<button data-agent="${a.key}" class="${mine?.agent === a.key ? 'on' : ''}" style="--acc:${a.color}">${a.name}</button>`).join('')}</div></section>
         <section><h3>MATCH ${lobby.isHost ? '' : '<small>(host decides)</small>'}</h3>
-          ${seg('mode', [['uplink', 'Uplink'], ['dom', 'Domination'], ['tdm', 'Team DM']])}
+          ${seg('mode', [['uplink', 'Uplink'], ['dom', 'Domination'], ['tdm', 'Team DM'], ['kc', 'Kill Confirmed']])}
           ${seg('teamSize', [[2, '2v2'], [3, '3v3'], [4, '4v4'], [6, '6v6']])}
           ${seg('difficulty', [['veryeasy', 'Super easy bots'], ['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}
           ${seg('map', [['random', 'Random map'], ...MAP_LIST.map((m) => [m.id, m.name])])}</section>
@@ -274,7 +277,13 @@ function renderLobby() {
     <div class="row">${lobby.isHost ? `<button class="big" id="lbStart">START MATCH</button>` : `<button class="big" id="lbReady">${mine?.ready ? 'NOT READY' : 'READY'}</button><p class="hint">Waiting for the host to start…</p>`}</div>
   </div>`;
   const log = $('lbLog'); log.scrollTop = log.scrollHeight;
-  $('lbCopy').onclick = () => { navigator.clipboard?.writeText(link).then(() => toast('Invite link copied'), () => prompt('Invite link', link)); };
+  $('lbCopy').onclick = async () => {
+    // phones: the share sheet (WhatsApp, Messages…); desktop: copy the link
+    if (canShareSheet()) {
+      try { await navigator.share({ title: 'Riftline', text: `Join my Riftline lobby — code ${lobby.code}`, url: link }); return; } catch (e) { if (e?.name === 'AbortError') return; }
+    }
+    navigator.clipboard?.writeText(link).then(() => toast('Invite link copied'), () => prompt('Invite link', link));
+  };
   $('lbLeave').onclick = () => { leaveLobby(true); s.hidden = true; };
   s.querySelectorAll('[data-team]').forEach((b) => { b.onclick = () => lobby.request('team', +b.dataset.team); });
   s.querySelectorAll('[data-agent]').forEach((b) => { b.onclick = () => { lobby.request('agent', b.dataset.agent); lobby.request('outfit', api.outfitFor(b.dataset.agent)); api.setAgent(b.dataset.agent); }; });

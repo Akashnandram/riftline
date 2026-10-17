@@ -11,8 +11,10 @@ export const RADIUS = 0.35, HEIGHT = 1.8, EYE = 1.62;
 export const TEAM_COLORS = [0x3d8bff, 0xff8a1f];
 
 export class Fighter {
-  constructor({ id, name, team, agent, isPlayer = false, outfit = null }) {
+  constructor({ id, name, team, agent, isPlayer = false, outfit = null, attach = null }) {
     Object.assign(this, { id, name, team, isPlayer });
+    this.attach = attach || {};   // weapon attachments, e.g. { raptor: ['grip', 'mag'] }
+    this._guns = {};
     this.outfit = outfit;
     this.agent = AGENTS[agent];
     this.pos = new THREE.Vector3();
@@ -22,7 +24,7 @@ export class Fighter {
     this.hp = 100; this.armor = 0; this.alive = true;
     this.credits = ECON.start;
     this.primary = null; this.secondary = 'p9'; this.cur = 'secondary';
-    this.ammo = { p9: WEAPONS.p9.mag };
+    this.ammo = { p9: this.gun('p9').mag };
     this.reloadT = 0; this.fireCD = 0; this.bloom = 0;
     this.recoil = 0; this.recoilYaw = 0; this.shotsInRow = 0;
     this.scoped = false;
@@ -48,7 +50,19 @@ export class Fighter {
     for (const s of ['q', 'e']) this.abil[s] = { key: null, charges: 0, cd: 0 };
   }
 
-  weapon() { return WEAPONS[this.cur === 'primary' && this.primary ? this.primary : this.secondary]; }
+  weapon() { return this.gun(this.cur === 'primary' && this.primary ? this.primary : this.secondary); }
+  /** A gun's stats with this fighter's attachments applied (cached). */
+  gun(key) {
+    if (this._guns[key]) return this._guns[key];
+    const base = WEAPONS[key], a = this.attach[key];
+    if (!a?.length) return (this._guns[key] = base);
+    const w = { ...base };
+    if (a.includes('grip')) { w.kick *= 0.85; w.sway *= 0.85; }
+    if (a.includes('mag')) w.mag = Math.round(base.mag * 1.25);
+    if (a.includes('hands')) w.reload *= 0.85;
+    if (a.includes('laser')) w.spread *= 0.85;
+    return (this._guns[key] = w);
+  }
   weaponKey() { return this.weapon().key; }
 
   get drop() { return MOVE.crouchDrop * this.crouch; }
@@ -76,7 +90,7 @@ export class Fighter {
   }
 
   give(key) {
-    const w = WEAPONS[key];
+    const w = this.gun(key);
     if (w.slot === 'primary') { this.primary = key; this.cur = 'primary'; } else { this.secondary = key; if (!this.primary) this.cur = 'secondary'; }
     this.ammo[key] = w.mag;
     this.reloadT = 0;
@@ -501,7 +515,7 @@ export function resolveRound(f, w, o, dirs, opts = {}) {
 
 /** Host: resolve a shot fired by a remote player (origin + directions sent by their client). */
 export function remoteFire(f, o, dirs, wkey, rewind) {
-  const w = WEAPONS[wkey];
+  const w = WEAPONS[wkey] && f.gun(wkey);
   if (!w || !f.alive || (f.primary !== wkey && f.secondary !== wkey)) return;
   if (game.phase === 'buy' || game.phase === 'end') return;
   if (f.weaponKey() !== wkey) { f.cur = w.slot; setGunLook(f); }

@@ -65,6 +65,13 @@ for the mirrored half). Its `theme` sets sky, sun, fog, floor, wall materials, p
 - **Domination**: all three nodes (North, Core, South) are live at once; every node your team holds scores
   0.5 points per second. First to 200, or the higher score after 8 minutes.
 - **Team Deathmatch**: 5-minute respawn match, free loadout (B), first team to 8 kills per player wins.
+- **Kill Confirmed**: like Team Deathmatch, but every fallen player drops a tag. Grab enemy tags to score,
+  grab your own team's to deny them (they vanish after 30 s). First team to 6 tags per player wins.
+
+**Progression**: player level unlocks skins for every gun; each gun also levels up from its own kills (max 10),
+unlocking attachments (Grip, Extended mag, Fast hands, Laser — switchable in Loadout & Skins, applied online
+too) and mastery camos. Daily and weekly challenges, a profile page with lifetime and per-weapon stats (click
+your level badge), and a shareable result card after each match.
 
 Squads are 2v2, 4v4 or 6v6; empty slots are filled with bots.
 

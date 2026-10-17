@@ -6,6 +6,7 @@ import { moveFighter, tryFire, startReload, switchWeapon, penetrable } from './e
 import { tacticalGoal, onSpotted, cornerToCheck } from './tactics.js';
 import { tickAction } from './objective.js';
 import { useAbility, abilityReady, inPool } from './abilities.js';
+import { nearestTag } from './tags.js';
 
 const _eye = new THREE.Vector3(), _tp = new THREE.Vector3(), _v = new THREE.Vector3();
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -160,6 +161,9 @@ export class BotBrain {
       // behind cover: finish the reload / heal, watching where they were
       goal = this.coverPt; lookAt = this.lastSeen;
       if (Math.hypot(this.coverPt.x - f.pos.x, this.coverPt.z - f.pos.z) < 0.8 && f.reloadT <= 0 && f.hp >= 35) this.coverUntil = 0;
+    } else if (live && game.config.mode === 'kc' && (this.tagGoal = nearestTag(f, 12 + 10 * (d.smarts ?? 0.5)))) {
+      // Kill Confirmed: grab nearby tags (enemy ones score, our own deny)
+      goal = this.tagGoal.pos;
     } else if (plantMode && tg) {
       if (this.lastSeen && t - this.lastSeenT < 3 && (anchored || carrying || tg.action)) {
         // hold position and watch where they were instead of chasing

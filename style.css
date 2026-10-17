@@ -601,3 +601,48 @@ body.touch .ch { font-size: 12px; padding: 2px 0; grid-template-columns: 1fr 60p
 body.touch .panel, body.touch .screen.dim { backdrop-filter: none; -webkit-backdrop-filter: none; }
 body.touch .screen.dim { background: rgba(10, 16, 24, 0.9); }
 body.touch .panel { background: rgba(14, 17, 22, 0.94); }
+/* weapon levels + attachments (Loadout & Skins) */
+.lo-name .wl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; margin: 6px 0 4px; font-size: 13px; letter-spacing: 1px; }
+.lo-name .wl b { color: #ffd23f; }
+.lo-name .wl .bar { height: 6px; background: rgba(255,255,255,0.12); border-radius: 3px; overflow: hidden; }
+.lo-name .wl .bar i { display: block; height: 100%; background: #ffd23f; }
+.lo-name .wl small { grid-column: 1 / -1; color: var(--dim); font-weight: 500; letter-spacing: 0; font-size: 12px; }
+.lo-name .att { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0 8px; }
+.lo-name .att button { text-align: left; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: var(--ink); padding: 5px 8px; border-radius: 3px;
+  font-size: 13px; font-weight: 700; letter-spacing: 0; }
+.lo-name .att button small { display: block; color: var(--dim); font-size: 11px; font-weight: 500; }
+.lo-name .att button.on { border-color: #6effc4; background: rgba(110,255,196,0.08); }
+.lo-name .att button.locked { opacity: 0.4; }
+.skin.mastery { border-style: dashed; }
+body.touch .lo-name .att { grid-template-columns: repeat(2, 1fr); }
+/* profile badge is a button that opens the profile */
+button.badge { color: var(--ink); font: inherit; cursor: pointer; }
+button.badge:hover { border-color: #ffd23f; }
+.badge em { font-style: normal; color: var(--dim); font-size: 11px; letter-spacing: 1px; }
+/* profile screen */
+.pf-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.pf-tile { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 10px 12px; }
+.pf-tile b { display: block; font-size: 22px; }
+.pf-tile b small { font-size: 12px; color: var(--dim); font-weight: 500; }
+.pf-tile span { color: var(--dim); font-size: 12px; letter-spacing: 1px; }
+.pf-h { margin: 16px 0 6px; }
+.pf-table td, .pf-table th { padding: 4px 8px; }
+.pf-table .num { text-align: right; }
+.pf-lv { display: flex; align-items: center; gap: 8px; }
+.pf-lv b { width: 30px; color: #ffd23f; }
+.pf-lv .bar { width: 90px; height: 5px; background: rgba(255,255,255,0.12); border-radius: 3px; overflow: hidden; }
+.pf-lv .bar i { display: block; height: 100%; background: #ffd23f; }
+@media (max-width: 900px) { .pf-stats { grid-template-columns: repeat(3, 1fr); } }
+body.touch .pf-stats { grid-template-columns: repeat(4, 1fr); gap: 5px; }
+body.touch .pf-tile { padding: 5px 8px; }
+body.touch .pf-tile b { font-size: 16px; }
+body.touch .pf-table { font-size: 12px; }
+body.touch .pf-table td, body.touch .pf-table th { padding: 2px 5px; }
+/* results: match highlights */
+#xpPanel .hl { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 8px; }
+#xpPanel .hl div { background: rgba(255,255,255,0.05); border-radius: 4px; padding: 5px 8px; }
+#xpPanel .hl b { display: block; font-size: 15px; }
+#xpPanel .hl b small { color: var(--dim); font-size: 11px; font-weight: 500; }
+#xpPanel .hl span { color: var(--dim); font-size: 11px; }
+body.touch #xpPanel .hl { grid-template-columns: repeat(3, 1fr); gap: 4px; }
+body.touch #xpPanel .hl b { font-size: 12px; }

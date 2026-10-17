@@ -6,7 +6,7 @@ import { OUTFIT_SLOTS } from './outfits.js';
 
 const KEY = 'riftline.profile';
 
-export const XP = { kill: 100, headshot: 25, assist: 40, round: 150, win: 600, objective: 150, played: 200, tutorial: 500 };
+export const XP = { kill: 100, headshot: 25, assist: 40, round: 150, win: 600, objective: 150, played: 200, tutorial: 500, confirm: 50 };
 
 const CATEGORY = { p9: 'secondary', wasp: 'secondary', magnum: 'secondary', hornet: 'close', warden: 'close',
   talon: 'rifle', raptor: 'rifle', wraith: 'rifle', sentry: 'heavy', hammer: 'heavy', longbow: 'heavy' };
@@ -30,6 +30,7 @@ const TEMPLATES = [
   { id: 'played', desc: 'Play 3 matches', goal: 3, xp: 300, on: 'played' },
   { id: 'dom', desc: 'Win a Domination match', goal: 1, xp: 450, on: 'win:dom' },
   { id: 'tdm', desc: 'Win a Team Deathmatch', goal: 1, xp: 450, on: 'win:tdm' },
+  { id: 'kc', desc: 'Collect 8 tags in Kill Confirmed', goal: 8, xp: 400, on: 'confirm' },
 ];
 const WEEKLY = [
   { id: 'w-kills', desc: 'Get 120 kills', goal: 120, xp: 2000, on: 'kill' },
@@ -41,6 +42,7 @@ const WEEKLY = [
   { id: 'w-long', desc: 'Get 25 kills from over 30 m away', goal: 25, xp: 1800, on: 'long' },
   { id: 'w-drop', desc: 'Grab 3 supply drops', goal: 3, xp: 1600, on: 'drop' },
   { id: 'w-played', desc: 'Play 12 matches', goal: 12, xp: 1500, on: 'played' },
+  { id: 'w-kc', desc: 'Collect 40 tags in Kill Confirmed', goal: 40, xp: 1800, on: 'confirm' },
 ];
 const BY_ID = Object.fromEntries([...TEMPLATES, ...WEEKLY].map((c) => [c.id, c]));
 
@@ -101,7 +103,7 @@ export function rerollDaily(i) {
 function load() {
   let p = {};
   try { p = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { /* ignore */ }
-  p.xp ??= 0; p.equip ??= {}; p.totals ??= { matches: 0, wins: 0, kills: 0, headshots: 0 }; p.tutorialDone ??= false; p.outfits ??= {};
+  p.xp ??= 0; p.equip ??= {}; p.wstats ??= {}; p.attachOff ??= {}; p.totals ??= {}; for (const k of ['matches', 'wins', 'kills', 'headshots', 'deaths', 'assists', 'shots', 'hits', 'damage', 'longest', 'confirms', 'seconds']) p.totals[k] ??= 0; p.tutorialDone ??= false; p.outfits ??= {};
   rollover(p);
   return p;
 }
@@ -117,11 +119,61 @@ export function levelInfo(xp = profile.xp) {
   while (rest >= xpForLevel(lv)) { rest -= xpForLevel(lv); lv++; }
   return { level: lv, into: rest, need: xpForLevel(lv) };
 }
-export const unlockedSkins = (lv = levelInfo().level) => SKINS.filter((s) => s.level <= lv);
+export const unlockedSkins = (lv = levelInfo().level) => SKINS.filter((s) => !s.wlevel && s.level <= lv);
+/** Can this skin go on this gun? General skins unlock with player level, mastery camos with that gun's level. */
+export const skinUnlocked = (weapon, key) => {
+  const sk = SKIN_BY_KEY[key];
+  if (!sk) return false;
+  return sk.wlevel ? weaponLevel(weapon) >= sk.wlevel : sk.level <= levelInfo().level;
+};
 export const skinFor = (weapon) => {
   const k = profile.equip[weapon];
-  return k && SKIN_BY_KEY[k] && SKIN_BY_KEY[k].level <= levelInfo().level ? k : 'default';
+  return k && skinUnlocked(weapon, k) ? k : 'default';
 };
+
+// ---------------------------------------------------------------------------
+// Weapon levels: every gun earns XP from its own kills (max level 10). Levels unlock
+// attachments (small stat boosts, can be switched off) and mastery camos for that gun.
+// ---------------------------------------------------------------------------
+export const WEAPON_MAX = 10;
+export const WXP = { kill: 100, head: 40 };
+export const wxpForLevel = (lv) => 400 + 100 * (lv - 1);
+export const ATTACHMENTS = [
+  { key: 'grip', name: 'Grip', desc: '15% less recoil', lv: 3 },
+  { key: 'mag', name: 'Extended mag', desc: '25% more ammo', lv: 5 },
+  { key: 'hands', name: 'Fast hands', desc: '15% faster reload', lv: 7 },
+  { key: 'laser', name: 'Laser', desc: '15% tighter hip fire', lv: 9 },
+];
+const ATT_KEYS = ATTACHMENTS.map((a) => a.key);
+const ws = (w) => (profile.wstats[w] ??= { xp: 0, kills: 0, heads: 0, shots: 0, hits: 0, dmg: 0 });
+export function weaponLevelInfo(w) {
+  let lv = 1, rest = profile.wstats[w]?.xp || 0;
+  while (lv < WEAPON_MAX && rest >= wxpForLevel(lv)) { rest -= wxpForLevel(lv); lv++; }
+  return { level: lv, into: lv >= WEAPON_MAX ? 1 : rest, need: lv >= WEAPON_MAX ? 1 : wxpForLevel(lv), max: lv >= WEAPON_MAX };
+}
+export const weaponLevel = (w) => weaponLevelInfo(w).level;
+export const weaponStats = (w) => profile.wstats[w] || { xp: 0, kills: 0, heads: 0, shots: 0, hits: 0, dmg: 0 };
+/** Attachments active on a gun: unlocked and not switched off. */
+export const attachmentsFor = (w) => ATTACHMENTS.filter((a) => a.lv <= weaponLevel(w) && !profile.attachOff[w]?.includes(a.key)).map((a) => a.key);
+export function toggleAttachment(w, key) {
+  const off = new Set(profile.attachOff[w] || []);
+  if (off.has(key)) off.delete(key); else off.add(key);
+  profile.attachOff[w] = [...off];
+  saveProfile();
+}
+/** All of the player's active attachments, e.g. { raptor: ['grip', 'mag'] } (sent to other players online). */
+export function myAttachments() {
+  const out = {};
+  for (const w of Object.keys(WEAPONS)) { const a = attachmentsFor(w); if (a.length) out[w] = a; }
+  return out;
+}
+/** Keep only known guns / attachments (data from other players online). */
+export function cleanAttachments(o) {
+  const out = {};
+  if (!o || typeof o !== 'object') return out;
+  for (const [w, list] of Object.entries(o)) if (WEAPONS[w] && Array.isArray(list)) { const l = list.filter((k) => ATT_KEYS.includes(k)); if (l.length) out[w] = l; }
+  return out;
+}
 export function equip(weapon, skin) { profile.equip[weapon] = skin; saveProfile(); }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +182,7 @@ export function equip(weapon, skin) { profile.equip[weapon] = skin; saveProfile(
 let M = null;
 export function startTracking(mode) {
   rollover(profile);
-  M = { mode, kills: 0, heads: 0, rounds: 0, objectives: 0, completed: [] };
+  M = { mode, kills: 0, heads: 0, rounds: 0, objectives: 0, completed: [], deaths: 0, shots: 0, hits: 0, dmg: 0, longest: 0, confirms: 0, byWeapon: {}, wlevels: [], start: Date.now() };
 }
 
 let onDone = null;
@@ -150,6 +202,15 @@ function bump(event, n = 1) {
 export function trackKill(weapon, head, { dist = 0, gadget = false } = {}) {
   if (!M || M.mode === 'range') return;
   M.kills++; bump('kill');
+  M.longest = Math.max(M.longest, Math.round(dist));
+  if (!gadget && WEAPONS[weapon]) {
+    M.byWeapon[weapon] = (M.byWeapon[weapon] || 0) + 1;
+    const st = ws(weapon), before = weaponLevel(weapon);
+    st.kills++; if (head) st.heads++;
+    st.xp += WXP.kill + (head ? WXP.head : 0);
+    const after = weaponLevel(weapon);
+    if (after > before) { M.wlevels.push([weapon, after]); onWeaponLevel?.(weapon, after); }
+  }
   if (head) { M.heads++; bump('head'); }
   if (gadget) bump('gadget');
   else if (weapon && WEAPONS[weapon]) bump('cat:' + categoryOf(weapon));
@@ -158,6 +219,21 @@ export function trackKill(weapon, head, { dist = 0, gadget = false } = {}) {
 /** The player's kill streak just reached n. */
 export function trackStreak(n) { if (n === 3) bump('streak3'); if (n === 5) bump('streak5'); }
 export function trackDrop() { bump('drop'); }
+/** Player fired a trigger pull with this gun; hit = it hit someone. */
+export function trackShot(weapon) { if (!M || M.mode === 'range' || !WEAPONS[weapon]) return; M.shots++; ws(weapon).shots++; }
+export function trackHit(weapon, dmg) {
+  if (!M || M.mode === 'range' || !WEAPONS[weapon]) return;
+  M.dmg += dmg; ws(weapon).dmg += dmg;
+  // count each trigger pull once (shotgun pellets)
+  const t = performance.now();
+  if (t - (M.lastHitT || 0) > 30) { M.hits++; ws(weapon).hits++; }
+  M.lastHitT = t;
+}
+export function trackDeath() { if (M && M.mode !== 'range') M.deaths++; }
+export function trackConfirm() { if (!M || M.mode === 'range') return; M.confirms++; bump('confirm'); }
+let onWeaponLevel = null;
+/** Called with (weapon, level) when a gun levels up mid-match. */
+export const onWeaponLevelUp = (fn) => { onWeaponLevel = fn; };
 export function trackRound() { if (M && M.mode !== 'range') { M.rounds++; bump('round'); } }
 export function trackObjective() { if (M) { M.objectives++; bump('objective'); } }
 
@@ -171,18 +247,25 @@ export function finishMatch({ won, assists = 0 }) {
   if (assists) lines.push([`${assists} assist${assists > 1 ? 's' : ''}`, assists * XP.assist]);
   if (M.rounds) lines.push([`${M.rounds} round${M.rounds > 1 ? 's' : ''} won`, M.rounds * XP.round]);
   if (M.objectives) lines.push([`${M.objectives} node captures`, M.objectives * XP.objective]);
+  if (M.confirms) lines.push([`${M.confirms} tags collected`, M.confirms * XP.confirm]);
   bump('assist', assists); bump('played');
   if (won) { lines.push(['Victory', XP.win]); bump('win'); bump('win:' + M.mode); }
   for (const c of M.completed) lines.push([`Challenge: ${c.desc}`, c.xp]);
   const total = lines.reduce((s, l) => s + l[1], 0);
   profile.xp += total;
   profile.totals.matches++; if (won) profile.totals.wins++;
-  profile.totals.kills += M.kills; profile.totals.headshots += M.heads;
+  const T = profile.totals;
+  T.kills += M.kills; T.headshots += M.heads; T.deaths += M.deaths; T.assists += assists; T.shots += M.shots; T.hits += M.hits;
+  T.damage += Math.round(M.dmg); T.longest = Math.max(T.longest, M.longest); T.confirms += M.confirms;
+  T.seconds += Math.round((Date.now() - M.start) / 1000);
   saveProfile();
   const after = levelInfo();
-  const unlocks = SKINS.filter((s) => s.level > before.level && s.level <= after.level);
+  const unlocks = SKINS.filter((s) => !s.wlevel && s.level > before.level && s.level <= after.level);
+  const best = Object.entries(M.byWeapon).sort((a, b) => b[1] - a[1])[0];
+  const stats = { kills: M.kills, deaths: M.deaths, heads: M.heads, shots: M.shots, hits: M.hits, dmg: Math.round(M.dmg), longest: M.longest,
+    best: best ? { weapon: best[0], kills: best[1] } : null, wlevels: M.wlevels };
   M = null;
-  return { lines, total, before, after, unlocks };
+  return { lines, total, before, after, unlocks, stats };
 }
 
 export function completeTutorial() {
