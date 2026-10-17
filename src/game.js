@@ -1915,7 +1915,10 @@ function updateHud(dt) {
   const plantMode = game.config.mode === 'plant';
   const sideTxt = plantMode ? (p.team === game.attackers ? ' · ATTACK' : ' · DEFEND') : '';
   // say what the team score counts: kills (TDM), tags (Kill Confirmed) or capture points (Uplink / Domination)
-  if (dmMode() || nodeMode()) setText('roundLabel', game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget} ${game.config.mode === 'tdm' ? 'KILLS' : game.config.mode === 'kc' ? 'TAGS' : 'POINTS'}`);
+  if (dmMode() || nodeMode()) {
+    const m = game.config.mode, name = { tdm: 'TEAM DM', kc: 'KILL CONFIRMED', uplink: 'UPLINK', dom: 'DOMINATION' }[m];
+    setText('roundLabel', `${name} · ${game.phase === 'buy' ? 'GET READY' : `FIRST TO ${game.tdmTarget} ${m === 'tdm' ? 'KILLS' : m === 'kc' ? 'TAGS' : 'PTS'}`}`);
+  }
   else setText('roundLabel', planted && game.phase === 'live' ? `CHARGE ON ${game.charge.site}` : game.phase === 'buy' ? 'BUY PHASE' + sideTxt : `ROUND ${game.round}${sideTxt}`);
   $('credits').hidden = freeLoadout();
   for (const f of game.fighters) f.pipEl?.classList.toggle('carrier', plantMode && game.charge?.carrier === f && f.team === p.team);
