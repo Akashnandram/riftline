@@ -14,7 +14,7 @@ import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
 import { grantStreak, nextStreak, updateDrops, clearDrops, spawnDrop, removeDrop, STREAKS } from './streaks.js';
 import { shareResult } from './share.js';
 import { spawnTag, removeTag, clearTags, updateTags, tagSound, KC } from './tags.js';
-import { resetNode, hideNode, updateNode, applyNodeSnapshot, setupDomination, UPLINK, DOM, NODE_NAMES, nodeMode } from './uplink.js';
+import { resetNode, hideNode, updateNode, applyNodeSnapshot, setupDomination, UPLINK, DOM, NODE_NAMES, nodeMode, KILL_PTS } from './uplink.js';
 import {
   Fighter, TEAM_COLORS, EYE, updateFighterMesh, moveFighter, separateFighters, tryFire, startReload,
   updateWeapon, switchWeapon, setGunLook, emitSound, resetFighterMesh, remoteFire, playShotFx,
@@ -365,10 +365,10 @@ function renderMenu() {
   $('fps').hidden = !S.showFps;
 }
 const MODE_HINTS = {
-  uplink: 'Non-stop squad fight with respawns. The Rift Node moves between North, Core and South every minute — stand in it to capture it, hold it to score a point per second. First to 150.',
+  uplink: 'Non-stop squad fight with respawns. The Rift Node moves between North, Core and South every minute — stand in it to capture it, hold it to score a point per second. Kills are worth 2 points. First to 150.',
   plant: 'Attack: plant the Rift Charge on A or B. Defend: stop or defuse it. First to 5 rounds, sides swap at half.',
   elim: 'Round-based: wipe the other team. First to 5 rounds.',
-  dom: 'Three Rift Nodes at once — North, Core and South. Every node your team holds scores points; take them, hold them, retake them. First to 200.',
+  dom: 'Three Rift Nodes at once — North, Core and South. Every node your team holds scores points, and kills are worth 2. Take them, hold them, retake them. First to 200.',
   tdm: 'Respawn deathmatch, pick your loadout with B. First team to the kill target in 5 minutes wins.',
   kc: 'Every fallen player drops a tag. Grab enemy tags to score, grab your own team\'s to deny them. First to the target in 5 minutes wins.',
 };
@@ -804,8 +804,8 @@ function startRound() {
       if (game.config.mode === 'dom') setupDomination(); else resetNode();
       for (const f of game.fighters) if (f.brain) f.brain.plan = { side: 'uplink' };
       flashMsg(MAP.name.toUpperCase(), game.config.mode === 'dom'
-        ? `DOMINATION · hold North, Core and South to score · first to ${game.tdmTarget} · press B for your loadout`
-        : `UPLINK · hold the Rift Node to score · first to ${game.tdmTarget} · press B for your loadout`, 4);
+        ? `DOMINATION · hold North, Core and South to score, kills +${KILL_PTS} · first to ${game.tdmTarget} · press B for your loadout`
+        : `UPLINK · hold the Rift Node to score, kills +${KILL_PTS} · first to ${game.tdmTarget} · press B for your loadout`, 4);
     } else if (game.config.mode === 'kc') flashMsg('KILL CONFIRMED', `${MAP.name} · grab enemy tags to score, grab your team's to deny · first to ${game.tdmTarget} · press B for your loadout`, 4.5);
     else flashMsg('TEAM DEATHMATCH', `${MAP.name} · first to ${game.tdmTarget} kills · press B for your loadout`, 4);
   } else if (plantMode) {
@@ -1389,6 +1389,11 @@ game.onKill = (attacker, target, opts) => {
   if (target === game.player) trackDeath();
   // clients take the team score from the host's snapshots (counting here too made it jump)
   if (mode === 'tdm' && net.role !== 'client' && attacker && attacker.team !== target.team) game.score[attacker.team]++;
+  // Uplink / Domination: kills are worth points too (holding nodes still scores the most)
+  if (nodeMode() && net.role !== 'client' && game.phase === 'live' && attacker && attacker.team !== target.team && game.uplinkPts) {
+    game.uplinkPts[attacker.team] += KILL_PTS;
+    game.score[attacker.team] = Math.floor(game.uplinkPts[attacker.team]);
+  }
   // Kill Confirmed: every death drops a tag (the host decides who picks it up)
   if (mode === 'kc' && net.role !== 'client' && game.phase === 'live') { const tag = spawnTag(++tagId, target.pos, target.team); if (net.role === 'host') hostEvent({ t: 'tag', id: tag.id, p: A3(tag.pos), team: tag.team }); }
   if (respawnMode()) target.respawnAt = now() + (mode === 'range' ? 1.5 : 3.5);
@@ -1437,7 +1442,7 @@ function killMedals(p, target, opts) {
   const firstBloodBefore = game.firstBlood;
   p.multi = t - (p.lastKillT ?? -99) < 4 ? (p.multi || 1) + 1 : 1;
   p.lastKillT = t;
-  medal(`ELIMINATED ${target.name.toUpperCase()}`, '+100', '#ffffff');
+  medal(`ELIMINATED ${target.name.toUpperCase()}`, nodeMode() ? `+${KILL_PTS} team points · +100 XP` : dmMode() && game.config.mode === 'tdm' ? '+1 team kill · +100 XP' : '+100 XP', '#ffffff');
   if (!game.firstBlood) { game.firstBlood = true; medal('FIRST BLOOD', '+50', '#ff8a1f'); }
   if (opts.head) medal('HEADSHOT', '+25', '#ffd23f');
   const dist = p.pos.distanceTo(target.pos);

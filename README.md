@@ -60,10 +60,11 @@ for the mirrored half). Its `theme` sets sky, sun, fog, floor, wall materials, p
   headshot % / time-to-kill, free weapons and gadgets (B), gadgets refill.
 - **Uplink** (default): non-stop, with respawns (3.5 s) and spawn protection. One Rift Node is live at a time
   at North, Core or South (on the centre line, equally far from both spawns) and moves every 60 s. Stand in its
-  ring with no enemies to swing it to your team; while you own it you score a point per second. First to 150,
+  ring with no enemies to swing it to your team; while you own it you score a point per second, and every kill is
+  worth 2 points. First to 150,
   or the higher score after 8 minutes.
 - **Domination**: all three nodes (North, Core, South) are live at once; every node your team holds scores
-  0.5 points per second. First to 200, or the higher score after 8 minutes.
+  0.5 points per second, plus 2 points per kill. First to 200, or the higher score after 8 minutes.
 - **Team Deathmatch**: 5-minute respawn match, free loadout (B), first team to 8 kills per player wins.
 - **Kill Confirmed**: like Team Deathmatch, but every fallen player drops a tag. Grab enemy tags to score,
   grab your own team's to deny them (they vanish after 30 s). First team to 6 tags per player wins.

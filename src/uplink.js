@@ -11,6 +11,8 @@ import { sfx } from './audio.js';
 // Standing in a node's ring with nobody from the other team swings it to your side.
 export const UPLINK = { radius: 4.5, capture: 4, rotate: 60, target: 150, time: 480 };
 export const DOM = { rate: 0.5, target: 200, time: 480 };
+/** Points a kill is worth in both node modes (on top of capture points). */
+export const KILL_PTS = 2;
 export const NODE_NAMES = { N: 'NORTH', C: 'CORE', S: 'SOUTH' };
 const TEAM_HEX = [0x3d8bff, 0xff8a1f], NEUTRAL = 0xe8eaed;
 export const nodeMode = () => game.config?.mode === 'uplink' || game.config?.mode === 'dom';
