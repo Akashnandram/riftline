@@ -1,0 +1,24 @@
+# Free Supabase projects are paused after about a week without activity, which takes online play,
+# accounts and leaderboards down. This makes one tiny read request a day so that never happens.
+# It uses the public URL and anon key the game already ships in src/net/config.js (no secrets needed).
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: '17 6 * * *'     # every day at 06:17 UTC
+  workflow_dispatch:          # "Run workflow" button for a manual check
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read one row from the profiles table
+        run: |
+          URL=$(grep -o "SUPABASE_URL = '[^']*'" src/net/config.js | cut -d"'" -f2)
+          KEY=$(grep -o "SUPABASE_ANON_KEY = '[^']*'" src/net/config.js | cut -d"'" -f2)
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then echo "Online play isn't configured, nothing to keep awake"; exit 0; fi
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$URL/rest/v1/profiles?select=id&limit=1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
+          echo "Supabase answered HTTP $CODE"
+          # 000 = the project address doesn't resolve: it's paused or deleted and needs restoring in the dashboard
+          if [ "$CODE" != "200" ]; then echo "::error::Supabase is not answering (HTTP $CODE). Open the Supabase dashboard and restore the project."; exit 1; fi

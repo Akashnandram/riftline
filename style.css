@@ -706,3 +706,14 @@ body.killcam #tReload, body.killcam #tSwap, body.killcam #abilities, body.killca
 #caption { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); max-width: 70vw; padding: 5px 14px; background: rgba(0,0,0,0.75); border-radius: 3px;
   font-size: 18px; font-weight: 600; text-align: center; color: #fff; }
 #caption::first-letter { text-transform: uppercase; }
+/* What's new */
+.newsCard { width: min(560px, 100%); text-align: left; }
+.newsCard h2 { margin: 0 0 6px; letter-spacing: 4px; }
+.newsCard small { color: #ffd23f; letter-spacing: 3px; }
+#newsList { display: flex; flex-direction: column; gap: 8px; max-height: 58vh; overflow-y: auto; margin-bottom: 4px; }
+.news-item { display: grid; grid-template-columns: 170px 1fr; gap: 10px; padding: 7px 10px; background: rgba(255,255,255,0.05); border-left: 3px solid #ffd23f; border-radius: 3px; font-size: 14px; }
+.news-item b { color: #ffd23f; }
+.news-item span { color: var(--ink); }
+.linkbtn { background: none; border: 0; padding: 0; color: #ffd23f; font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+body.touch .news-item { grid-template-columns: 1fr; gap: 2px; font-size: 12px; padding: 5px 8px; }
+body.touch #newsList { max-height: 60vh; }

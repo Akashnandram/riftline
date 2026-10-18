@@ -14,6 +14,7 @@ import { planTactics, updateTactics, onChargeEvent } from './tactics.js';
 import { grantStreak, nextStreak, updateDrops, clearDrops, spawnDrop, removeDrop, STREAKS, spawnNeutralDrop } from './streaks.js';
 import { MAP_EVENTS, EVENT_LEN, setEventVisual, updateEventVisual, resetEventVisual } from './events.js';
 import { shareResult } from './share.js';
+import { texturesReady } from './textures.js';
 import { pingTarget, addPing, clearPings, updatePings, activePings } from './pings.js';
 import { watchUpdates } from './update.js';
 import { portal, initPortal, gameplayStart, gameplayStop, loadingStart, loadingStop, happytime, betweenMatches } from './portal.js';
@@ -495,6 +496,36 @@ initTouch({
 });
 // first visit: offer to jump straight into a match
 if (profile.totals.matches === 0 && !store.get('welcomed', false)) $('welcome').hidden = false;
+
+// "What's new": shown once to returning players after an update (newest first); reopen from the menu.
+// Add an entry with a higher v when shipping something players should notice.
+const WHATS_NEW = [
+  { v: 1, items: [
+    ['Skyline', 'a new map: city rooftops at night, with a helipad in the middle and walkways to jump between'],
+    ['Killcam', 'after you die, watch the moments before it from your killer\'s eyes (can be switched off in Settings)'],
+    ['Pings', `point and press ${IS_TOUCH ? 'PING' : 'Z or the middle mouse button'} to mark an enemy or a spot: your team and bots see it`],
+    ['Free-for-all & Kill Confirmed', 'two new modes: everyone for themselves, or collect the tags dropped by fallen players'],
+    ['Map events', 'once a match: sandstorm, blizzard, mist, a power cut, a thunderstorm or a supply crate in the middle'],
+    ['Co-op vs bots', 'online lobbies can put every player on one team against bots'],
+    ['Weapon levels', 'guns level up from kills and unlock attachments and mastery camos (Loadout & Skins)'],
+    ['Leaderboards & profile', 'see how you rank, and your lifetime stats (tap your level badge)'],
+    ['Accessibility', 'colour-blind team colours, subtitles and reduced camera motion in Settings'],
+    ['Install as an app', IS_TOUCH ? 'add Riftline to your home screen: full-screen, and it starts even offline' : 'install it from the menu: its own window, and it starts even offline'],
+  ] },
+];
+const NEWS_V = WHATS_NEW[0].v;
+function showNews(all = false) {
+  const seen = store.get('newsSeen', 0);
+  const list = WHATS_NEW.filter((n) => all || n.v > seen).flatMap((n) => n.items);
+  if (!list.length) return;
+  $('newsList').innerHTML = list.map(([t, d]) => `<div class="news-item"><b>${t}</b><span>${d}</span></div>`).join('');
+  $('news').hidden = false;
+}
+$('newsOk').onclick = () => { $('news').hidden = true; store.set('newsSeen', NEWS_V); };
+$('btnNews').onclick = () => showNews(true);
+// new players get the welcome screen instead; they've seen everything that exists
+if (profile.totals.matches === 0) store.set('newsSeen', Math.max(store.get('newsSeen', 0), NEWS_V));
+else if ($('welcome').hidden) showNews();
 const closeWelcome = () => { $('welcome').hidden = true; store.set('welcomed', true); };
 $('wPlay').onclick = () => { closeWelcome(); quickPlay(); };
 $('wTut').onclick = () => { closeWelcome(); initAudio(); startRange(true); lock(); };
@@ -700,7 +731,11 @@ function startLocal(cfg) {
   $('loadingName').textContent = MAPS[id].name.toUpperCase();
   $('loadingDesc').textContent = MAPS[id].desc;
   loadingStart();
-  setTimeout(() => { try { startMatch(cfg, null, id); } finally { $('loading').hidden = true; loadingStop(); } }, 40);
+  // the map's textures are computed in the background; give them a moment (never more than 4 s)
+  setTimeout(async () => {
+    await Promise.race([texturesReady(), new Promise((r) => setTimeout(r, 4000))]);
+    try { startMatch(cfg, null, id); } finally { $('loading').hidden = true; loadingStop(); }
+  }, 40);
 }
 
 function startMatch(cfg, roster = null, mapId = null) {
