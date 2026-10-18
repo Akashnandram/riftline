@@ -68,7 +68,15 @@ export class SupabaseChannel {
       for (const fn of this.handlers.get(payload.event) || []) fn(payload.data, payload.from);
     });
     this.ch.on('presence', { event: 'sync' }, () => { const l = this.list(); for (const fn of this.presenceFns) fn(l); });
-    this._ready = new Promise((res) => this.ch.subscribe((status) => { if (status === 'SUBSCRIBED') res(true); }));
+    // fail clearly (instead of waiting forever) when the online service can't be reached
+    this._ready = new Promise((res, rej) => {
+      const fail = () => rej(new Error('Can\u2019t reach the online service right now — check your connection and try again in a minute.'));
+      const t = setTimeout(fail, 10000);
+      this.ch.subscribe((status) => {
+        if (status === 'SUBSCRIBED') { clearTimeout(t); res(true); } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { clearTimeout(t); fail(); }
+      });
+    });
+    this._ready.catch(() => {});   // callers that only send/track shouldn't crash when offline
   }
   ready() { return this._ready; }
   list() {
@@ -76,8 +84,8 @@ export class SupabaseChannel {
     return Object.entries(st).map(([id, metas]) => ({ id, ...(metas[metas.length - 1] || {}) }));
   }
   on(event, fn) { if (!this.handlers.has(event)) this.handlers.set(event, []); this.handlers.get(event).push(fn); }
-  async send(event, data) { await this._ready; this.ch.send({ type: 'broadcast', event: 'm', payload: { event, data, from: this.me.id } }); }
-  async track(state) { await this._ready; this.ch.track(state); }
+  async send(event, data) { try { await this._ready; } catch { return; } this.ch.send({ type: 'broadcast', event: 'm', payload: { event, data, from: this.me.id } }); }
+  async track(state) { try { await this._ready; } catch { return; } this.ch.track(state); }
   onPresence(fn) { this.presenceFns.push(fn); }
   close() { try { this.ch.untrack(); this.ch.unsubscribe(); } catch { /* ignore */ } }
 }

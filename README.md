@@ -35,7 +35,7 @@ The camera is first-person by default (Settings → Third-person camera for an o
 
 ## Maps
 
-Five maps, picked at random each match (or choose one on the menu / in the online lobby):
+Six maps, picked at random each match (or choose one on the menu / in the online lobby):
 
 - **Old Town** – village streets, walk-in houses, cars, a market square and lookout terraces in mid.
 - **Dunes** – desert town around a raised mesa; A site has a stone dais and a rooftop "heaven", B a walled terrace.
@@ -44,6 +44,8 @@ Five maps, picked at random each match (or choose one on the menu / in the onlin
 - **Frostpeak** – snowbound outpost with falling snow; radar deck in mid, a bunker under a rocky ridge on A,
   a helipad and fuel depot on B.
 - **Temple** – jungle ruins; a three-tier stepped pyramid in mid, an altar court on A, a ruined library and ledge on B.
+- **Skyline** – city rooftops at night; a raised helipad in mid, rooftop walkways between the lanes (walk through
+  the gap at street level or jump it up top), an elevator machine room to climb on A and a low skylight roof on B.
 
 Every map is point-symmetric (both sides are fair) and shares the same arena frame (80 x 60 m, spawns behind
 x = ±30, A at +x/-z, B at +x/+z), so all modes, the range and the tutorial work everywhere. Raised areas are
@@ -189,7 +191,7 @@ Sonar Puck (pings enemies within 14 m through walls), Med-Kit, Deploy Cover (bul
 - **Pings**: Z / middle mouse / PING on phones marks the enemy under your crosshair or the spot you look at;
   bot teammates react, and pings go to your team online.
 - **Map events** (once per match): sandstorm on Dunes, blizzard on Frostpeak, mist on Temple, power cut on
-  Harbor, a supply crate anyone can grab on Old Town.
+  Harbor, a thunderstorm with lightning on Skyline, a supply crate anyone can grab on Old Town.
 - **Leaderboards**: level (XP), this week's XP, kills and wins, everyone or friends. Kills / wins / weekly
   boards need the extra columns at the end of `supabase/schema.sql` (run it once in the Supabase SQL Editor).
 - **Accessibility**: colour-blind team palettes (blue/yellow, teal/pink), announcer subtitles, reduced camera motion.

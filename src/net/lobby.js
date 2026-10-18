@@ -17,7 +17,7 @@ export class Lobby {
     this.isHost = isHost;
     this.peers = new Map();        // peerId -> Peer
     this.members = [];             // [{ id, name, team, agent, ready, host }]
-    this.settings = { mode: 'uplink', teamSize: 4, difficulty: 'normal', map: 'random' };
+    this.settings = { mode: 'uplink', teamSize: 4, difficulty: 'normal', map: 'random', coop: false };   // coop: every human on blue vs bots
     this.chat = [];
     this.fns = {};
     this.started = false;
@@ -41,7 +41,7 @@ export class Lobby {
   _hostPresence(list) {
     for (const p of list) {
       if (p.id === me.id || p.role !== 'client' || this.peers.has(p.id)) continue;
-      if (this.members.length >= Math.min(MAX_PLAYERS, this.settings.teamSize * 2) || this.started) continue;
+      if (this.members.length >= this._capacity() || this.started) continue;
       const peer = new Peer(true, (data) => this.ch.send('sig', { to: p.id, data }));
       this.peers.set(p.id, peer);
       peer.on('open', () => {
@@ -54,7 +54,10 @@ export class Lobby {
       peer.on('close', () => this._dropPeer(p.id));
     }
   }
+  /** How many humans fit: both teams normally, one full squad in co-op. */
+  _capacity() { return Math.min(MAX_PLAYERS, this.settings.coop ? Math.max(this.settings.teamSize, 2) : this.settings.teamSize * 2); }
   _teamWithRoom() {
+    if (this.settings.coop) return 0;
     const n = [0, 1].map((t) => this.members.filter((m) => m.team === t).length);
     return n[0] <= n[1] ? 0 : 1;
   }
@@ -69,6 +72,7 @@ export class Lobby {
     const mem = this.members.find((x) => x.id === id);
     if (m.t === 'req' && mem) {
       if (m.kind === 'team') {
+        if (this.settings.coop) { this.broadcastState(); return; }   // co-op: everyone stays on blue
         const full = this.members.filter((x) => x.team === m.value).length >= this.settings.teamSize;
         if (!full) mem.team = m.value;
       } else if (m.kind === 'agent' && AGENTS[m.value]) mem.agent = m.value;
@@ -84,7 +88,9 @@ export class Lobby {
   _chat(name, text) { this.chat.push({ name, text }); if (this.chat.length > 40) this.chat.shift(); }
   systemChat(text) { this._chat('', text); }
   setSetting(k, v) {
+    if (k === 'coop') v = v === true || v === 'true';
     this.settings[k] = v;
+    if (this.settings.coop) { for (const m of this.members) m.team = 0; this.broadcastState(); return; }
     // shrink teams if needed
     for (const t of [0, 1]) {
       const list = this.members.filter((m) => m.team === t);
@@ -110,10 +116,12 @@ export class Lobby {
     const agentKeys = Object.keys(AGENTS);
     const roster = [];
     let fid = 0;
+    // co-op: all humans on blue, the orange squad is all bots (at least as many as there are players)
+    const size = this.settings.coop ? Math.max(this.settings.teamSize, this.members.length) : this.settings.teamSize;
     for (const team of [0, 1]) {
       const humans = this.members.filter((m) => m.team === team);
       for (const m of humans) roster.push({ fid: fid++, name: m.name, team, agent: m.agent, owner: m.id, outfit: m.outfit || {}, attach: m.attach || {} });
-      for (let i = humans.length; i < this.settings.teamSize; i++) {
+      for (let i = humans.length; i < size; i++) {
         roster.push({ fid: fid++, name: names.pop(), team, agent: agentKeys[Math.floor(Math.random() * agentKeys.length)], owner: null, outfit: randomOutfit() });
       }
     }

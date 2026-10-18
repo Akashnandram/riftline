@@ -1298,6 +1298,7 @@ function clientMsg(m) {
       const a = byFid(m.a), v = byFid(m.v);
       if (!v) break;
       v.alive = false; v.hp = 0;
+      v.diedAt = m.tm ?? game.time;   // snapshots from before this moment must not bring them back
       v.lastHitDir = m.dir ? V3(m.dir) : null; v.lastHitHead = !!m.o.head;
       if (a) a.kills = m.ak;
       game.onKill(a, v, m.o);
@@ -1333,7 +1334,7 @@ function clientMsg(m) {
       break;
     }
     case 'charge': { const f = byFid(m.by); game.onChargeEvent(m.kind, f); break; }
-    case 'ping': { const f = byFid(m.by); if (f && f !== game.player) onPing(f, { kind: m.kind, pos: V3(m.p), target: m.tid != null ? byFid(m.tid) : null, node: m.node }); break; }
+    case 'mark': { const f = byFid(m.by); if (f && f !== game.player) onPing(f, { kind: m.kind, pos: V3(m.p), target: m.tid != null ? byFid(m.tid) : null, node: m.node }); break; }
     case 'callout': { const f = byFid(m.fid); if (f && f.team === game.player.team) comms(m.text, f.name); break; }
     case 'over': game.score = m.score; matchOver(); break;
     case 'drop': {  // a remote human left; the host replaced them with a bot
@@ -1386,14 +1387,17 @@ function clientApply() {
     // inventory (buys, round resets, deaths) — keep local ammo unless the gun changed
     if (f.primary !== u.primary) { if (u.primary) f.give(u.primary); else { f.primary = null; f.cur = 'secondary'; setGunLook(f); } if (f === game.player && buyOpen) renderBuy(); }
     if (f.secondary !== u.secondary && u.secondary) { const cur = f.cur; f.give(u.secondary); if (f.primary && cur === 'primary') f.cur = 'primary'; setGunLook(f); }
+    // a snapshot sent before a death can arrive after the (reliable) kill event: don't revive from it
+    const stale = s.time <= (f.diedAt ?? -1) + 0.05;
     if (f === game.player) {
-      if (u.alive && !f.alive) { f.alive = true; resetFighterMesh(f); }
+      if (u.alive && !f.alive && !stale) { f.alive = true; resetFighterMesh(f); }
       if (!u.alive && f.alive) { f.alive = false; f.hp = 0; }
       continue;
     }
     // other fighters: interpolated pose
     const ip = byFid.get(f.id);
-    if (u.alive && !f.alive) { f.alive = true; resetFighterMesh(f); }
+    if (u.alive && !f.alive && !stale) { f.alive = true; resetFighterMesh(f); }
+    if (u.alive && stale) continue;
     if (!u.alive) { f.alive = false; continue; }
     if (ip) {
       f.pos.set(...ip.pos); f.vel.set(...ip.vel); f.yaw = ip.yaw; f.pitch = ip.pitch; f.crouch = ip.crouch;
@@ -1447,7 +1451,7 @@ function hostMsg(m, peerId) {
     case 'buy': hostBuyFor(f, m.item); break;
     case 'switch': switchWeapon(f, m.slot); break;
     case 'reload': startReload(f); break;
-    case 'ping': {
+    case 'mark': {   // a client's ping ('ping' itself is the connection's lag measurement)
       if (!f.alive || now() - (f.lastPingT ?? -9) < 0.6) break;
       f.lastPingT = now();
       const tgt = m.tid != null ? game.fighters.find((x) => x.id === m.tid && x.team !== f.team) : null;
@@ -1489,7 +1493,7 @@ function hostStep(dt) {
 // ---------------------------------------------------------------------------
 game.onKill = (attacker, target, opts) => {
   const mode = game.config.mode;
-  if (net.role === 'host') hostEvent({ t: 'kill', a: attacker ? attacker.id : -1, v: target.id, ak: attacker?.kills || 0, o: { weapon: opts.weapon, head: !!opts.head, ability: opts.ability || null }, dir: target.lastHitDir ? A3(target.lastHitDir) : null });
+  if (net.role === 'host') hostEvent({ t: 'kill', tm: Math.round(game.time * 1000) / 1000, a: attacker ? attacker.id : -1, v: target.id, ak: attacker?.kills || 0, o: { weapon: opts.weapon, head: !!opts.head, ability: opts.ability || null }, dir: target.lastHitDir ? A3(target.lastHitDir) : null });
   if (attacker === game.player && target.team !== attacker.team) {
     trackKill(opts.weapon, opts.head, { dist: attacker.pos.distanceTo(target.pos), gadget: !!opts.ability });
     if (mode === 'range') { rs2.kills++; if (target.firstHitT != null) { rs2.ttk += now() - target.firstHitT; rs2.ttkN++; } if (opts.head) tutFlags.headKill = true; }
@@ -1584,13 +1588,13 @@ function playerPing() {
   lastPingT = now();
   const tg = pingTarget(p);
   if (net.role === 'client') {
-    net.lobby.toHost({ t: 'ping', kind: tg.kind, p: A3(tg.pos), tid: tg.target ? tg.target.id : null, node: tg.node || null });
+    net.lobby.toHost({ t: 'mark', kind: tg.kind, p: A3(tg.pos), tid: tg.target ? tg.target.id : null, node: tg.node || null });
     onPing(p, tg, true);
   } else onPing(p, tg);
 }
 /** Someone pinged: show it to their team; the host also tells bots and other players. */
 function onPing(by, tg, localOnly = false) {
-  if (net.role === 'host' && !localOnly) hostEvent({ t: 'ping', by: by.id, kind: tg.kind, p: A3(tg.pos), tid: tg.target ? tg.target.id : null, node: tg.node || null });
+  if (net.role === 'host' && !localOnly) hostEvent({ t: 'mark', by: by.id, kind: tg.kind, p: A3(tg.pos), tid: tg.target ? tg.target.id : null, node: tg.node || null });
   if (net.role !== 'client') {
     for (const a of game.fighters) {
       if (!a.brain || a.team !== by.team || !a.alive) continue;

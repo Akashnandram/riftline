@@ -235,7 +235,16 @@ function renderFriends() {
 async function createLobby() {
   if (!(await needName())) return;
   const c = api.choice();
-  lobby = await Lobby.host({ mode: c.mode, teamSize: c.teamSize, difficulty: c.difficulty, map: c.map || 'random' }, c.agent);
+  const err = $('olErr');
+  if (err) err.textContent = 'Creating lobby…';
+  try {
+    lobby = await Lobby.host({ mode: c.mode, teamSize: c.teamSize, difficulty: c.difficulty, map: c.map || 'random' }, c.agent);
+  } catch (e) {
+    lobby = null;
+    if (err) err.textContent = e.message; else toast(e.message);
+    return;
+  }
+  if (err) err.textContent = '';
   lobby.systemChat(`Lobby created — share code ${lobby.code}`);
   wireLobby();
   showLobby();
@@ -291,8 +300,8 @@ function renderLobby() {
     const slots = ms.map((m) => `<div class="slot ${m.id === me.id ? 'me' : ''}"><span class="ag" style="background:${AGENTS[m.agent]?.color}">${AGENTS[m.agent]?.name[0]}</span>
       <b>${esc(m.name)}</b>${m.host ? '<small>HOST</small>' : m.ready ? '<small class="ok">READY</small>' : ''}</div>`);
     for (let i = ms.length; i < st.teamSize; i++) slots.push('<div class="slot bot"><span class="ag">·</span><i>Bot</i></div>');
-    const canJoin = mine && mine.team !== t && ms.length < st.teamSize;
-    return `<div class="team t${t}"><h3>${t === 0 ? 'BLUE' : 'ORANGE'} TEAM</h3>${slots.join('')}${canJoin ? `<button class="ghost sm" data-team="${t}">Join ${t === 0 ? 'Blue' : 'Red'}</button>` : ''}</div>`;
+    const canJoin = mine && mine.team !== t && ms.length < st.teamSize && !st.coop;
+    return `<div class="team t${t}"><h3>${st.coop ? (t === 0 ? 'PLAYERS' : 'BOTS') : t === 0 ? 'BLUE' : 'ORANGE'} TEAM</h3>${slots.join('')}${canJoin ? `<button class="ghost sm" data-team="${t}">Join ${t === 0 ? 'Blue' : 'Red'}</button>` : ''}</div>`;
   };
   const seg = (k, opts) => `<div class="seg" data-set="${k}">${opts.map(([v, l]) => `<button data-v="${v}" class="${String(st[k]) === String(v) ? 'on' : ''}" ${lobby.isHost ? '' : 'disabled'}>${l}</button>`).join('')}</div>`;
   s.innerHTML = `<div class="menuInner lobby">
@@ -303,6 +312,7 @@ function renderLobby() {
       <div class="side">
         <section><h3>YOUR OPERATIVE</h3><div class="agents">${Object.values(AGENTS).map((a) => `<button data-agent="${a.key}" class="${mine?.agent === a.key ? 'on' : ''}" style="--acc:${a.color}">${a.name}</button>`).join('')}</div></section>
         <section><h3>MATCH ${lobby.isHost ? '' : '<small>(host decides)</small>'}</h3>
+          ${seg('coop', [[false, 'Players vs players'], [true, 'Co-op vs bots']])}
           ${seg('mode', [['uplink', 'Uplink'], ['dom', 'Domination'], ['tdm', 'Team DM'], ['kc', 'Kill Confirmed']])}
           ${seg('teamSize', [[2, '2v2'], [3, '3v3'], [4, '4v4'], [6, '6v6']])}
           ${seg('difficulty', [['veryeasy', 'Super easy bots'], ['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}

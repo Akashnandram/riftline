@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { game } from './state.js';
+import { sfx } from './audio.js';
 
 // Map events: once per match, about a third of the way in, each map gets its own twist for ~45 s.
 //  Dunes — sandstorm · Frostpeak — blizzard · Temple — mist rolls in (fog closes in, everyone sees less)
@@ -10,12 +11,13 @@ export const MAP_EVENTS = {
   frostpeak: { kind: 'blizzard', name: 'BLIZZARD', sub: 'whiteout incoming, you won’t see far', fog: 0xe3e9ef, far: 26, light: 0.9 },
   temple: { kind: 'mist', name: 'JUNGLE MIST', sub: 'thick mist is rolling through the ruins', fog: 0xaebbb5, far: 32, light: 0.8 },
   harbor: { kind: 'blackout', name: 'POWER CUT', sub: 'the harbor lights just went out', fog: 0x10141c, far: 46, light: 0.28 },
+  skyline: { kind: 'storm', name: 'THUNDERSTORM', sub: 'rain and lightning over the rooftops', fog: 0x232a40, far: 38, light: 0.6, lightning: true },
   oldtown: { kind: 'airdrop', name: 'SUPPLY CRATE', sub: 'a crate is dropping in the middle, first to reach it gets it' },
 };
 export const EVENT_LEN = 45;
 const FADE = 4;
 
-let base = null, cur = 0, target = 0, def = null, sky = null;
+let base = null, cur = 0, target = 0, def = null, sky = null, flashT = 0;
 const _c = new THREE.Color();
 
 /** Remember the map's normal look (call after the world is built). */
@@ -38,6 +40,11 @@ export function setEventVisual(mapId, on) {
 /** Per frame: fade fog, light and how far bots can see. */
 export function updateEventVisual(dt) {
   if (!base || !def) return;
+  // thunderstorm: now and then a lightning flash lights everything up for a moment
+  if (def.lightning && cur > 0.5) {
+    if (flashT > 0) { flashT -= dt; if (flashT <= 0) for (const [l, i] of base.lights) l.intensity = i * def.light; }
+    else if (Math.random() < dt * 0.18) { flashT = 0.12; for (const [l, i] of base.lights) l.intensity = i * 2.2; sfx('boom', { vol: 0.25 }); }
+  }
   if (cur === target) return;
   cur = target > cur ? Math.min(target, cur + dt / FADE) : Math.max(target, cur - dt / FADE);
   const s = game.scene, k = cur * cur * (3 - 2 * cur);
